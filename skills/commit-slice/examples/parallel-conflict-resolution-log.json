@@ -1,0 +1,22 @@
+{
+  "_schema": "aisdlc/parallel-conflict-resolution-log@1",
+  "_note": "Append-only PCR audit (PCR-2b). v2: the vault is external, so every git-rebase conflict is CODE/HARD — there are NO auto-resolution entries. One entry is appended (vault_edit SVW-1 locked) on each ratified TRI-RESOLVE-1 apply, mid-rebase, just before `git rebase --continue`.",
+  "entries": [
+    {
+      "type": "hard-conflict-resolution",
+      "timestamp": "<ts>",
+      "repo_head_sha_pre_resolution": "9f3a1c7e",
+      "u_files_resolved": [
+        "src/receipt/parser.ts",
+        "tests/receipt/parser.test.ts"
+      ],
+      "concerned_slices": [
+        "slice-019-refactor-parser",
+        "slice-021-add-receipt-ocr"
+      ],
+      "resolution_mechanism": "gate-on-hand-resolve (PCR-2b) — hand-resolved + code-review agent + TRI-RESOLVE-1 user gate",
+      "code_review_verdict": "no blockers; both-sides intent preserved",
+      "tri_resolve_1_disposition": "apply"
+    }
+  ]
+}

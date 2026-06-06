@@ -194,7 +194,7 @@
       {
         "name": "parallel_conflict_resolver",
         "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py\" --record-hard-resolution --json",
-        "purpose": "Audit-append record of HARD resolution outcome to parallel-conflict-resolution-log.md"
+        "purpose": "Audit-append record of HARD resolution outcome to parallel-conflict-resolution-log.json"
       }
     ],
     "external_tools": [],

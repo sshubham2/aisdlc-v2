@@ -95,7 +95,7 @@ Reviewer sign-offs: <from critique.json + validation.json>
 **Edge cases**: no new ADRs → `ADRs: none`; no regression → omit regression line; no deferrals → omit deferral line.
 
 Example output → `examples/build-log.json` (the build-log schema also shows the Events append shape used in Steps 5b/5c below).
-PCR audit log schema → `examples/parallel-conflict-resolution-log.json` (shows both a PCR auto-resolution entry and a PCR-2b HARD resolution record; used in Steps 5b sub-steps 7 and PCR-2b).
+PCR audit log → `examples/parallel-conflict-resolution-log.json` — the `{"entries": [...]}` shape written to `<vault>/parallel-conflict-resolution-log.json`, appended (SVW-1 locked) ONLY on a HARD resolution via the PCR-2b `--record-hard-resolution` call (Step 5b sub-step 7). v2 has no auto-resolution entries (the vault is external, so every rebase conflict is CODE/HARD).
 
 ## Step 5 — present or execute
 
@@ -136,12 +136,13 @@ No git operations are executed.
    - **Conflict**: STOP — do NOT proceed to sub-step 3. Print conflicting U-files + `git rebase --abort` hint. Then:
 
      **PCR dispatch**: run `$PY "${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py" --resolve-soft --json`.
-     - `exit 0` + `action: APPLIED` (SOFT/VAULT_CLAIM auto-resolved): append PCR breadcrumb to `build-log.json` Events (`<ts> PCR auto-resolved — see <vault>/parallel-conflict-resolution-log.json`); proceed to sub-step 3.
-     - `exit 0` + `action: STOP` + `conflict_class` ∈ {`HARD`,`MIXED`}: enter **PCR-2b gate** (below).
-     - `exit 0` + `action: STOP` + other class: fall through to SOAD-1 block.
+     In v2 the vault is an external, untracked store, so a vault file can NEVER be a rebase stage — every rebase
+     conflict is a CODE conflict. `--resolve-soft` therefore NEVER auto-resolves; it only classifies and routes:
+     - `exit 0` + `action: STOP` + `conflict_class: HARD` (any unmerged path): enter **PCR-2b gate** (below).
+     - `exit 0` + `action: STOP` + `conflict_class: UNKNOWN` (no unmerged paths / unreadable rebase state): fall through to SOAD-1 block.
      - `exit 1/2`: print stderr verbatim; fall through to SOAD-1 block.
 
-     **PCR-2b HARD/MIXED gate** (ADR-075 / TRI-RESOLVE-1):
+     **PCR-2b HARD gate** (ADR-075 / TRI-RESOLVE-1):
      1. Bootstrap guard: if resolver unavailable → fall through to SOAD-1 (no weaker than pre-PCR-2b).
      2. Print `--diagnose --json` output. For `_index.json`-sole HARD: print hint "resolve by re-running `/archive` to regenerate, then `git add`".
      3. User (or Claude at user's instruction) resolves conflict markers + `git add`s each U-file.
@@ -247,4 +248,4 @@ Skips Steps 1–4 (no commit generated).
 - predecessor: `/reflect` (user-invoked handoff — NOT an auto-advance edge)
 - successor: `/slice` (next slice) or `/pulse` (re-orient)
 - auto-advance: false — `/commit-slice` is never auto-invoked by any skill; it is always user-triggered
-- user-input gates: always user-invoked; `--merge`/`--push`/`--sync-after-pr` each require explicit yes/no confirmations before any git state change; PCR-2b HARD/MIXED gate uses TRI-RESOLVE-1 (AskUserQuestion, 3 options)
+- user-input gates: always user-invoked; `--merge`/`--push`/`--sync-after-pr` each require explicit yes/no confirmations before any git state change; PCR-2b HARD gate uses TRI-RESOLVE-1 (AskUserQuestion, 3 options)

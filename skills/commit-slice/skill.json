@@ -116,7 +116,9 @@
       ],
       "read_by": [],
       "validated_by": [],
-      "purpose": "Audit log of PCR auto-resolutions and HARD resolution records"
+      "purpose": "Audit log of PCR auto-resolutions and HARD resolution records",
+      "example_schema": "aisdlc/parallel-conflict-resolution-log@1",
+      "example": "examples/parallel-conflict-resolution-log.json"
     }
   ],
   "agents": [
