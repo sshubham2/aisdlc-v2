@@ -1,0 +1,11 @@
+{
+  "name": "ai-sdlc",
+  "owner": { "name": "Shubhendu Shubham" },
+  "plugins": [
+    {
+      "name": "ai-sdlc",
+      "source": "./",
+      "description": "Spec-driven AI SDLC pipeline (v2): risk-first slicing with an in-loop spike gate, two-persona adversarial review, JSON vault artifacts, and a unified candidate backlog."
+    }
+  ]
+}
