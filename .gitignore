@@ -1,6 +1,8 @@
 # ── Working / build notes — kept local, NOT part of the shipped plugin ──
 /MILESTONE.md
 /CLAUDE.md
+.claude
+.claude/*
 
 # ── Local Claude Code settings (machine-specific) ──
 /.claude/settings.local.json
@@ -14,7 +16,20 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
+# ── Plugin runtime outputs (generated when skills are run in-repo during dev) ──
+diagnose-out/
+.code-review-graph/
+graphify-out/
+
+# ── Python project envs (the shared Claude venv lives outside the repo) ──
+.venv/
+venv/
+env/
+
 # ── OS / editor ──
 .DS_Store
 Thumbs.db
 *.swp
+*~
+.idea/
+.vscode/
