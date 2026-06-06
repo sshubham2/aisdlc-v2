@@ -37,26 +37,30 @@ This skill is a **diagnostic deliverable**. It never modifies source files in th
 
 ## Step 1 — Resolve target + args
 
-Parse args — flags are stripped before `TARGET` so a flag-shaped token never becomes the path:
+Parse args. **Skill args arrive as the Claude Code `$ARGUMENTS` substitution (0-based `${ARGUMENTS[N]}` / `$N`),
+NOT shell positionals** — `"$@"` / `$1` do NOT carry skill args. Shell vars also do NOT persist across separate
+```bash blocks, so every block below re-derives `TARGET`/`OUT` from `$ARGUMENTS`. The first non-flag token is
+the repo path (so a flag-shaped token never becomes the path); `--parallel` toggles dispatch mode:
 
 ```bash
-PARALLEL=0; ARGS=()
-for a in "$@"; do
-  case "$a" in
-    --parallel) PARALLEL=1 ;;
-    --*) echo "WARNING: unknown flag '$a' ignored" >&2 ;;
-    *) ARGS+=("$a") ;;
-  esac
-done
-TARGET="${ARGS[0]:-$PWD}"
+TARGET="$PWD"
+for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
 OUT="$TARGET/diagnose-out"
+case " $ARGUMENTS " in *" --parallel "*) PARALLEL=1 ;; *) PARALLEL=0 ;; esac
+echo "TARGET=$TARGET"
+echo "OUT=$OUT"
+echo "PARALLEL=$PARALLEL  (0 = sequential, default; 1 = legacy single-message parallel dispatch)"
 ```
 
-Verify `$TARGET` is a non-empty directory with code. Abort with a clear message if not.
+Note the echoed `TARGET`/`OUT`/`PARALLEL` — the later blocks re-derive `TARGET`/`OUT` identically, and `$PARALLEL`
+drives the Step 5 dispatch-mode choice. Verify `$TARGET` is a non-empty directory with code. Abort with a clear
+message if not.
 
 ### cwd-mismatch guard
 
 ```bash
+TARGET="$PWD"
+for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
 TARGET_REAL=$(cd "$TARGET" 2>/dev/null && pwd) || { echo "TARGET does not exist: $TARGET"; exit 1; }
 if [ "$TARGET_REAL" != "$(pwd)" ]; then
   echo "WARNING: TARGET ($TARGET_REAL) != PWD ($(pwd))."
@@ -88,6 +92,9 @@ reads its embedded JSON for annotation carryover (Confirmed/Notes).
 Build the CRG graph:
 
 ```bash
+TARGET="$PWD"
+for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+OUT="$TARGET/diagnose-out"
 code-review-graph build "$TARGET" --out "$OUT/.code-review-graph"
 ```
 
@@ -170,6 +177,9 @@ For each completed pass (immediately in sequential mode; as they finish in paral
 1. Save raw response to `$OUT/.tmp/<pass-name>.raw` (create `.tmp/` if missing).
 2. Run:
    ```bash
+   TARGET="$PWD"
+   for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+   OUT="$TARGET/diagnose-out"
    $PY "${CLAUDE_SKILL_DIR}/scripts/write_pass.py" \
        --pass <pass-name> \
        --out "$OUT" \
@@ -188,6 +198,9 @@ Subagents must NOT read other passes' outputs and must NOT modify source files.
 After all 10 passes have written (or been marked degraded), verify outputs:
 
 ```bash
+TARGET="$PWD"
+for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+OUT="$TARGET/diagnose-out"
 ls "$OUT/sections" "$OUT/findings" "$OUT/summary"
 ```
 
@@ -206,8 +219,16 @@ Spawn one `Agent` with `subagent_type: general-purpose`, `model: opus`. The 04-a
 read both prior YAML files from `$OUT/findings/`. Embed `passes/04-ai-bloat.md` content + paths +
 the canonical "do NOT call Write / return three fenced blocks" contract.
 
-After it returns, run `write_pass.py --pass 04-ai-bloat --out "$OUT" --raw-file $OUT/.tmp/04-ai-bloat.raw` with the
-same 3-attempt cap. Verify all three `04-ai-bloat.{md,yaml,md}` files exist before continuing.
+After it returns, run (re-deriving `OUT` — shell state does not persist across blocks):
+
+```bash
+TARGET="$PWD"
+for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+OUT="$TARGET/diagnose-out"
+$PY "${CLAUDE_SKILL_DIR}/scripts/write_pass.py" --pass 04-ai-bloat --out "$OUT" --raw-file "$OUT/.tmp/04-ai-bloat.raw"
+```
+
+with the same 3-attempt cap. Verify all three `04-ai-bloat.{md,yaml,md}` files exist before continuing.
 
 ## Step 6.5 — Narrative synthesis: diagnose-narrator
 
@@ -217,11 +238,13 @@ After all 11 forensic passes have written their YAMLs + summaries, spawn:
 Agent tool, subagent_type: "diagnose-narrator"
 ```
 
-Hand it only the output path:
+Hand it only the output path — substitute the **resolved absolute path** (the `OUT` echoed in Step 1,
+i.e. `<TARGET>/diagnose-out`) for `<OUT>` below. The subagent runs in its own context and cannot expand
+a `$OUT` shell var, so pass the literal path:
 
 ```
 The /diagnose run for this codebase has completed all 11 analysis passes.
-Output directory: $OUT
+Output directory: <OUT>
 
 Read findings/*.yaml and summary/*.md from there. Synthesize a narrative
 executive summary as described in your system prompt. Write it to
@@ -239,6 +262,9 @@ continue — `assemble.py` falls back to per-pass summary stitching (degraded bu
 ## Step 7 — Assemble
 
 ```bash
+TARGET="$PWD"
+for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+OUT="$TARGET/diagnose-out"
 $PY "${CLAUDE_SKILL_DIR}/scripts/assemble.py" --out "$OUT"
 ```
 

@@ -43,7 +43,8 @@ cat "${AI_SDLC_VAULT_ROOT}/slices/$(ls -1t "${AI_SDLC_VAULT_ROOT}/slices/" | gre
 
 ### Branch / worktree state (BRANCH-2 / BRANCH-3)
 
-Compute paths once:
+Resolve the repo paths. **Shell vars do NOT persist across separate code blocks** (each ```bash block is a
+fresh shell), so this is the reference derivation — the executable block in case 2 below re-derives what it needs:
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
 wt_base="$(dirname "$repo_root")/$(basename "$repo_root")-wt"
@@ -54,8 +55,12 @@ default=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/r
 
 Then:
 1. **Worktree exists** at `<wt_base>/slice-NNN-<name>` (BRANCH-3 normal case): `cd` into it, verify `git branch --show-current` matches `slice/NNN-<name>`.
-2. **No worktree** (legacy / `WORKTREE=skip`): create it via the shared helper:
+2. **No worktree** (legacy / `WORKTREE=skip`): create it via the shared helper (re-derives `repo_root`/`default` —
+   they do not carry over from the block above):
    ```bash
+   repo_root="$(git rev-parse --show-toplevel)"
+   default=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+   [ -z "$default" ] && default=$(git config init.defaultBranch 2>/dev/null)
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder slice-NNN-<name> --repo-root "$repo_root"
    git worktree add <wt_path> -b slice/NNN-<name> "$default"
    ```
