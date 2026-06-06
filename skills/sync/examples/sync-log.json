@@ -1,0 +1,20 @@
+{
+  "_schema": "aisdlc/sync-log@1",
+  "_note": "Heavy-mode bidirectional reconciliation record (append-only).",
+  "runs": [
+    {
+      "at": "<ts>",
+      "regenerated": [
+        "components/orders.json",
+        "contracts/webhook.json"
+      ],
+      "drift": [
+        {
+          "claim": "retired R-3",
+          "reality": "only simple case retired",
+          "action": "updated risk-register"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,313 @@
+{
+  "name": "triage",
+  "user_invokable": true,
+  "requires_full_context": true,
+  "runs_in": "main-agent",
+  "context_rationale": "Interactive: asks mode/risk questions one at a time and engages with each answer, picks mode collaboratively, and writes project-open artifacts. Needs the live user conversation, so it cannot be delegated to a fresh-context subagent.",
+  "summary": "Greenfield AI SDLC project opener. Picks the pipeline mode (Minimal / Standard / Heavy) via interactive Q&A (or accepts a pre-declared mode), builds the initial reversibility-tagged risk register, writes the thin vault skeleton (triage.json, risk-register.json, decisions/, spikes/, slices/) plus a small project-root CLAUDE.md, optionally installs code-review-graph integration, and tells the user the mode-specific next step. Re-runnable for mid-project re-scoping. Greenfield only — routes substantial existing codebases to /adopt.",
+  "reads": [
+    {
+      "path": "<vault>/triage.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "triage"
+      ],
+      "purpose": "Re-triage detection (Step 1) — read existing mode + risks to update rather than overwrite."
+    },
+    {
+      "path": "./CLAUDE.md",
+      "kind": "enforcement-file",
+      "produced_by": [
+        "adopt",
+        "triage"
+      ],
+      "purpose": "Step 5b — read to decide fresh-create vs append."
+    }
+  ],
+  "outputs": [
+    {
+      "path": "<vault>/triage.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "triage"
+      ],
+      "edited_by": [],
+      "read_by": [
+        "adopt",
+        "archive",
+        "build-slice",
+        "discover",
+        "heavy-architect",
+        "pulse",
+        "reduce",
+        "slice",
+        "sync",
+        "triage"
+      ],
+      "validated_by": [],
+      "purpose": "Triage snapshot: mode, classification, rationale, pipeline path, deferred steps, initial risk snapshot.",
+      "example_schema": "aisdlc/triage@1",
+      "example": "examples/triage.json"
+    },
+    {
+      "path": "<vault>/risk-register.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "triage"
+      ],
+      "edited_by": [
+        "discover",
+        "reflect",
+        "risk-spike",
+        "user-test",
+        "validate-slice"
+      ],
+      "read_by": [
+        "build-slice",
+        "discover",
+        "drift-check",
+        "heavy-architect",
+        "pulse",
+        "reflect",
+        "risk-spike",
+        "slice",
+        "sync"
+      ],
+      "validated_by": [
+        "risk_register_audit",
+        "vault_edit"
+      ],
+      "purpose": "Running risk ledger, one RR-1 block per risk; validated by risk_register_audit.",
+      "example_schema": "aisdlc/risk-register@1",
+      "example": "examples/risk-register.json"
+    },
+    {
+      "path": "<vault>/decisions/ADR-*.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "mkdir",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "design-slice",
+        "discover",
+        "reflect",
+        "triage"
+      ],
+      "edited_by": [
+        "reflect"
+      ],
+      "read_by": [
+        "code-review",
+        "commit-slice",
+        "critique",
+        "critique-review",
+        "drift-check",
+        "heavy-architect",
+        "reduce",
+        "reflect",
+        "sync"
+      ],
+      "validated_by": [],
+      "purpose": "Empty dir for ADRs.",
+      "example_schema": "aisdlc/adr@1",
+      "example": "examples/adr.json"
+    },
+    {
+      "path": "<vault>/spikes/",
+      "kind": "directory",
+      "v1_format": "directory",
+      "v2_format": "directory",
+      "write_semantics": "create",
+      "write_mechanism": "mkdir",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "triage"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Empty dir for /risk-spike output."
+    },
+    {
+      "path": "<vault>/slices/",
+      "kind": "directory",
+      "v1_format": "directory",
+      "v2_format": "directory",
+      "write_semantics": "create",
+      "write_mechanism": "mkdir",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "triage"
+      ],
+      "edited_by": [],
+      "read_by": [
+        "archive"
+      ],
+      "validated_by": [],
+      "purpose": "Empty dir for slice folders."
+    },
+    {
+      "path": "<vault>/components/*.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "mkdir",
+      "modes": [
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "sync",
+        "triage"
+      ],
+      "edited_by": [
+        "design-slice"
+      ],
+      "read_by": [
+        "design-slice",
+        "drift-check"
+      ],
+      "validated_by": [],
+      "purpose": "Heavy mode only — empty comprehensive-vault dirs pre-created for compliance (components/contracts/actors/test-plan/frontend/schemas).",
+      "example_schema": "aisdlc/component@1",
+      "example": "examples/component.json"
+    },
+    {
+      "path": "./CLAUDE.md",
+      "kind": "enforcement-file",
+      "v1_format": "markdown",
+      "v2_format": "markdown",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "triage"
+      ],
+      "edited_by": [
+        "adopt"
+      ],
+      "read_by": [
+        "triage"
+      ],
+      "validated_by": [],
+      "purpose": "Project-root pipeline-enforcement file (created fresh or appended). STAYS MARKDOWN in v2 — Claude Code reads it natively."
+    },
+    {
+      "path": "code-review-graph integration (MCP tools + git hooks + .code-review-graph/ store)",
+      "kind": "side-effect",
+      "v1_format": "other",
+      "v2_format": "n/a",
+      "write_semantics": "create",
+      "write_mechanism": "code-review-graph",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "triage"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Step 5b-pre, opt-in. Installs the always-on code-review-graph integration."
+    }
+  ],
+  "agents": [],
+  "tools": [
+    {
+      "name": "risk_register_audit",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py\" <vault>/risk-register.json",
+      "purpose": "Validates the risk register written in Step 5 (required fields, valid values, scoring/sorting per RR-1).",
+      "found": true,
+      "path": "scripts/lib/risk_register_audit.py"
+    },
+    {
+      "name": "code-review-graph",
+      "type": "external-package",
+      "invocation": "code-review-graph install --platform claude-code | code-review-graph build|update",
+      "purpose": "Code graph via code-review-graph (CRG) — installs the Claude Code MCP integration (30 MCP tools + slash commands + git hooks); builds/refreshes the code graph. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+      "found": false,
+      "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "AskUserQuestion",
+      "purpose": "Load-bearing — structured-options Q&A for mode selection, risk questions, and the code-review-graph-install / git-init prompts."
+    },
+    {
+      "name": "Read",
+      "purpose": "Re-triage detection (read existing triage.json), reading existing CLAUDE.md before append."
+    },
+    {
+      "name": "Write",
+      "purpose": "Write triage.json, risk-register.json, vault skeleton dirs, project-root CLAUDE.md."
+    },
+    {
+      "name": "Bash",
+      "purpose": "Step 0 preflight detection and the optional code-review-graph install commands."
+    }
+  ],
+  "hands_off_to": [
+    "discover",
+    "user-test",
+    "heavy-architect",
+    "slice"
+  ],
+  "source": "temp/skills/triage/SKILL.md",
+  "missing_references": [
+    {
+      "ref": "code-review-graph",
+      "kind": "tool",
+      "found": false,
+      "expected": true,
+      "reason": "External pip package, intentionally not bundled in the plugin."
+    }
+  ]
+}

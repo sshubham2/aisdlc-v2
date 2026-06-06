@@ -1,0 +1,14 @@
+{
+  "_schema": "aisdlc/requirements@1",
+  "_note": "Heavy: functional + non-functional requirements by actor.",
+  "items": [
+    {
+      "id": "REQ-7",
+      "actor": "seller",
+      "statement": "Seller can view live order status.",
+      "status": "planned",
+      "implementation_ref": null,
+      "verification_ref": null
+    }
+  ]
+}

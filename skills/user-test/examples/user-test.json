@@ -1,0 +1,23 @@
+{
+  "_schema": "aisdlc/user-test@1",
+  "_note": "Real-user validation findings (mockup / prototype / working slice). Surfaced risks append to risk-register.json; surfaced work becomes candidates.",
+  "test": "checkout-flow-mockup",
+  "mode": "prototype",
+  "date": "<ts>",
+  "participants": 1,
+  "tasks": [
+    {
+      "task": "complete a purchase",
+      "result": "stuck",
+      "observation": "user could not find the pay button"
+    }
+  ],
+  "findings": [
+    {
+      "kind": "stuck",
+      "detail": "pay button below the fold",
+      "becomes_candidate": "SC-030",
+      "becomes_risk": null
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "_schema": "aisdlc/critique-review@1",
+  "_note": "Meta-Critic review of critique.json (DR-1). Verdict in {accept, adjust, extend}.",
+  "slice": "slice-021",
+  "reviewed_by": "critique-review agent",
+  "verdict": "adjust",
+  "date": "<ts>",
+  "assessments": [
+    {
+      "finding": "C1",
+      "classification": "valid"
+    }
+  ],
+  "missed": [
+    {
+      "dimension": "edge-case",
+      "claim": "no test for a dropped SSE reconnect"
+    }
+  ]
+}

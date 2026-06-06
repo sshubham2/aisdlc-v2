@@ -1,0 +1,114 @@
+# Finding schema — stable contract between /diagnose passes and /slice-candidates
+#
+# Every entry in findings/<pass>.yaml must conform to this shape.
+# assemble.py validates on load.
+
+# Each finding is one entry in a top-level YAML list:
+# - id: ...
+#   pass: ...
+#   ...
+
+# id
+#   string, REQUIRED
+#   Format: F-<CATEGORY-SHORT>-<8-char-hash>
+#   Hash is sha1(category + primary_evidence_path + signature)[:8]
+#   Same content -> same ID across runs (this is how owner annotations carry over).
+
+# pass
+#   string, REQUIRED
+#   The pass that produced this finding (e.g., "03a-dead-code").
+
+# category
+#   string, REQUIRED
+#   One of:
+#     dead-code
+#     duplicate
+#     size-outlier
+#     half-wired
+#     contradiction
+#     layering-violation
+#     dead-config
+#     test-gap
+#     ai-bloat
+
+# severity
+#   string, REQUIRED
+#   One of: low | medium | high | critical
+#   Use the rubric:
+#     low      — cosmetic / cleanup; no behavior risk
+#     medium   — confusing or duplicative; may cause future bugs
+#     high     — likely current bug, security smell, or correctness concern
+#     critical — confirmed correctness/security issue affecting production paths
+
+# blast_radius
+#   string, REQUIRED
+#   One of: small | medium | large
+#   small  — <3 files affected by a fix
+#   medium — 3-15 files
+#   large  — >15 files OR cross-module / cross-service
+
+# reversibility
+#   string, REQUIRED
+#   One of: cheap | expensive | irreversible
+#   cheap        — easy to back out (delete a file, revert a function)
+#   expensive    — multi-step migration, may need data backfill
+#   irreversible — schema change, public API break, data deletion
+
+# title
+#   string, REQUIRED
+#   One-line summary; <100 chars; no trailing period.
+#   Example: "Module legacy_auth.py unreachable from any entry point"
+
+# description
+#   string, REQUIRED
+#   Multi-line explanation of WHAT and WHY. Concrete, evidence-backed.
+
+# evidence
+#   list of objects, REQUIRED, min length 1
+#   Each entry:
+#     path: string (relative to repo root)
+#     lines: string (e.g., "1-340" or "42")
+#     note: string (optional — what specifically at this location)
+
+# suggested_action
+#   string, REQUIRED
+#   What an implementer would do to address this. Concrete, not "consider refactoring".
+
+# effort_estimate
+#   string, REQUIRED
+#   One of: small | medium | large
+#   small  — under 1 day
+#   medium — 1-5 days
+#   large  — 1+ week
+
+# slice_candidate
+#   string, REQUIRED
+#   One of: yes | no | maybe
+#   Hint to /slice-candidates whether this is worth a dedicated slice.
+#   "no" usually means trivial cleanup that should ride on another change.
+
+# Example finding:
+#
+# - id: F-DEAD-a3f2c4d1
+#   pass: 03a-dead-code
+#   category: dead-code
+#   severity: low
+#   blast_radius: small
+#   reversibility: cheap
+#   title: Module legacy_auth.py unreachable from any entry point
+#   description: |
+#     The module src/legacy_auth.py is not imported by any reachable
+#     module. CRG impact-radius from src/main.py shows zero paths to it.
+#     The file appears to be a remnant of a pre-v2 auth implementation.
+#   evidence:
+#     - path: src/legacy_auth.py
+#       lines: 1-340
+#       note: No inbound imports detected
+#     - path: src/main.py
+#       lines: 1-50
+#       note: Current entry point — does not reference legacy_auth
+#   suggested_action: |
+#     Delete src/legacy_auth.py. Verify no dynamic imports via grep for
+#     "legacy_auth" string literal first.
+#   effort_estimate: small
+#   slice_candidate: maybe

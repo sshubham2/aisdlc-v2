@@ -1,0 +1,170 @@
+{
+  "name": "code-review",
+  "user_invokable": true,
+  "requires_full_context": true,
+  "runs_in": "main-agent",
+  "context_rationale": "The skill orchestrates from the main agent thread — resolves the live git diff (including uncommitted working-tree changes), reads vault slice files, invokes the code-Critic subagent, and updates milestone.json — requiring the current repo state only accessible in the main thread.",
+  "summary": "Adversarial review of the slice's code diff by a separate code-Critic AI persona (CRSI-1). Resolves a union-of-three-sources git diff (working tree, untracked, and committed-in-branch) filtered to in-scope paths, then spawns a 'code-review' subagent that attacks the diff along 9 dimensions with path:line specificity. Writes findings to code-review.json and updates milestone.json; advisory only in v1. Auto-advances to /validate-slice after writing code-review.json.",
+  "reads": [
+    {
+      "path": "<vault>/slices/slice-NNN/mission-brief.json",
+      "kind": "content-file",
+      "produced_by": [
+        "slice"
+      ],
+      "purpose": "Slice intent and ACs handed to code-Critic"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/design.json",
+      "kind": "content-file",
+      "produced_by": [
+        "design-slice"
+      ],
+      "purpose": "Slice design handed to code-Critic for drift detection"
+    },
+    {
+      "path": "<vault>/decisions/ADR-*.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "design-slice",
+        "discover",
+        "reflect",
+        "triage"
+      ],
+      "purpose": "New ADRs from this slice handed to code-Critic"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/build-log.json",
+      "kind": "content-file",
+      "produced_by": [
+        "build-slice"
+      ],
+      "purpose": "Verify Result: SHIPPED before proceeding; also in-scope for code-review diff"
+    },
+    {
+      "path": "<vault>/slices/_index.json",
+      "kind": "content-file",
+      "produced_by": [
+        "archive"
+      ],
+      "purpose": "Locate currently active slice"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/validation.json",
+      "kind": "content-file",
+      "produced_by": [
+        "validate-slice"
+      ],
+      "purpose": "Post-build artifact in scope for code-review diff per ADR-066 M5 INCLUDE direction"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/reflection.json",
+      "kind": "content-file",
+      "produced_by": [
+        "reflect"
+      ],
+      "purpose": "Post-build artifact in scope for code-review diff per ADR-066 M5 INCLUDE direction"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "<vault>/slices/slice-NNN/code-review.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "code-review"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Code-Critic findings (advisory in v1): blockers/majors/minors with path:line refs, dimensions checked",
+      "example_schema": "aisdlc/code-review@1",
+      "example": "examples/code-review.json"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/milestone.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "update",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "slice"
+      ],
+      "edited_by": [
+        "build-slice",
+        "code-review",
+        "critique",
+        "design-slice",
+        "reflect",
+        "validate-slice"
+      ],
+      "read_by": [
+        "build-slice",
+        "code-review",
+        "critique",
+        "design-slice",
+        "pulse",
+        "reflect",
+        "validate-slice"
+      ],
+      "validated_by": [],
+      "purpose": "Update stage to code-review, progress box, current focus, on-resume",
+      "example_schema": "aisdlc/milestone@1",
+      "example": "examples/milestone.json"
+    }
+  ],
+  "agents": [
+    {
+      "name": "code-review",
+      "when": "Step 2, after resolving and filtering the slice diff",
+      "purpose": "Adversarial code-Critic review of the slice diff along 9 dimensions with path:line specificity"
+    }
+  ],
+  "tools": [],
+  "harness_tools": [
+    {
+      "name": "Read",
+      "purpose": "Read mission-brief.json, design.json, ADRs, build-log.json, _index.json, milestone.json"
+    },
+    {
+      "name": "Write",
+      "purpose": "Write code-review.json to the slice folder"
+    },
+    {
+      "name": "Edit",
+      "purpose": "Update milestone.json (stage, progress box, current focus, on-resume)"
+    },
+    {
+      "name": "Bash",
+      "purpose": "Run git diff / git ls-files union commands to resolve the filtered slice diff"
+    },
+    {
+      "name": "Agent",
+      "purpose": "Spawn the 'code-review' subagent with subagent_type: 'code-review'"
+    },
+    {
+      "name": "Glob",
+      "purpose": "Locate active slice folder and slice artifact files"
+    }
+  ],
+  "hands_off_to": [
+    "validate-slice"
+  ],
+  "source": "temp/skills/code-review/SKILL.md",
+  "missing_references": []
+}

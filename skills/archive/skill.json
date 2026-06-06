@@ -1,0 +1,182 @@
+{
+  "name": "archive",
+  "user_invokable": true,
+  "requires_full_context": false,
+  "runs_in": "delegable-to-subagent",
+  "context_rationale": "Archive operates mechanically on vault directory structure with no dependency on the current session's conversational state; it reads folder contents and regenerates index files from file inputs alone.",
+  "summary": "Archives completed slices (those with reflection.json) from slices/ to slices/archive/ and regenerates both _index.json files. In normal flow /reflect auto-archives each slice; /archive handles batch cleanup and stale index rebuilds. Index regeneration is dispatched to a Haiku subagent for cost efficiency (COST-1), with the main thread owning the compare-and-swap write via vault_edit rewrite. The _index.json is kept thin: recent-10 one-liner router rows plus a pointer to action-points.json; action-points.json is never regenerated here.",
+  "reads": [
+    {
+      "path": "<vault>/slices/",
+      "kind": "directory",
+      "produced_by": [
+        "adopt",
+        "triage"
+      ],
+      "purpose": "Enumerate active slice folders (non-recursive scan) to find violators with reflection.json"
+    },
+    {
+      "path": "<vault>/slices/archive/",
+      "kind": "directory",
+      "produced_by": [],
+      "purpose": "Enumerate archived slice folders for index regeneration"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/mission-brief.json",
+      "kind": "content-file",
+      "produced_by": [
+        "slice"
+      ],
+      "purpose": "Read Intent field (first sentence) for thin one-liner index rows (by Haiku subagent)"
+    },
+    {
+      "path": "<vault>/slices/action-points.json",
+      "kind": "content-file",
+      "produced_by": [],
+      "purpose": "Read pointer only; explicitly NOT regenerated or modified by /archive (curated artifact, ADR-093)"
+    },
+    {
+      "path": "<vault>/concept.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "discover"
+      ],
+      "purpose": "Read project name for _index.json header (by Haiku subagent)"
+    },
+    {
+      "path": "<vault>/triage.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "triage"
+      ],
+      "purpose": "Read project mode for _index.json header (by Haiku subagent)"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "<vault>/slices/slice-NNN/",
+      "kind": "directory",
+      "v1_format": "directory",
+      "v2_format": "directory",
+      "write_semantics": "create+update",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "archive",
+        "reflect"
+      ],
+      "edited_by": [
+        "archive"
+      ],
+      "read_by": [
+        "archive"
+      ],
+      "validated_by": [],
+      "purpose": "Source of vault_edit move operation (completed slice relocated to archive)"
+    },
+    {
+      "path": "<vault>/slices/_index.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create+update",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "archive"
+      ],
+      "edited_by": [
+        "archive",
+        "reflect",
+        "supersede-slice"
+      ],
+      "read_by": [
+        "archive",
+        "code-review",
+        "critic-calibrate",
+        "critique",
+        "pulse",
+        "reflect",
+        "slice",
+        "supersede-slice"
+      ],
+      "validated_by": [
+        "vault_edit"
+      ],
+      "purpose": "Regenerate active table + recent-10 router + action-points pointer via vault_edit rewrite CAS (ADR-088)",
+      "example_schema": "aisdlc/slice-index@1",
+      "example": "examples/slice-index.json"
+    },
+    {
+      "path": "<vault>/slices/archive/_index.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create+update",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "archive"
+      ],
+      "edited_by": [
+        "archive",
+        "reflect"
+      ],
+      "read_by": [
+        "archive",
+        "reflect",
+        "slice"
+      ],
+      "validated_by": [
+        "vault_edit"
+      ],
+      "purpose": "Regenerate full chronological catalog via vault_edit rewrite CAS (ADR-088)",
+      "example_schema": "aisdlc/slice-index@1",
+      "example": "examples/slice-index.json"
+    }
+  ],
+  "agents": [],
+  "tools": [
+    {
+      "name": "vault_edit",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" move --from slices/<slice-folder> --to slices/archive/",
+      "purpose": "Per-slice seam-routed archive move preserving folder contents (Step 2, ADR-103)",
+      "found": true,
+      "path": "scripts/lib/vault_edit.py"
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "Glob",
+      "purpose": "Enumerate slice folders in slices/ and slices/archive/ to detect active vs completed (presence of reflection.json)"
+    },
+    {
+      "name": "Read",
+      "purpose": "Read each slice's mission-brief.json (by Haiku subagent) for one-line intent to populate index tables"
+    },
+    {
+      "name": "Bash",
+      "purpose": "Check directory existence prerequisites; run vault_edit move and rewrite commands"
+    }
+  ],
+  "hands_off_to": [
+    "slice"
+  ],
+  "source": "temp/skills/archive/SKILL.md",
+  "missing_references": []
+}

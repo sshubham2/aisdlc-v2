@@ -1,0 +1,16 @@
+{
+  "_schema": "aisdlc/threat-model@1",
+  "_note": "Heavy: STRIDE per component. CSP-1 validates status + implementation/verification refs.",
+  "threats": [
+    {
+      "id": "TM-4",
+      "component": "webhook",
+      "stride": "spoofing",
+      "threat": "Forged webhook events.",
+      "mitigation": "Verify Stripe signature.",
+      "status": "mitigated",
+      "implementation_ref": "src/webhook.ts",
+      "verification_ref": "tests/webhook_sig.test.ts"
+    }
+  ]
+}

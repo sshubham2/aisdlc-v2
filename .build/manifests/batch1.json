@@ -1,0 +1,547 @@
+[
+  {
+    "name": "adopt",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "The skill asks the user questions one at a time, waits for answers, and co-derives the vault contents from live conversation — it cannot complete its brownfield interview or mode selection without back-and-forth in the main thread.",
+    "summary": "Onboards the AI SDLC pipeline into an existing codebase by scanning it with code-review-graph, optionally running /diagnose, conducting a structured brownfield interview, and producing an initial vault (concept.json, risk-register.json, CLAUDE.md, optional backlog.md and ADRs) that reflects code reality rather than doc claims. It can also invoke /slice-candidates to build a backlog from confirmed /diagnose findings. The skill replaces /triage for brownfield projects and sets up the vault for the normal /slice loop.",
+    "agents": [],
+    "methodology_tools": [],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "code-review-graph install --platform claude-code | code-review-graph build|update | CRG MCP tools (impact-radius, review-context, search)",
+        "purpose": "Code graph via code-review-graph (CRG) — installs the Claude Code MCP integration (30 MCP tools + slash commands + git hooks); builds/refreshes the code graph; reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read GRAPH_REPORT.md, package.json/pyproject.toml/go.mod/Cargo.toml, top-level directory entries, README.md"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run code-review-graph commands, preflight checks, and environment detection"
+      },
+      {
+        "name": "AskUserQuestion",
+        "purpose": "Present structured options to the user for mode selection, /diagnose offer, and brownfield interview questions"
+      },
+      {
+        "name": "Write",
+        "purpose": "Create vault files (concept.json, risk-register.json, CLAUDE.md, triage.json, ADR-historical-*.json)"
+      },
+      {
+        "name": "Skill",
+        "purpose": "Invoke /diagnose and /slice-candidates sub-skills"
+      }
+    ],
+    "file_access": [
+      {
+        "path": ".code-review-graph/",
+        "kind": "side-effect",
+        "access": "create",
+        "mechanism": "code-review-graph",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Full AST + semantic graph of the codebase"
+      },
+      {
+        "path": ".code-review-graph/",
+        "kind": "external-artifact",
+        "access": "read",
+        "mechanism": "code-review-graph",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Primary input for understanding codebase structure before interview"
+      },
+      {
+        "path": "package.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Dependency truth — concrete stack evidence"
+      },
+      {
+        "path": "pyproject.toml",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Dependency truth — concrete stack evidence"
+      },
+      {
+        "path": "go.mod",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Dependency truth — concrete stack evidence"
+      },
+      {
+        "path": "Cargo.toml",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Dependency truth — concrete stack evidence"
+      },
+      {
+        "path": "README.md",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "markdown",
+        "purpose": "Read as hypothesis only; not trusted over code observations"
+      },
+      {
+        "path": "diagnose-out/diagnosis.html",
+        "kind": "external-artifact",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "html",
+        "purpose": "Annotated forensic findings from /diagnose, read on resume to seed risk register and backlog"
+      },
+      {
+        "path": "<vault>/triage.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Check if a prior triage.json exists to decide merge vs. fresh start"
+      },
+      {
+        "path": "<vault>/triage.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Record of adoption; notes whether /diagnose ran and mode chosen"
+      },
+      {
+        "path": "<vault>/concept.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Reverse-engineered concept document grounded in code observations"
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Initial risk register seeded from /diagnose findings and user pain points"
+      },
+      {
+        "path": "<vault>/decisions/ADR-historical-NNN.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Historical ADRs captured from firsthand user recall only"
+      },
+      {
+        "path": "<vault>/spikes/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "mkdir",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Empty placeholder for future /risk-spike outputs"
+      },
+      {
+        "path": "<vault>/slices/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "mkdir",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Empty placeholder for future slices"
+      },
+      {
+        "path": "<vault>/candidates.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Slice candidates backlog produced by /slice-candidates when /diagnose ran"
+      },
+      {
+        "path": "./CLAUDE.md",
+        "kind": "enforcement-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "markdown",
+        "purpose": "Brownfield-aware pipeline rules created if absent"
+      },
+      {
+        "path": "./CLAUDE.md",
+        "kind": "enforcement-file",
+        "access": "append",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "markdown",
+        "purpose": "AI SDLC pipeline section appended if CLAUDE.md already exists"
+      },
+      {
+        "path": "<vault>/components/<name>.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Reverse-engineered component files (Heavy mode only)"
+      },
+      {
+        "path": "<vault>/contracts/<name>.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Reverse-engineered API contracts from route handlers (Heavy mode only)"
+      },
+      {
+        "path": "<vault>/schemas/<entity>.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Reverse-engineered data model schemas (Heavy mode only)"
+      },
+      {
+        "path": "<vault>/threat-model.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Threat model seeded from user pain points, STRIDE gaps, and /diagnose findings (Heavy mode only)"
+      },
+      {
+        "path": "<vault>/cost-estimation.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Cost estimation placeholder, flagged for user population (Heavy mode only)"
+      },
+      {
+        "path": "<vault>/diagrams.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Architecture diagrams generated from code-review-graph code graph (Heavy mode only)"
+      }
+    ],
+    "hands_off_to": [
+      "slice",
+      "slice-candidates",
+      "diagnose"
+    ],
+    "source": "temp/skills/adopt/SKILL.md"
+  },
+  {
+    "name": "slice-candidates",
+    "user_invokable": true,
+    "requires_full_context": false,
+    "runs_in": "delegable-to-subagent",
+    "context_rationale": "The default path is a mechanical pass — run build_backlog.py against diagnose-out/ inputs and emit backlog.md — with no dependency on conversation history; the --obo mode is interactive but bounded to structured AskUserQuestion calls that do not need accumulated thread context.",
+    "summary": "Reads an annotated diagnosis.html (produced by /diagnose and round-tripped through the repo owner), extracts confirmed findings, and uses build_backlog.py to produce a DAG-ordered backlog.md of slice candidates. It uses code-review-graph blast-radius queries to detect file-overlap coupling between candidates, topo-sorts them by dependency plus a severity/blast/effort priority score, and detects must-do-together cycles. An optional --obo mode walks the owner through findings one at a time via structured prompts and writes a diagnosis.annotated.html before building the backlog.",
+    "agents": [],
+    "methodology_tools": [],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "CRG MCP tools (impact-radius, review-context, search)",
+        "purpose": "Code graph via code-review-graph (CRG) — reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [
+      {
+        "name": "build_backlog.py",
+        "purpose": "Parse diagnosis.html embedded JSON, filter confirmed findings, build dependency DAG via shared-evidence + code-review-graph blast-radius, topo-sort candidates, render and write backlog.md; also provides --obo-extract, --obo-write, and --obo-peek subcommands for the interactive review mode  [v2: emits <vault>/candidates.json instead of backlog.md — code change owed]"
+      }
+    ],
+    "harness_tools": [
+      {
+        "name": "Bash",
+        "purpose": "Run build_backlog.py with appropriate flags and locate diagnose-out/ inputs"
+      },
+      {
+        "name": "AskUserQuestion",
+        "purpose": "Present per-finding approve/validate/defer/reject/exit options during --obo interactive review mode"
+      },
+      {
+        "name": "Read",
+        "purpose": "Read returned --obo-peek content to give a real/likely-real/not-real verdict (ADR-054 carve-out, finding evidence files only)"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "diagnose-out/diagnosis.html",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "html",
+        "purpose": "Primary input: annotated HTML with embedded findings JSON and owner annotations"
+      },
+      {
+        "path": "diagnose-out/findings/*.yaml",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Fallback input if the HTML has no embedded findings list (older runs)"
+      },
+      {
+        "path": "diagnose-out/.code-review-graph/",
+        "kind": "external-artifact",
+        "access": "read",
+        "mechanism": "code-review-graph",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Prebuilt code-review-graph graph used for blast-radius dependency detection"
+      },
+      {
+        "path": "diagnose-out/diagnosis.annotated.html",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "html",
+        "purpose": "--obo mode output: copy of diagnosis.html with owner decisions baked in; original diagnosis.html is asserted byte-unchanged"
+      },
+      {
+        "path": "diagnose-out/obo-run.log",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Append-only audit log of --obo-peek and --obo-write operations"
+      },
+      {
+        "path": "<vault>/candidates.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Write confirmed-finding candidates (DAG-ordered) into the unified candidates backlog (replaces diagnose-out/backlog.md)."
+      }
+    ],
+    "hands_off_to": [
+      "slice"
+    ],
+    "source": "temp/skills/slice-candidates/SKILL.md"
+  },
+  {
+    "name": "query-design",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "The skill is an interactive, back-and-forth Q&A conversation that follows up on user questions, drills down iteratively, and optionally offers a handoff to /slice based on what emerged in the session — it fundamentally depends on the accumulated conversation context.",
+    "summary": "Holds a read-only, grounded Q&A conversation about an existing codebase, answering questions by reading actual code via Grep, Read, and code-review-graph queries rather than recall. Every answer cites specific file/line/symbol evidence. It changes nothing — no writes, no file creation, no vault mutations. If the conversation surfaces a concrete actionable finding, it offers (but never forces) a single delegated handoff to /slice.",
+    "agents": [],
+    "methodology_tools": [],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "CRG MCP tools (impact-radius, review-context, search)",
+        "purpose": "Code graph via code-review-graph (CRG) — reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Grep",
+        "purpose": "Locate symbols and patterns in the codebase to ground answers in evidence"
+      },
+      {
+        "name": "Read",
+        "purpose": "Inspect actual file contents and definitions to answer questions accurately"
+      },
+      {
+        "name": "Skill",
+        "purpose": "Invoke /slice once via the Skill tool when the user accepts the offered handoff"
+      }
+    ],
+    "file_access": [],
+    "hands_off_to": [
+      "slice"
+    ],
+    "source": "temp/skills/query-design/SKILL.md"
+  }
+]

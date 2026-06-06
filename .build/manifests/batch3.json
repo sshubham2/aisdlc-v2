@@ -1,0 +1,503 @@
+[
+  {
+    "name": "build-slice",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "build-slice requires interactive plan-mode approval gates, mid-slice smoke-gate user halts, and continuous milestone.json updates during execution — all of which depend on the live conversation thread.",
+    "summary": "Executes the current slice end-to-end using plan mode plus a sequence of verification gates. The Builder enters plan mode to explore code with code-review-graph queries and targeted Reads, drafts a task sequence, and obtains explicit user approval before writing code. Execution proceeds task-by-task with per-task verification, a mandatory mid-slice smoke gate, and a multi-audit pre-finish gate before declaring the slice done. Outputs build-log.json and hands off to /code-review.",
+    "agents": [],
+    "methodology_tools": [
+      {
+        "name": "critique_review_prerequisite_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py\" <vault>/slices/slice-NNN-<name>",
+        "purpose": "CRP-1 gate: verifies critique-review.md is present before build entry and again at pre-finish."
+      },
+      {
+        "name": "_worktree_paths",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py\" --slice-folder slice-NNN-<name> --repo-root .",
+        "purpose": "Computes canonical worktree path and branch name from the single shared source."
+      },
+      {
+        "name": "drift_check_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/drift_check_audit.py\" <vault>/slices/slice-NNN-<name>",
+        "purpose": "DCE-1 gate: verifies /drift-check full-mode appended a slice-referencing trigger line to drift-log.md."
+      },
+      {
+        "name": "branch_workflow_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/branch_workflow_audit.py\" <vault>/slices/slice-NNN-<name>",
+        "purpose": "BRANCH-1 gate: verifies commits live on the correct slice/NNN branch."
+      },
+      {
+        "name": "utf8_stdout_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/utf8_stdout_audit.py\"",
+        "purpose": "UTF8-STDOUT-1 gate: verifies every tools/*.py main() reconfigures stdout to UTF-8."
+      },
+      {
+        "name": "pipeline_chain_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/pipeline_chain_audit.py\"",
+        "purpose": "PCA-1 gate: verifies every covered pipeline skill carries a well-formed Pipeline position block."
+      },
+      {
+        "name": "build_checks_integrity",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/build_checks_integrity.py\"",
+        "purpose": "BCI-1 gate: asserts live build-checks.md files match git-tracked canonical fixtures."
+      },
+      {
+        "name": "state_transition_pin_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/state_transition_pin_audit.py\"",
+        "purpose": "STP-1 gate: detects stale test pins referencing old skill prose or outdated risk-register status values."
+      },
+      {
+        "name": "new_agent_warning_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/new_agent_warning_audit.py\"",
+        "purpose": "NAW-1 gate: warns if any agents/*.md were added in this slice's diff."
+      },
+      {
+        "name": "test_first_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/test_first_audit.py\" <vault>/slices/slice-NNN-<name> --strict-pre-finish",
+        "purpose": "TF-1 gate: verifies every AC maps to a PASSING test when Test-first is declared."
+      },
+      {
+        "name": "build_checks_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py\" --slice <vault>/slices/slice-NNN-<name> --changed-files <list>",
+        "purpose": "BC-1 gate: reads build-checks.md, filters applicable rules, refuses if any Critical rule unacknowledged under --strict."
+      },
+      {
+        "name": "wiring_matrix_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/wiring_matrix_audit.py\" <vault>/slices/slice-NNN-<name>",
+        "purpose": "WIRE-1 gate: verifies design.md includes a wiring matrix with consumer entry point and test for every new module."
+      },
+      {
+        "name": "mock_budget_lint",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/mock_budget_lint.py\" <changed-test-files> [--seam-allowlist <vault>/.cross-chunk-seams]",
+        "purpose": "LINT-MOCK gate: lints test files for mock-budget violations, escalating cross-chunk-seam targets to Critical."
+      },
+      {
+        "name": "skill_vault_write_safety_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/skill_vault_write_safety_audit.py\"",
+        "purpose": "SVW-1 gate: verifies every SKILL.md directive mutating a shared-aggregate vault file routes through vault_edit append."
+      }
+    ],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "CRG MCP tools (impact-radius, review-context, search)",
+        "purpose": "Code graph via code-review-graph (CRG) — reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Load mission-brief.json, design.json, critique.json, ADRs, and source files during plan mode."
+      },
+      {
+        "name": "Glob",
+        "purpose": "Discover file paths during plan-mode exploration."
+      },
+      {
+        "name": "Grep",
+        "purpose": "Search for symbols and integration points during plan mode."
+      },
+      {
+        "name": "Edit",
+        "purpose": "Modify existing source and configuration files during task execution."
+      },
+      {
+        "name": "Write",
+        "purpose": "Create new source files and write build-log.json."
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run build/test commands, git operations, smoke-gate checks, and all pre-finish audit tool invocations."
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/mission-brief.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Primary input: acceptance criteria, must-not-defer list, test-first flag, verification plan."
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/design.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Design spec read during prerequisite check and plan mode."
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/critique.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Critic findings read to check for BLOCKED status and enforce constraints."
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/critique-review.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Checked for presence by CRP-1 prerequisite and pre-finish audits."
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/milestone.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Continuously updated during build to record stage, task progress, current focus, next-action."
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/build-log.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Flight recorder written during execution and finalized with summary, plan, gates, deferrals, files changed."
+      },
+      {
+        "path": "<vault>/drift-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "DCE-1 requires /drift-check full-mode to append a Trigger entry referencing the slice."
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read by state_transition_pin_audit (STP-1) to compare live risk statuses against pinned test values."
+      },
+      {
+        "path": "<vault>/build-checks.json",
+        "kind": "enforcement-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Project build rules read by BC-1 and checked for canonical integrity by BCI-1."
+      },
+      {
+        "path": "<vault>/shippability.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Referenced for SVW-1 shippability context at pre-finish."
+      },
+      {
+        "path": "<vault>/triage.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "CRP-1 and DCE-1 audit tools read triage.json frontmatter mode field."
+      },
+      {
+        "path": "VERSION",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "AVFS-1 and TVFS-1 gates read in-repo VERSION."
+      },
+      {
+        "path": ".code-review-graph/",
+        "kind": "external-artifact",
+        "access": "read",
+        "mechanism": "code-review-graph",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Code graph consumed by code-review-graph queries during plan mode."
+      },
+      {
+        "path": "<vault>/.cross-chunk-seams",
+        "kind": "enforcement-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Allowlist of cross-chunk seam targets passed to mock_budget_lint."
+      }
+    ],
+    "hands_off_to": [
+      "code-review"
+    ],
+    "source": "temp/skills/build-slice/SKILL.md"
+  },
+  {
+    "name": "validate-slice",
+    "user_invokable": true,
+    "requires_full_context": false,
+    "runs_in": "delegable-to-subagent",
+    "context_rationale": "validate-slice works entirely from file inputs (mission-brief.json, build-log.json, shippability.json) and tool invocations against the live environment; it has no dependency on prior conversation state beyond those artifact files.",
+    "summary": "Validates the current slice against real environments — real device, real user, real data — going beyond test-suite passing. For each acceptance criterion it executes real-world checks, captures evidence, and classifies results as PASS/FAIL/PARTIAL with failure cause. It runs a shippability catalog regression check via shippability_runner, preceded by SCMD-1, PTFCD-1, and SVW-1 pre-catalog gates plus VAL-1, WS-1, ETC-1 layered audits before handing off to /reflect.",
+    "agents": [],
+    "methodology_tools": [
+      {
+        "name": "validate_slice_layers",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py\" --slice <vault>/slices/slice-NNN-<name> --changed-files <list>",
+        "purpose": "VAL-1 gate: Layer A credential scan (Critical) and Layer B Python dependency hallucination check (Important)."
+      },
+      {
+        "name": "walking_skeleton_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/walking_skeleton_audit.py\" <vault>/slices/slice-NNN-<name> --strict-pre-finish",
+        "purpose": "WS-1 gate: verifies every architectural layer was EXERCISED at runtime when Walking-skeleton declared."
+      },
+      {
+        "name": "exploratory_charter_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/exploratory_charter_audit.py\" <vault>/slices/slice-NNN-<name> --strict-pre-finish",
+        "purpose": "ETC-1 gate: verifies every charter is COMPLETED or DEFERRED with findings recorded."
+      },
+      {
+        "name": "shippability_decoupling_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/shippability_decoupling_audit.py\" <vault>/shippability.json",
+        "purpose": "SCMD-1 pre-catalog gate: verifies every catalog row carries a prose-free Machine-cmd column."
+      },
+      {
+        "name": "shippability_path_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/shippability_path_audit.py\" <vault>/shippability.json",
+        "purpose": "PTFCD-1 pre-catalog gate: verifies every tests/*.py token in Machine-cmd cells resolves to a file on disk."
+      },
+      {
+        "name": "skill_vault_write_safety_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/skill_vault_write_safety_audit.py\"",
+        "purpose": "SVW-1 pre-catalog gate: verifies no SKILL.md prescribes an unrouted mutation of a shared-aggregate vault file."
+      },
+      {
+        "name": "shippability_runner",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py\" <vault>/shippability.json",
+        "purpose": "SRSC-1 canonical catalog runner: executes each row's Machine-cmd and reports PASS/FAIL to catch regressions."
+      }
+    ],
+    "external_tools": [],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Load mission-brief.json, build-log.json, and shippability.json as inputs."
+      },
+      {
+        "name": "Write",
+        "purpose": "Create validation.json with per-criterion results, evidence, shippability regression notes."
+      },
+      {
+        "name": "Edit",
+        "purpose": "Update milestone.json with validation stage, result, next-action."
+      },
+      {
+        "name": "Bash",
+        "purpose": "Execute real-world checks per AC (curl, pytest, CLI runs) and invoke all audit tools."
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/mission-brief.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Primary input: acceptance criteria, verification plan, Walking-skeleton/Exploratory-charter flags."
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/build-log.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Confirm the slice was SHIPPED and interpret deviations during AC validation."
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/validation.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Primary output: per-criterion PASS/FAIL/PARTIAL with evidence and shippability regression notes."
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/milestone.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Updated to record stage: validate, result, next-action."
+      },
+      {
+        "path": "<vault>/shippability.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Shippability catalog read and executed via canonical runner to check for regressions."
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Reality surprises discovered during validation appended immediately via scripts.lib.vault_edit append (SVW-1)."
+      },
+      {
+        "path": "<vault>/.secrets-allowlist",
+        "kind": "enforcement-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Per-project regex allowlist read by validate_slice_layers Layer A to suppress known-false-positive credential hits."
+      },
+      {
+        "path": "<vault>/candidates.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append reality-surprise findings that spawn future work as new candidates."
+      }
+    ],
+    "hands_off_to": [
+      "reflect"
+    ],
+    "source": "temp/skills/validate-slice/SKILL.md"
+  }
+]

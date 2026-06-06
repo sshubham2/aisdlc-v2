@@ -1,0 +1,42 @@
+{
+  "_schema": "aisdlc/reflection@1",
+  "slice": "slice-021",
+  "validated": [
+    {
+      "claim": "SSE holds presence at scale",
+      "evidence": "load test 500 ok"
+    }
+  ],
+  "corrected": [
+    {
+      "was": "design said WebSocket",
+      "now": "SSE",
+      "artifact": "ADR-014"
+    }
+  ],
+  "discovered": [
+    {
+      "item": "Safari retry header",
+      "becomes": "candidate",
+      "ref": "SC-024"
+    }
+  ],
+  "deferred": [
+    {
+      "item": "cursor positions",
+      "why": "out of scope",
+      "becomes_candidate": "SC-025"
+    }
+  ],
+  "critic_calibration": [
+    {
+      "finding": "WS scale risk",
+      "verdict": "VALIDATED"
+    }
+  ],
+  "lessons": [
+    "Prove transport limits with a spike before designing realtime features."
+  ],
+  "supersession": null,
+  "at": "<ts>"
+}

@@ -1,0 +1,156 @@
+{
+  "name": "drift-check",
+  "user_invokable": true,
+  "requires_full_context": false,
+  "runs_in": "delegable-to-subagent",
+  "context_rationale": "Drift-check compares vault files against code reality using file inputs and code-review-graph queries with no dependency on the current session's conversational state, making it fully mechanically runnable as a pre-commit hook or fresh-context subagent.",
+  "summary": "Audits vault claims against code reality and flags divergence across three categories: DRIFT (blocker), UNSPECIFIED CODE (major), and STALE CLAIM (major). Runs in fast mode for pre-commit hooks or full mode for on-demand audits. Appends findings to drift-log.json via the R-32 safe channel and supports interactive --resolve mode. Designed as the detect-only, all-modes counterpart to the Heavy-mode-only /sync skill.",
+  "reads": [
+    {
+      "path": "<vault>/decisions/ADR-*.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "design-slice",
+        "discover",
+        "reflect",
+        "triage"
+      ],
+      "purpose": "Load accepted ADR claims (tech choices, library choices) to verify against code"
+    },
+    {
+      "path": "<vault>/risk-register.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "triage"
+      ],
+      "purpose": "Read risks claimed retired to verify retirement is real"
+    },
+    {
+      "path": "<vault>/slices/*/design.json",
+      "kind": "content-file",
+      "produced_by": [],
+      "purpose": "Active slices only: verify design file references against actual code"
+    },
+    {
+      "path": "<vault>/slices/*/mission-brief.json",
+      "kind": "content-file",
+      "produced_by": [],
+      "purpose": "Active slices only: check must-not-defer items are implemented"
+    },
+    {
+      "path": "<vault>/components/*.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "sync",
+        "triage"
+      ],
+      "purpose": "Heavy mode: include component doc claims in drift audit"
+    },
+    {
+      "path": "<vault>/contracts/*.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "sync"
+      ],
+      "purpose": "Heavy mode: include contract endpoint signature claims in drift audit"
+    },
+    {
+      "path": "<vault>/schemas/*.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "sync"
+      ],
+      "purpose": "Heavy mode: include schema field claims in drift audit"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "<vault>/drift-log.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [],
+      "edited_by": [
+        "build-slice",
+        "drift-check"
+      ],
+      "read_by": [
+        "pulse"
+      ],
+      "validated_by": [
+        "vault_edit"
+      ],
+      "purpose": "Append full-mode audit entry with findings and resolutions (R-32 seam-routed, ADR-103)",
+      "example_schema": "aisdlc/drift-log@1",
+      "example": "examples/drift-log.json"
+    }
+  ],
+  "agents": [],
+  "tools": [
+    {
+      "name": "vault_edit",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file drift-log.json --content-file <entry-file>",
+      "purpose": "Append drift audit entry to drift-log.md (R-32 seam-routed channel, ADR-103, append-only)",
+      "found": true,
+      "path": "scripts/lib/vault_edit.py"
+    },
+    {
+      "name": "cross_spec_parity_audit",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/cross_spec_parity_audit.py\" --root .",
+      "purpose": "Heavy-mode only: validate cross-spec Implementation/Verification references in threat-model.md/requirements.md/nfrs.md (CSP-1)",
+      "found": true,
+      "path": "scripts/lib/cross_spec_parity_audit.py"
+    },
+    {
+      "name": "code-review-graph",
+      "type": "external-package",
+      "invocation": "CRG MCP tools (impact-radius, review-context, search)",
+      "purpose": "Code graph via code-review-graph (CRG) — reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+      "found": false,
+      "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "Read",
+      "purpose": "Read vault files: decisions/*.md, risk-register.json, active slice design.json and mission-brief.json"
+    },
+    {
+      "name": "Grep",
+      "purpose": "Fallback verification of ADR claims when code-review-graph is unavailable"
+    },
+    {
+      "name": "Glob",
+      "purpose": "Enumerate active slice folders under slices/ (excluding archive/)"
+    },
+    {
+      "name": "Bash",
+      "purpose": "Run git diff --name-only HEAD for --fast mode scoping; run drift-check as pre-commit hook script"
+    }
+  ],
+  "hands_off_to": [],
+  "source": "temp/skills/drift-check/SKILL.md",
+  "missing_references": [
+    {
+      "ref": "code-review-graph",
+      "kind": "tool",
+      "found": false,
+      "expected": true,
+      "reason": "External pip package, intentionally not bundled in the plugin."
+    }
+  ]
+}

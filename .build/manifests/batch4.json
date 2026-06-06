@@ -1,0 +1,575 @@
+[
+  {
+    "name": "critique",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "The skill orchestrates from the main agent thread — reads vault files, runs tools, gates build-slice, and halts on TRI-1 user input — while spawning a fresh-context 'critique' subagent for the adversarial heavy lifting.",
+    "summary": "Adversarial review of the current slice's design by a separate Critic AI persona. Spawns a 'critique' subagent with 9 fixed attack dimensions, writes findings to critique.json, and gates /build-slice behind a user-owned TRI-1 triage step. Mandatory in Standard (medium/high tier) and Heavy modes; skippable on low-tier slices with no mandatory triggers. BLOCKED verdict prevents auto-advance; CLEAN or NEEDS-FIXES proceed to /build-slice.",
+    "agents": [
+      {
+        "name": "critique",
+        "when": "Step 2, after gathering slice context",
+        "purpose": "Performs adversarial review of mission-brief.md + design.md + ADRs along 9 dimensions, returning findings as critique.md content"
+      }
+    ],
+    "methodology_tools": [
+      {
+        "name": "project_frame_synth",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py\" --repo-root . --slice-dir <vault>/slices/slice-NNN-<name>",
+        "purpose": "Synthesizes project Identity/Trajectory/Impact frame to give the Critic strategic-direction context (PFS-1/ADR-080)"
+      },
+      {
+        "name": "triage_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/triage_audit.py\" <vault>/slices/slice-NNN-<name>",
+        "purpose": "Validates critique.md Triage section for required fields, valid verdict, complete disposition rows, and non-empty rationale on OVERRIDDEN/DEFERRED/ESCALATED"
+      }
+    ],
+    "external_tools": [],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read mission-brief.json, design.json, ADRs, action-points.json, _index.json, triage.json, milestone.json"
+      },
+      {
+        "name": "Write",
+        "purpose": "Write critique.json to the slice folder"
+      },
+      {
+        "name": "Edit",
+        "purpose": "Update milestone.json (stage, progress box, current focus, on-resume)"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run project_frame_synth and triage_audit via $PY (past-lessons lookup now queries the JSON archive directly)"
+      },
+      {
+        "name": "Agent",
+        "purpose": "Spawn the 'critique' subagent with subagent_type: 'critique'"
+      },
+      {
+        "name": "AskUserQuestion",
+        "purpose": "Step 4.5 TRI-1 user-owned triage — present findings + Builder drafts and halt for user ratification"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/mission-brief.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Slice intent, ACs, must-not-defer, out-of-scope, risk tier"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/design.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Slice design handed to Critic for adversarial review"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/ADR-NNN-*.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "New ADRs from this slice handed to Critic"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/critique.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Critic findings, Builder draft dispositions, and user-ratified triage table"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/milestone.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Update stage, progress box, current focus, on-resume after critique"
+      },
+      {
+        "path": "<vault>/slices/action-points.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Curated cross-slice action points register for Critic context"
+      },
+      {
+        "path": "<vault>/slices/_index.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Most-recent-10 slice table for pattern recognition context"
+      },
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/reflection.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Specific archived reflections when semantic query or register points to a direct match"
+      }
+    ],
+    "hands_off_to": [
+      "critique-review",
+      "build-slice"
+    ],
+    "source": "temp/skills/critique/SKILL.md"
+  },
+  {
+    "name": "critique-review",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "The skill orchestrates from the main agent thread — reads existing critique.json and slice artifacts, invokes the meta-Critic subagent, runs a structural audit, and hands control back to /critique Step 4.5 TRI-1 which requires the main thread's user-input gate.",
+    "summary": "Dual review (DR-1) of the first Critic's output for per-slice false positives, false negatives, and severity miscalibrations. Spawns a 'critique-review' subagent that independently re-applies the 8 review dimensions against mission-brief, design, and the first Critic's critique.json. After receiving the meta-Critic's output, runs critique_review_audit to validate structure, then hands findings back to /critique Step 4.5 TRI-1 for user reconciliation. Recommended for high-tier and auth/data-model/contract slices; optional for low-tier slices.",
+    "agents": [
+      {
+        "name": "critique-review",
+        "when": "Step 2, after gathering slice context including the first Critic's critique.md",
+        "purpose": "Meta-Critic review of the first Critic's findings for VALID/SUSPICIOUS/SEVERITY-WRONG classifications and missed findings"
+      }
+    ],
+    "methodology_tools": [
+      {
+        "name": "project_frame_synth",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py\" --repo-root . --slice-dir <vault>/slices/slice-NNN-<name>",
+        "purpose": "Synthesizes project frame so the meta-Critic can re-check the first Critic's review against strategic direction (PFS-1/ADR-080)"
+      },
+      {
+        "name": "critique_review_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py\" <vault>/slices/slice-NNN-<name>",
+        "purpose": "Validates critique-review.md structure: 4 required sections, dual-review verdict in {ACCEPT,ADJUST,EXTEND}, Reviewed-by and Date fields"
+      }
+    ],
+    "external_tools": [],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read mission-brief.json, design.json, critique.json, ADRs, triage.json, milestone.json"
+      },
+      {
+        "name": "Write",
+        "purpose": "Write critique-review.json to the slice folder"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run project_frame_synth and critique_review_audit via $PY"
+      },
+      {
+        "name": "Agent",
+        "purpose": "Spawn the 'critique-review' subagent with subagent_type: 'critique-review'"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/mission-brief.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Slice intent and ACs handed to meta-Critic"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/design.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Slice design handed to meta-Critic for independent re-review"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/critique.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "First Critic's findings — primary input for the meta-Critic"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/ADR-NNN-*.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "New ADRs from this slice handed to meta-Critic"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/critique-review.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Meta-Critic findings: VALID/SUSPICIOUS/SEVERITY-WRONG per finding plus missed findings"
+      }
+    ],
+    "hands_off_to": [
+      "critique"
+    ],
+    "source": "temp/skills/critique-review/SKILL.md"
+  },
+  {
+    "name": "code-review",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "The skill orchestrates from the main agent thread — resolves the live git diff (including uncommitted working-tree changes), reads vault slice files, invokes the code-Critic subagent, and updates milestone.json — requiring the current repo state only accessible in the main thread.",
+    "summary": "Adversarial review of the slice's code diff by a separate code-Critic AI persona (CRSI-1). Resolves a union-of-three-sources git diff (working tree, untracked, and committed-in-branch) filtered to in-scope paths, then spawns a 'code-review' subagent that attacks the diff along 9 dimensions with path:line specificity. Writes findings to code-review.json and updates milestone.json; advisory only in v1. Auto-advances to /validate-slice after writing code-review.json.",
+    "agents": [
+      {
+        "name": "code-review",
+        "when": "Step 2, after resolving and filtering the slice diff",
+        "purpose": "Adversarial code-Critic review of the slice diff along 9 dimensions with path:line specificity"
+      }
+    ],
+    "methodology_tools": [],
+    "external_tools": [],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read mission-brief.json, design.json, ADRs, build-log.json, _index.json, milestone.json"
+      },
+      {
+        "name": "Write",
+        "purpose": "Write code-review.json to the slice folder"
+      },
+      {
+        "name": "Edit",
+        "purpose": "Update milestone.json (stage, progress box, current focus, on-resume)"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run git diff / git ls-files union commands to resolve the filtered slice diff"
+      },
+      {
+        "name": "Agent",
+        "purpose": "Spawn the 'code-review' subagent with subagent_type: 'code-review'"
+      },
+      {
+        "name": "Glob",
+        "purpose": "Locate active slice folder and slice artifact files"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/mission-brief.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Slice intent and ACs handed to code-Critic"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/design.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Slice design handed to code-Critic for drift detection"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/ADR-NNN-*.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "New ADRs from this slice handed to code-Critic"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/build-log.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Verify Result: SHIPPED before proceeding; also in-scope for code-review diff"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/code-review.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Code-Critic findings (advisory in v1): blockers/majors/minors with path:line refs, dimensions checked"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/milestone.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Update stage to code-review, progress box, current focus, on-resume"
+      },
+      {
+        "path": "<vault>/slices/_index.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Locate currently active slice"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/validation.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Post-build artifact in scope for code-review diff per ADR-066 M5 INCLUDE direction"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/reflection.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Post-build artifact in scope for code-review diff per ADR-066 M5 INCLUDE direction"
+      }
+    ],
+    "hands_off_to": [
+      "validate-slice"
+    ],
+    "source": "temp/skills/code-review/SKILL.md"
+  },
+  {
+    "name": "critic-calibrate",
+    "user_invokable": true,
+    "requires_full_context": false,
+    "runs_in": "main-agent",
+    "context_rationale": "The skill itself orchestrates from the main agent but all heavy analysis is delegated to a fresh-context 'critic-calibrate' subagent; the skill only collects and presents inputs and logs results, which does not depend on the main thread's current slice state.",
+    "summary": "Cross-slice meta-skill that mines 'Missed by Critic' and 'Critic calibration' entries from the last N (default 15) archived reflections to identify blind-spot patterns in the Critic prompt. Spawns a 'critic-calibrate' subagent that classifies patterns, applies a >=3-distinct-slices threshold, and produces 0-3 evidence-backed proposals. Proposals are presented one-at-a-time to the user for accept/modify/reject; this skill never auto-applies edits to the Critic agent prompt. Logs every run to critic-calibration-log.json for longitudinal effectiveness tracking.",
+    "agents": [
+      {
+        "name": "critic-calibrate",
+        "when": "Step 2, after gathering archived reflections, current Critic prompt, and calibration log",
+        "purpose": "Classifies Critic miss patterns, applies evidence threshold, and generates 0-3 targeted prompt-update proposals for critique.md"
+      }
+    ],
+    "methodology_tools": [],
+    "external_tools": [],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read archived reflection.json files (Critic calibration sections), ~/.claude/agents/critique.json, critic-calibration-log.json"
+      },
+      {
+        "name": "Write",
+        "purpose": "Append calibration run record to <vault>/critic-calibration-log.json"
+      },
+      {
+        "name": "Bash",
+        "purpose": "List archived slice folders (ls -t)"
+      },
+      {
+        "name": "Agent",
+        "purpose": "Spawn the 'critic-calibrate' subagent with subagent_type: 'critic-calibrate'"
+      },
+      {
+        "name": "AskUserQuestion",
+        "purpose": "Present each proposal one-at-a-time for user accept/modify/reject decision"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/slices/archive/",
+        "kind": "directory",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Enumerate last N archived slice folders for reflection window"
+      },
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/reflection.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Extract Critic calibration + Missed by Critic sections for pattern analysis"
+      },
+      {
+        "path": "<vault>/slices/_index.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Optional quick navigation to archived slices"
+      },
+      {
+        "path": "<vault>/critic-calibration-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Audit trail of calibration runs: pattern summary, proposals, user decisions, effectiveness checks"
+      }
+    ],
+    "hands_off_to": [],
+    "source": "temp/skills/critic-calibrate/SKILL.md"
+  }
+]

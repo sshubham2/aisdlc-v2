@@ -1,0 +1,38 @@
+{
+  "_schema": "aisdlc/critique@1",
+  "_note": "Critic findings + Builder dispositions + user-ratified TRI-1 triage. verdict gates /build-slice. disposition enum: accepted-fixed | accepted-pending | overridden | deferred | escalated.",
+  "slice": "slice-021",
+  "reviewed_by": "critique agent",
+  "verdict": "needs-fixes",
+  "findings": [
+    {
+      "id": "C1",
+      "dimension": "security",
+      "severity": "major",
+      "claim": "SSE endpoint lacks an auth check.",
+      "fix": "gate on session cookie",
+      "disposition": "accepted-pending"
+    }
+  ],
+  "dimensions_checked": [
+    {
+      "dimension": "security",
+      "result": "1 major"
+    },
+    {
+      "dimension": "edge-cases",
+      "result": "none"
+    }
+  ],
+  "triage": {
+    "verdict": "needs-fixes",
+    "ratified_by": "<user>",
+    "at": "<ts>",
+    "dispositions": [
+      {
+        "finding": "C1",
+        "action": "fix-now"
+      }
+    ]
+  }
+}

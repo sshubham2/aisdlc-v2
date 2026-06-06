@@ -1,0 +1,105 @@
+{
+  "_schema": "aisdlc/slice-candidates@1",
+  "_doc": "Single source of truth for LIVE slice candidates only (status in {candidate, spiking, active, blocked, deferred}). Replaces v1's scattered sources: diagnose-out/backlog.md, risk-register.md-as-candidate-source, and slice-queue.md's candidate section. Lives at <vault>/candidates.json. When a candidate SHIPS (or is rejected) it is MOVED out to <vault>/archive/candidates.json (mirrors slices/ vs slices/archive/) via the vault_edit seam-routed move, keeping the live file small. Written by /diagnose->/slice-candidates, /discover, /reflect, /risk-spike, /validate-slice (append via the vault_edit-append safe channel); /reflect performs the move-to-archive on ship. Read by /slice (picks the next cut) and /pulse (surfaces the backlog).",
+  "_fields": {
+    "status": "lifecycle: candidate | spiking | active | blocked | deferred  (LIVE file)  ->  shipped | rejected  (MOVED to <vault>/archive/candidates.json)",
+    "progress": "slice-loop stage of an active candidate: not-started | spike | design | critique | build | code-review | validate | reflect | complete",
+    "claimed_by": "git identity that picked the candidate via /slice: {git_user, git_email}; null until claimed",
+    "started_at": "timestamp the slice started (set when /slice claims the candidate); null until claimed",
+    "assumptions[].spike_status": "unproven | proving | proven | failed  (blocking failed => slice halts at the /risk-spike step-0 gate until fallback is re-spiked)"
+  },
+  "project": "<project name>",
+  "updated": "<stamped by tooling>",
+  "candidates": [
+    {
+      "id": "SC-014",
+      "title": "stripe-webhook-receiver",
+      "status": "candidate",
+      "progress": "not-started",
+      "slice": null,
+      "claimed_by": null,
+      "started_at": null,
+      "source": [
+        { "type": "risk", "ref": "R-13" },
+        { "type": "concept-scope", "ref": "concept#payments" }
+      ],
+      "description": "Receive and verify Stripe webhook events end-to-end; persist to the events table.",
+      "rationale": "Retires R-13 (the riskiest external dependency) and ships a user-visible 'payment confirmed' state. <20% of final scope.",
+      "user_visible_outcome": "A real test payment flips an order to PAID within the dashboard.",
+      "dependencies": ["SC-009"],
+      "priority": { "score": 7, "likelihood_impact": "high×high", "severity": "high", "effort": "M", "blast_radius": "orders, billing" },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "Stripe webhook signatures verify with our key rotation scheme and arrive <2s p95 under expected load.",
+          "risk_ref": "R-13",
+          "blocking": true,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Real Stripe test-mode event -> verified signature -> row in events table -> order PAID.",
+      "history": [
+        { "event": "created", "by": "discover", "at": "<ts>", "ref": "concept#payments" }
+      ]
+    },
+    {
+      "id": "SC-015",
+      "title": "realtime-presence",
+      "status": "blocked",
+      "progress": "spike",
+      "slice": "slice-021",
+      "claimed_by": { "git_user": "<name>", "git_email": "<email>" },
+      "started_at": "<ts>",
+      "source": [{ "type": "reflection-discovered", "ref": "slice-018" }],
+      "description": "Show which teammates are viewing a doc in real time.",
+      "rationale": "User-requested; depends on a push transport we have not proven.",
+      "user_visible_outcome": "Avatars of active viewers appear live on the doc.",
+      "dependencies": [],
+      "priority": { "score": 4, "likelihood_impact": "medium×medium", "severity": "medium", "effort": "L", "blast_radius": "collab" },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "Our managed host's WebSocket support holds 500 concurrent connections per instance without dropping.",
+          "risk_ref": "R-27",
+          "blocking": true,
+          "spike_status": "failed",
+          "spike_ref": "spikes/spike-ws-presence",
+          "spike_evidence": "Host capped at ~120 concurrent WS before 503s; see spike output.",
+          "fallback": "Switch transport to SSE + short-poll fallback, OR move presence to a managed pub/sub (Ably/Pusher). Re-spike before unblocking."
+        }
+      ],
+      "verification_plan": "Load-test the chosen transport at 500 concurrent before any design work resumes.",
+      "history": [
+        { "event": "created", "by": "reflect", "at": "<ts>", "ref": "slice-018" },
+        { "event": "picked", "by": "slice", "at": "<ts>", "ref": "slice-021" },
+        { "event": "spike-failed", "by": "risk-spike", "at": "<ts>", "ref": "spikes/spike-ws-presence" }
+      ]
+    },
+    {
+      "id": "SC-016",
+      "title": "purge-dead-auth-shim",
+      "status": "candidate",
+      "progress": "not-started",
+      "slice": null,
+      "claimed_by": null,
+      "started_at": null,
+      "source": [{ "type": "diagnose-finding", "ref": "finding-03a-dead-code-7" }],
+      "description": "Remove the unreachable legacy auth shim flagged as dead code.",
+      "rationale": "Owner confirmed dead in diagnosis; no behaviour change, low risk.",
+      "user_visible_outcome": "No user-visible change; smaller surface, fewer auth code paths.",
+      "dependencies": [],
+      "priority": { "score": 2, "likelihood_impact": "low×low", "severity": "low", "effort": "S", "blast_radius": "auth (isolated)" },
+      "assumptions": [],
+      "verification_plan": "Full test suite green + grep confirms zero references to the shim.",
+      "history": [
+        { "event": "created", "by": "slice-candidates", "at": "<ts>", "ref": "diagnosis.html#finding-03a-dead-code-7" }
+      ]
+    }
+  ],
+  "pick_log": [
+    { "candidate": "SC-015", "slice": "slice-021", "picked_by": "<name> <email>", "at": "<ts>" }
+  ]
+}

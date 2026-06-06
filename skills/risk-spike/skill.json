@@ -1,0 +1,227 @@
+{
+  "name": "risk-spike",
+  "user_invokable": true,
+  "requires_full_context": true,
+  "runs_in": "main-agent",
+  "context_rationale": "Interactive blocking gate: writes and runs throwaway proof code, needs credentials/device access, and on failure requires a human discussion of a risk-free fallback before re-spiking — depends on the live slice session.",
+  "summary": "First step of the slice loop (slice step-0 gate). Reads the picked candidate's blocking assumptions from candidates.json and proves each with throwaway code on real environments; spawns the field-recon subagent to survey current platform reality first. All assumptions proven -> advances to /design-slice; any FAILED -> marks the candidate blocked and halts the slice until a risk-free fallback is discussed and re-spiked. Records spike verdicts back into candidates.json and the risk ledger.",
+  "reads": [
+    {
+      "path": "<vault>/risk-register.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "triage"
+      ],
+      "purpose": "Identify HIGH-risk items that need spiking"
+    },
+    {
+      "path": "<vault>/candidates.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "discover",
+        "slice-candidates"
+      ],
+      "purpose": "Read the active candidate's blocking assumptions[] to prove."
+    }
+  ],
+  "outputs": [
+    {
+      "path": "<vault>/risk-register.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "update",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "triage"
+      ],
+      "edited_by": [
+        "discover",
+        "reflect",
+        "risk-spike",
+        "user-test",
+        "validate-slice"
+      ],
+      "read_by": [
+        "build-slice",
+        "discover",
+        "drift-check",
+        "heavy-architect",
+        "pulse",
+        "reflect",
+        "risk-spike",
+        "slice",
+        "sync"
+      ],
+      "validated_by": [
+        "risk_register_audit",
+        "vault_edit"
+      ],
+      "purpose": "Mark risk as RETIRED/BLOCKING/CONDITIONAL after spike",
+      "example_schema": "aisdlc/risk-register@1",
+      "example": "examples/risk-register.json"
+    },
+    {
+      "path": "<vault>/spikes/spike-*.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "risk-spike"
+      ],
+      "edited_by": [],
+      "read_by": [
+        "heavy-architect"
+      ],
+      "validated_by": [],
+      "purpose": "Spike result document with test, outcome, and decision",
+      "example_schema": "aisdlc/spike@1",
+      "example": "examples/spike.json"
+    },
+    {
+      "path": "<vault>/spikes/spike-*/field-recon.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "risk-spike"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Field reconnaissance findings from the field-recon subagent"
+    },
+    {
+      "path": "<vault>/spikes/code/spike-*/",
+      "kind": "directory",
+      "v1_format": "directory",
+      "v2_format": "directory",
+      "write_semantics": "create",
+      "write_mechanism": "mkdir",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "risk-spike"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Throwaway spike code directory"
+    },
+    {
+      "path": "<vault>/candidates.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "update",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "discover",
+        "slice-candidates"
+      ],
+      "edited_by": [
+        "reflect",
+        "risk-spike",
+        "slice",
+        "validate-slice"
+      ],
+      "read_by": [
+        "pulse",
+        "reflect",
+        "risk-spike",
+        "slice"
+      ],
+      "validated_by": [],
+      "purpose": "Record each assumption's spike_status (proven/failed), spike_ref, spike_evidence; on FAILED set candidate status=blocked + fallback; on all-proven set status=active, progress=design.",
+      "example_schema": "aisdlc/slice-candidates@1",
+      "example": "examples/slice-candidates.json"
+    }
+  ],
+  "agents": [
+    {
+      "name": "field-recon",
+      "when": "Step 2.5 for each spike target",
+      "purpose": "Web survey of current real-world knowledge about the technology under test — post-training-cutoff platform changes, quotas, deprecations, known failure modes"
+    }
+  ],
+  "tools": [
+    {
+      "name": "code-review-graph",
+      "type": "external-package",
+      "invocation": "CRG MCP tools (impact-radius, review-context, search)",
+      "purpose": "Code graph via code-review-graph (CRG) — reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+      "found": false,
+      "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "Read",
+      "purpose": "Read risk-register.json to identify spike targets"
+    },
+    {
+      "name": "Write",
+      "purpose": "Write spike document spike-<name>.md and field-recon.md"
+    },
+    {
+      "name": "Bash",
+      "purpose": "Execute throwaway spike code and capture output"
+    },
+    {
+      "name": "Edit",
+      "purpose": "Update risk-register.json with GO/NO-GO/CONDITIONAL result"
+    },
+    {
+      "name": "Agent",
+      "purpose": "Spawn field-recon subagent for web survey of the technology"
+    },
+    {
+      "name": "AskUserQuestion",
+      "purpose": "Ask user which risks to spike when no argument provided"
+    }
+  ],
+  "hands_off_to": [
+    "design-slice"
+  ],
+  "source": "temp/skills/risk-spike/SKILL.md",
+  "missing_references": [
+    {
+      "ref": "code-review-graph",
+      "kind": "tool",
+      "found": false,
+      "expected": true,
+      "reason": "External pip package, intentionally not bundled in the plugin."
+    }
+  ]
+}

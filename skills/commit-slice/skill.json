@@ -1,0 +1,179 @@
+{
+  "name": "commit-slice",
+  "user_invokable": true,
+  "requires_full_context": false,
+  "runs_in": "delegable-to-subagent",
+  "context_rationale": "Generates commit messages from vault files on disk; no interactive main-thread context needed except for the --merge/--push confirmation gates which are explicit checkpoints.",
+  "summary": "Generates an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, ADRs). Dispatches message rendering to a Haiku subagent for cost efficiency. Supports three mutually exclusive execution modes: --merge, --push, and --sync-after-pr. Default mode generates and displays the message only.",
+  "reads": [
+    {
+      "path": "<vault>/slices/slice-NNN/mission-brief.json",
+      "kind": "content-file",
+      "produced_by": [
+        "slice"
+      ],
+      "purpose": "Source of slice intent and acceptance criteria count for commit message"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/critique.json",
+      "kind": "content-file",
+      "produced_by": [
+        "critique"
+      ],
+      "purpose": "Critic blocker count and addressed status"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/build-log.json",
+      "kind": "content-file",
+      "produced_by": [
+        "build-slice"
+      ],
+      "purpose": "Files changed and deferrals"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/validation.json",
+      "kind": "content-file",
+      "produced_by": [
+        "validate-slice"
+      ],
+      "purpose": "Per-AC PASS/FAIL and shippability regression status"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/reflection.json",
+      "kind": "content-file",
+      "produced_by": [
+        "reflect"
+      ],
+      "purpose": "Validated items and design corrections"
+    },
+    {
+      "path": "<vault>/decisions/ADR-*.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "design-slice",
+        "discover",
+        "reflect",
+        "triage"
+      ],
+      "purpose": "Find new ADRs referencing the current slice"
+    },
+    {
+      "path": "<vault>/shippability.json",
+      "kind": "content-file",
+      "produced_by": [
+        "reflect"
+      ],
+      "purpose": "Shippability entry for the slice"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "<vault>/slices/slice-NNN/build-log.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "build-slice"
+      ],
+      "edited_by": [
+        "commit-slice"
+      ],
+      "read_by": [
+        "code-review",
+        "commit-slice",
+        "pulse",
+        "reflect",
+        "validate-slice"
+      ],
+      "validated_by": [],
+      "purpose": "Append PCR auto-resolution and PCR-2b breadcrumb events to Events section",
+      "example_schema": "aisdlc/build-log@1",
+      "example": "examples/build-log.json"
+    },
+    {
+      "path": "<vault>/parallel-conflict-resolution-log.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [],
+      "edited_by": [
+        "commit-slice"
+      ],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Audit log of PCR auto-resolutions and HARD resolution records"
+    }
+  ],
+  "agents": [
+    {
+      "name": "code-review",
+      "when": "PCR-2b HARD/MIXED rebase conflict gate (Step 5b) — after user resolves conflict markers and --verify-resolution passes CLEAN",
+      "purpose": "Review the resolved conflict diff for lost-hunk/dropped-side, both-sides-intent preservation, semantic correctness, stray markers, and vault/ADR contradiction"
+    }
+  ],
+  "tools": [
+    {
+      "name": "stale_branch_classifier",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/stale_branch_classifier.py\" --repo-root . --json",
+      "purpose": "Classify slice/* branches as orphan (worktree-less) or legitimate concurrent slice; gates --merge and --push pre-flight",
+      "found": true,
+      "path": "skills/commit-slice/scripts/stale_branch_classifier.py"
+    },
+    {
+      "name": "parallel_conflict_resolver",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py\" --resolve-soft --json",
+      "purpose": "Attempt auto-resolution of SOFT/VAULT_CLAIM rebase conflicts during PSQ-3 rebase in --merge flow",
+      "found": true,
+      "path": "skills/commit-slice/scripts/parallel_conflict_resolver.py"
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "Read",
+      "purpose": "Read mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, shippability.json from target slice folder"
+    },
+    {
+      "name": "Glob",
+      "purpose": "Find most recently archived slice folder and new ADRs referencing the slice"
+    },
+    {
+      "name": "Grep",
+      "purpose": "Find ADRs referencing the current slice (grep -l 'slice: slice-NNN')"
+    },
+    {
+      "name": "Bash",
+      "purpose": "Run git status, add, commit, merge, rebase, push, branch, log, worktree, ls-remote, cherry, fetch"
+    },
+    {
+      "name": "Agent",
+      "purpose": "Dispatch to Haiku subagent for commit message template rendering; dispatch code-review subagent for PCR-2b HARD/MIXED resolution verification"
+    },
+    {
+      "name": "AskUserQuestion",
+      "purpose": "TRI-RESOLVE-1 structured three-option gate for HARD/MIXED conflict resolution; confirmation checkpoints before git state changes"
+    }
+  ],
+  "hands_off_to": [
+    "slice",
+    "pulse"
+  ],
+  "source": "temp/skills/commit-slice/SKILL.md",
+  "missing_references": []
+}

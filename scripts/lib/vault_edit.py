@@ -1,0 +1,531 @@
+"""vault_edit — the v2 canonical, JSON-native vault-write CLI (SVW-1).
+
+The single concurrency-safe channel for skill-driven mutation of a shared-aggregate
+vault file, so a skill's write never bypasses the ``_vault_write`` lock (R-32). v2
+replaces v1's raw-text ``vault_edit`` (append/rewrite/read/move on ``.md`` byte
+streams) with a JSON-aware interface, while keeping v1's proven safe-write
+primitives (sidecar lock, EOL-preserving atomic replace, EPERM retry).
+
+Subcommands (a global ``--vault ROOT`` overrides ``$AI_SDLC_VAULT_ROOT`` / the
+computed default; every path resolves UNDER the vault root — an absolute path is
+accepted iff it lands under the root, a ``..``-escape is a usage error):
+
+  read    --file F [--out-file B]
+      Emit the target's current RAW bytes — the byte-exact CAS base for ``rewrite``.
+      Prefer ``--out-file`` over shell ``>`` (PowerShell ``>`` emits UTF-16LE+BOM →
+      CAS livelock). A missing target emits nothing (the create-case base = empty).
+
+  get     --file F [--path .a.b[0].c]
+      Read a JSON subtree/scalar at the dotted ``--path`` (default: the whole doc)
+      → stdout. A string value prints raw; anything else prints as compact JSON. A
+      missing file or missing path is a usage error (exit 2) so a ``|| fallback``
+      fires.
+
+  query   --file F --array A [--where k=v ...]
+      Filter array ``A``'s elements (all ``--where`` equalities must match) →
+      stdout as a pretty JSON list.
+
+  append  --file F [--array A] (--json S | --content-file C | --stdin)
+      SVW-1 LOCKED read-modify-write: append the element to array ``A`` (auto-
+      detected when the doc has exactly one list field). A list element EXTENDS;
+      an object/scalar APPENDS. Creates the file/array when absent.
+
+  update  --file F --array A --id ID [--id-key K] [--assumption AID]
+          (--set k=v ...) [--append FIELD JSON ...]
+      SVW-1 LOCKED read-modify-write: find the record in ``A`` whose ``--id-key``
+      (default ``id``) == ``ID``; optionally descend into its ``assumptions[]`` to
+      the ``--assumption`` id; apply each ``--set`` (value parsed as JSON, else a
+      string) and append each ``--append FIELD JSON`` to a nested array.
+
+  rewrite --file F --base-file B (--content-file C | --stdin)
+      Compare-and-swap whole-file rewrite (the read-modify-write class where the
+      skill regenerates the whole file). Writes only if on-disk bytes still match
+      ``--base-file`` (EOL-normalized compare / EOL-preserving write). Stale base
+      → exit 3 (retryable: re-read + re-apply + retry).
+
+  move    --from X --to Y
+      Seam-routed directory/file MOVE (the in-loop archive ``mv``; both endpoints
+      under the vault root). Refuses a pre-existing landing path (no clobber).
+
+  list    --dir D [--count]
+      List immediate child entry names of vault dir ``D`` (or print the count).
+
+  count   --file F [--array A]
+      Print the length of array ``A`` (auto-detected when single).
+
+Exit codes:
+    0  success
+    2  usage error — bad/escaping path, missing/locked content, malformed JSON,
+       missing id/path, a non-array target, a missing/clobbering move, a write
+       failure (fail-VISIBLE per R-7; never a silent no-op)
+    3  ``rewrite`` ONLY — compare-and-swap CONFLICT (retryable signal, distinct
+       from usage exit 2)
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+from typing import Any
+
+# --- plugin-root import bootstrap (shared lib invoked by ABSOLUTE PATH from SKILL.md) ---
+# A skill's shell command runs in the USER's CWD, not the plugin root, and SKILL.md
+# cannot use `python -m` or `${CLAUDE_PLUGIN_ROOT}` (the latter only expands in JSON
+# hooks/MCP, not markdown). So shared tools are invoked as
+# `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" ...`, which puts
+# scripts/lib (NOT the plugin root) on sys.path[0] — `from scripts.lib import ...`
+# would then fail. Add the plugin root here, mirroring the single-skill scripts'
+# parents[3] bootstrap. No-op under `-m scripts.lib.vault_edit` from the plugin root.
+_PLUGIN_ROOT = Path(__file__).resolve().parents[2]  # <plugin>/scripts/lib/vault_edit.py -> <plugin>
+if str(_PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_ROOT))
+
+from scripts.lib import _stdout
+from scripts.lib._vault_paths import VAULT_ROOT
+from scripts.lib._vault_write import (
+    StaleVaultBaseError,
+    safe_append_text,
+    safe_mutate_text,
+    safe_rewrite_text,
+)
+
+_JSON_DUMP = {"indent": 2, "ensure_ascii": False, "sort_keys": False}
+
+
+# ── path + JSON helpers ────────────────────────────────────────────────────────
+
+def _root(args: argparse.Namespace) -> Path:
+    """The vault root: ``--vault`` when given, else the resolved ``VAULT_ROOT``."""
+    v = getattr(args, "vault", None)
+    return Path(v) if v else VAULT_ROOT
+
+
+def _resolve_in_vault(root: Path, file_arg: str, *, arg_name: str = "--file") -> Path:
+    """Resolve ``file_arg`` under ``root``. Accepts a vault-relative path OR an
+    absolute path that lands under ``root``; rejects an empty path, the root dir
+    itself, or any ``..``/absolute escape (exit-2 usage errors, fail-VISIBLE)."""
+    root_r = Path(root).resolve()
+    if not file_arg.strip():
+        raise ValueError(f"{arg_name} must name a vault file (got an empty path)")
+    fp = Path(file_arg)
+    target = (fp if fp.is_absolute() else (Path(root) / fp)).resolve()
+    if target == root_r:
+        raise ValueError(
+            f"{arg_name} {file_arg!r} resolves to the vault root itself, not a file "
+            f"under it"
+        )
+    if root_r not in target.parents:
+        raise ValueError(
+            f"{arg_name} {file_arg!r} resolves outside the vault root "
+            f"({target} is not under {root_r})"
+        )
+    return target
+
+
+def _load_json(target: Path) -> Any:
+    """Parse ``target`` as JSON (``{}`` when absent/empty). Raises ValueError on
+    malformed JSON (mapped to exit 2)."""
+    if not target.exists():
+        return {}
+    text = target.read_text(encoding="utf-8")
+    if not text.strip():
+        return {}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{target} is not valid JSON: {exc}") from exc
+
+
+def _dump(data: Any) -> str:
+    return json.dumps(data, **_JSON_DUMP) + "\n"
+
+
+def _detect_array_key(data: Any) -> str | None:
+    """The sole top-level list-valued key, or ``None`` when zero or multiple."""
+    if not isinstance(data, dict):
+        return None
+    lists = [k for k, v in data.items() if isinstance(v, list)]
+    return lists[0] if len(lists) == 1 else None
+
+
+def _find_by_id(arr: list, id_val: str, *, id_key: str = "id") -> dict | None:
+    for e in arr:
+        if isinstance(e, dict) and str(e.get(id_key)) == str(id_val):
+            return e
+    return None
+
+
+_SEG = re.compile(r"^([^\[\]]+)(?:\[(\d+)\])?$")
+
+
+def _navigate(obj: Any, path: str) -> Any:
+    """Descend a dotted path like ``.a.b[0].c`` (leading dot optional). Raises
+    KeyError/IndexError/TypeError on a miss (mapped to exit 2)."""
+    p = path.strip()
+    if p.startswith("."):
+        p = p[1:]
+    if not p:
+        return obj
+    cur = obj
+    for raw in p.split("."):
+        m = _SEG.match(raw)
+        if not m:
+            raise KeyError(f"bad path segment {raw!r}")
+        key, idx = m.group(1), m.group(2)
+        if not isinstance(cur, dict) or key not in cur:
+            raise KeyError(f"no key {key!r} at this level")
+        cur = cur[key]
+        if idx is not None:
+            cur = cur[int(idx)]  # IndexError/TypeError → caught by caller
+    return cur
+
+
+def _set_value(raw: str) -> Any:
+    """``--set``/``--where`` value: parse as JSON (numbers, true/false/null,
+    quoted strings, objects), falling back to the bare string."""
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return raw
+
+
+def _element_source(args: argparse.Namespace) -> Any:
+    """Load the append element from ``--json`` / ``--content-file`` / ``--stdin``."""
+    if getattr(args, "json", None) is not None:
+        src, label = args.json, "--json"
+    elif getattr(args, "content_file", None) is not None:
+        src, label = Path(args.content_file).read_text(encoding="utf-8"), "--content-file"
+    else:
+        src, label = sys.stdin.read(), "--stdin"
+    try:
+        return json.loads(src)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} content is not valid JSON: {exc}") from exc
+
+
+def _err(msg: str) -> None:
+    sys.stderr.write(f"vault_edit: {msg}\n")
+
+
+# ── subcommands ────────────────────────────────────────────────────────────────
+
+def _cmd_read(args: argparse.Namespace) -> int:
+    try:
+        target = _resolve_in_vault(_root(args), args.file)
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    try:
+        data = target.read_bytes() if target.exists() else b""
+    except OSError as exc:
+        _err(f"cannot read {target}: {exc}"); return 2
+    if args.out_file is not None:
+        try:
+            Path(args.out_file).write_bytes(data)  # byte-safe; avoids PowerShell `>` (B1)
+        except OSError as exc:
+            _err(f"cannot write --out-file: {exc}"); return 2
+        return 0
+    sys.stdout.buffer.write(data)  # RAW bytes — bypass the UTF-8 text wrapper
+    sys.stdout.buffer.flush()
+    return 0
+
+
+def _cmd_get(args: argparse.Namespace) -> int:
+    try:
+        target = _resolve_in_vault(_root(args), args.file)
+        if not target.exists():
+            raise ValueError(f"{target} does not exist")
+        data = _load_json(target)
+        value = _navigate(data, args.path or ".")
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    except (KeyError, IndexError, TypeError) as exc:
+        _err(f"path {args.path!r} not found: {exc}"); return 2
+    print(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
+    return 0
+
+
+def _cmd_query(args: argparse.Namespace) -> int:
+    try:
+        target = _resolve_in_vault(_root(args), args.file)
+        data = _load_json(target)
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    arr = data.get(args.array, []) if isinstance(data, dict) else []
+    if not isinstance(arr, list):
+        _err(f"{args.array} is not a JSON array in {target}"); return 2
+    wheres = []
+    for w in args.where or []:
+        if "=" not in w:
+            _err(f"--where {w!r} must be key=value"); return 2
+        k, v = w.split("=", 1)
+        wheres.append((k, _set_value(v)))
+    out = [e for e in arr
+           if isinstance(e, dict) and all(e.get(k) == v for k, v in wheres)]
+    print(json.dumps(out, **_JSON_DUMP))
+    return 0
+
+
+def _cmd_append(args: argparse.Namespace) -> int:
+    try:
+        target = _resolve_in_vault(_root(args), args.file)
+        element = _element_source(args)
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    except OSError as exc:
+        _err(f"cannot read content: {exc}"); return 2
+
+    def mutate(text: str) -> str:
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{target} is not valid JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"{target} top-level is not a JSON object")
+        key = args.array or _detect_array_key(data)
+        if key is None:
+            raise ValueError(
+                "no --array given and the doc has zero or multiple array fields — "
+                "name the target array with --array"
+            )
+        arr = data.setdefault(key, [])
+        if not isinstance(arr, list):
+            raise ValueError(f"target field {key!r} is not a JSON array")
+        if isinstance(element, list):
+            arr.extend(element)
+        else:
+            arr.append(element)
+        return _dump(data)
+
+    return _run_mutate(target, mutate)
+
+
+def _cmd_update(args: argparse.Namespace) -> int:
+    try:
+        target = _resolve_in_vault(_root(args), args.file)
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    sets = []
+    for s in args.set or []:
+        if "=" not in s:
+            _err(f"--set {s!r} must be key=value"); return 2
+        k, v = s.split("=", 1)
+        sets.append((k, _set_value(v)))
+    appends = []
+    for field, raw in args.append or []:
+        try:
+            appends.append((field, json.loads(raw)))
+        except json.JSONDecodeError as exc:
+            _err(f"--append {field} value is not valid JSON: {exc}"); return 2
+
+    def mutate(text: str) -> str:
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{target} is not valid JSON: {exc}") from exc
+        arr = data.get(args.array) if isinstance(data, dict) else None
+        if not isinstance(arr, list):
+            raise ValueError(f"{args.array!r} is not a JSON array in {target}")
+        rec = _find_by_id(arr, args.id, id_key=args.id_key)
+        if rec is None:
+            raise ValueError(f"no {args.array} record with {args.id_key}={args.id!r}")
+        tgt = rec
+        if args.assumption:
+            subs = rec.get("assumptions")
+            if not isinstance(subs, list):
+                raise ValueError(f"record {args.id!r} has no assumptions[] array")
+            tgt = _find_by_id(subs, args.assumption, id_key="id")
+            if tgt is None:
+                raise ValueError(f"no assumption id={args.assumption!r} in {args.id!r}")
+        for k, v in sets:
+            tgt[k] = v
+        for field, elem in appends:
+            lst = tgt.setdefault(field, [])
+            if not isinstance(lst, list):
+                raise ValueError(f"--append target {field!r} is not a JSON array")
+            lst.append(elem)
+        return _dump(data)
+
+    return _run_mutate(target, mutate)
+
+
+def _run_mutate(target: Path, mutate) -> int:
+    try:
+        safe_mutate_text(target, mutate)
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    except (OSError, TimeoutError) as exc:
+        _err(f"write to {target} failed (fail-visible per R-7): {exc}"); return 2
+    return 0
+
+
+def _cmd_rewrite(args: argparse.Namespace) -> int:
+    try:
+        target = _resolve_in_vault(_root(args), args.file)
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    try:
+        base = Path(args.base_file).read_bytes()
+    except OSError as exc:
+        _err(f"cannot read --base-file: {exc}"); return 2
+    try:
+        content = (Path(args.content_file).read_text(encoding="utf-8")
+                   if args.content_file is not None else sys.stdin.read())
+    except OSError as exc:
+        _err(f"cannot read content: {exc}"); return 2
+    try:
+        safe_rewrite_text(target, content, expected_base=base)
+    except StaleVaultBaseError as exc:
+        _err(f"rewrite CONFLICT (exit 3) — {exc}"); return 3
+    except (OSError, TimeoutError) as exc:
+        _err(f"rewrite of {target} failed (fail-visible per R-7): {exc}"); return 2
+    return 0
+
+
+def _cmd_move(args: argparse.Namespace) -> int:
+    root = _root(args)
+    try:
+        src = _resolve_in_vault(root, args.src, arg_name="--from")
+        dst = _resolve_in_vault(root, args.dst, arg_name="--to")
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    if src == dst:
+        _err(f"move --from and --to resolve to the same path ({src}) — refusing a no-op"); return 2
+    if not src.exists():
+        _err(f"move source {src} does not exist (fail-visible per R-7)"); return 2
+    landing = dst / src.name if dst.is_dir() else dst
+    if landing.exists():
+        _err(f"move landing path {landing} already exists — refusing to overwrite "
+             f"(preserves /archive 'stop if already archived')"); return 2
+    try:
+        shutil.move(str(src), str(dst))
+    except (OSError, shutil.Error) as exc:
+        _err(f"move {src} -> {dst} failed (fail-visible per R-7): {exc}"); return 2
+    return 0
+
+
+def _cmd_list(args: argparse.Namespace) -> int:
+    try:
+        target = _resolve_in_vault(_root(args), args.dir, arg_name="--dir")
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    entries = sorted(p.name for p in target.iterdir()) if target.is_dir() else []
+    if args.count:
+        print(len(entries))
+    else:
+        for e in entries:
+            print(e)
+    return 0
+
+
+def _cmd_count(args: argparse.Namespace) -> int:
+    try:
+        target = _resolve_in_vault(_root(args), args.file)
+        data = _load_json(target)
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    key = args.array or _detect_array_key(data)
+    if key is None:
+        _err("specify --array (the doc has zero or multiple array fields)"); return 2
+    arr = data.get(key, []) if isinstance(data, dict) else []
+    print(len(arr) if isinstance(arr, list) else 0)
+    return 0
+
+
+# ── CLI ────────────────────────────────────────────────────────────────────────
+
+def _build_parser() -> argparse.ArgumentParser:
+    # --vault is accepted in EITHER position (before the subcommand on the top
+    # parser, or after it on each subparser). The subparser copy uses SUPPRESS so
+    # an omitted --vault never clobbers a value the top parser already captured.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--vault", default=argparse.SUPPRESS,
+        help="vault root (overrides $AI_SDLC_VAULT_ROOT / the computed default)",
+    )
+    p = argparse.ArgumentParser(
+        prog="vault_edit",
+        description="v2 JSON-native vault-write CLI (SVW-1): read/get/query/append/"
+                    "update/rewrite/move/list/count under VAULT_ROOT via the "
+                    "_vault_write lock (R-32).",
+    )
+    p.add_argument(
+        "--vault", default=None,
+        help="vault root (overrides $AI_SDLC_VAULT_ROOT / the computed default)",
+    )
+    sub = p.add_subparsers(dest="command", required=True)
+
+    rd = sub.add_parser("read", parents=[common], help="raw bytes → CAS base")
+    rd.add_argument("--file", required=True)
+    rd.add_argument("--out-file", default=None,
+                    help="write raw bytes here (byte-safe; avoids PowerShell `>`)")
+
+    gt = sub.add_parser("get", parents=[common], help="JSON subtree/scalar at --path → stdout")
+    gt.add_argument("--file", required=True)
+    gt.add_argument("--path", default=".", help="dotted path, e.g. .mode or .a.b[0].c")
+
+    qy = sub.add_parser("query", parents=[common], help="filter an array → stdout")
+    qy.add_argument("--file", required=True)
+    qy.add_argument("--array", required=True)
+    qy.add_argument("--where", action="append", metavar="KEY=VALUE",
+                    help="equality filter (repeatable)")
+
+    ap = sub.add_parser("append", parents=[common], help="SVW-1 locked array append")
+    ap.add_argument("--file", required=True)
+    ap.add_argument("--array", default=None, help="target array (auto-detected when single)")
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--json", default=None, help="the element as a JSON string")
+    g.add_argument("--content-file", default=None, help="read the element JSON from this file")
+    g.add_argument("--stdin", action="store_true", help="read the element JSON from stdin")
+
+    up = sub.add_parser("update", parents=[common], help="SVW-1 locked record update")
+    up.add_argument("--file", required=True)
+    up.add_argument("--array", required=True)
+    up.add_argument("--id", required=True)
+    up.add_argument("--id-key", default="id", help="match key (default: id)")
+    up.add_argument("--assumption", default=None,
+                    help="descend into the record's assumptions[] to this id")
+    up.add_argument("--set", action="append", metavar="KEY=VALUE",
+                    help="set a field (value parsed as JSON, else string; repeatable)")
+    up.add_argument("--append", action="append", nargs=2, metavar=("FIELD", "JSON"),
+                    help="append a JSON element to a nested array field (repeatable)")
+
+    rw = sub.add_parser("rewrite", parents=[common], help="CAS whole-file rewrite (exit 3 on conflict)")
+    rw.add_argument("--file", required=True)
+    rw.add_argument("--base-file", required=True, help="bytes the skill read (CAS precondition)")
+    grw = rw.add_mutually_exclusive_group(required=True)
+    grw.add_argument("--content-file", default=None)
+    grw.add_argument("--stdin", action="store_true")
+
+    mv = sub.add_parser("move", parents=[common], help="seam-routed MOVE under the vault root")
+    mv.add_argument("--from", dest="src", required=True)
+    mv.add_argument("--to", dest="dst", required=True)
+
+    ls = sub.add_parser("list", parents=[common], help="list a vault dir's entries")
+    ls.add_argument("--dir", required=True)
+    ls.add_argument("--count", action="store_true", help="print the entry count")
+
+    ct = sub.add_parser("count", parents=[common], help="count an array's elements")
+    ct.add_argument("--file", required=True)
+    ct.add_argument("--array", default=None, help="array to count (auto-detected when single)")
+
+    return p
+
+
+_DISPATCH = {
+    "read": _cmd_read, "get": _cmd_get, "query": _cmd_query, "append": _cmd_append,
+    "update": _cmd_update, "rewrite": _cmd_rewrite, "move": _cmd_move,
+    "list": _cmd_list, "count": _cmd_count,
+}
+
+
+def main(argv: list[str] | None = None) -> int:
+    _stdout.reconfigure_stdout_utf8()
+    args = _build_parser().parse_args(argv)
+    return _DISPATCH[args.command](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

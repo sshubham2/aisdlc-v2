@@ -1,0 +1,54 @@
+{
+  "_schema": "aisdlc/slice-candidates@1",
+  "_note": "Full example + field docs in schemas/slice-candidates.example.json. LIVE candidates only; shipped move to <vault>/archive/candidates.json.",
+  "project": "<name>",
+  "updated": "<ts>",
+  "candidates": [
+    {
+      "id": "SC-014",
+      "title": "stripe-webhook-receiver",
+      "status": "candidate",
+      "progress": "not-started",
+      "slice": null,
+      "claimed_by": null,
+      "started_at": null,
+      "source": [
+        {
+          "type": "risk",
+          "ref": "R-13"
+        }
+      ],
+      "description": "Receive + verify Stripe webhooks; persist to events.",
+      "rationale": "Retires R-13; ships a user-visible PAID state.",
+      "dependencies": [
+        "SC-009"
+      ],
+      "priority": {
+        "score": 7,
+        "effort": "M",
+        "blast_radius": "orders, billing"
+      },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "Signatures verify; events <2s p95.",
+          "risk_ref": "R-13",
+          "blocking": true,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Real test-mode event -> verified -> order PAID.",
+      "history": [
+        {
+          "event": "created",
+          "by": "discover",
+          "at": "<ts>"
+        }
+      ]
+    }
+  ],
+  "pick_log": []
+}

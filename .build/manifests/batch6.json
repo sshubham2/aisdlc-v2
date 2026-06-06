@@ -1,0 +1,644 @@
+[
+  {
+    "name": "diagnose",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "The orchestrating skill must hold pass-template content in memory, manage the sequential Agent-spawn loop, invoke write_pass.py after each subagent returns, and run assemble.py — all requiring the parent conversation's tool access and cwd context.",
+    "summary": "Produces a single self-contained interactive HTML diagnosis of a target codebase for the repo owner. Runs 11 analysis passes (10 general-purpose subagents plus one cross-reference pass) via code-review-graph-backed code graph analysis, then spawns the diagnose-narrator named subagent for the executive summary, and assembles everything via assemble.py. The deliverable is diagnose-out/diagnosis.html, which embeds findings as JSON for owner annotation. Never modifies source files in the target repo.",
+    "agents": [
+      {
+        "name": "diagnose-narrator",
+        "when": "Step 6.5 — after all 11 forensic passes have written their YAMLs and summaries",
+        "purpose": "Writes the executive summary (sections/00-overview.md) from findings/*.yaml and summary/*.md using fresh context"
+      }
+    ],
+    "methodology_tools": [],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "code-review-graph build|update | CRG MCP tools (impact-radius, review-context, search)",
+        "purpose": "Code graph via code-review-graph (CRG) — builds/refreshes the code graph; reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [
+      {
+        "name": "assemble.py",
+        "purpose": "Reads all per-pass section/finding/summary files, carries over prior-run annotations from existing diagnosis.html, marks NEW/PERSISTING/RESOLVED, renders the final self-contained diagnosis.html with embedded JSON state"
+      },
+      {
+        "name": "write_pass.py",
+        "purpose": "Orchestrator-side writer: parses fenced blocks from each subagent's response, validates findings, and writes the three per-pass output files (sections/, findings/, summary/)"
+      },
+      {
+        "name": "passes/*.md",
+        "purpose": "11 pass templates (01-intent, 02-architecture, 03a-dead-code ... 03h-test-coverage, 04-ai-bloat) loaded by orchestrator and embedded in each subagent prompt"
+      },
+      {
+        "name": "schema/finding.yaml",
+        "purpose": "Canonical finding schema; read by orchestrator and embedded as a crib sheet in each pass template"
+      }
+    ],
+    "harness_tools": [
+      {
+        "name": "Bash",
+        "purpose": "Run code-review-graph build, code-review-graph queries, write_pass.py, assemble.py, directory checks"
+      },
+      {
+        "name": "Read",
+        "purpose": "Load pass templates and finding-schema for embedding in subagent prompts; read source files within TARGET"
+      },
+      {
+        "name": "Glob",
+        "purpose": "Verify expected per-pass output files exist"
+      },
+      {
+        "name": "Grep",
+        "purpose": "Symbol-string verification within TARGET source"
+      },
+      {
+        "name": "Write",
+        "purpose": "Write raw subagent response to $OUT/.tmp/<pass-name>.raw before invoking write_pass.py"
+      },
+      {
+        "name": "Agent",
+        "purpose": "Spawn each of the 10+1 analysis-pass general-purpose subagents and the diagnose-narrator named subagent"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "diagnose-out/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "mkdir",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Root output directory for all diagnose artifacts"
+      },
+      {
+        "path": "diagnose-out/sections/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "mkdir",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Per-pass prose markdown files"
+      },
+      {
+        "path": "diagnose-out/findings/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "mkdir",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Per-pass structured YAML findings"
+      },
+      {
+        "path": "diagnose-out/summary/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "mkdir",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Per-pass one-paragraph summaries"
+      },
+      {
+        "path": "diagnose-out/.code-review-graph/",
+        "kind": "side-effect",
+        "access": "create",
+        "mechanism": "code-review-graph",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "AST-level code graph consumed by all analysis subagent passes"
+      },
+      {
+        "path": "diagnose-out/sections/*.md",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "markdown",
+        "purpose": "Per-pass prose sections written by write_pass.py"
+      },
+      {
+        "path": "diagnose-out/findings/*.yaml",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Per-pass structured findings YAML; 03b-duplicates.yaml and 03d-half-wired.yaml also read by 04-ai-bloat subagent"
+      },
+      {
+        "path": "diagnose-out/summary/*.md",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "markdown",
+        "purpose": "Per-pass one-paragraph summaries written by write_pass.py"
+      },
+      {
+        "path": "diagnose-out/.tmp/<pass-name>.raw",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Raw subagent response saved before write_pass.py invocation"
+      },
+      {
+        "path": "diagnose-out/sections/00-overview.md",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "markdown",
+        "purpose": "Executive summary written by the diagnose-narrator named subagent"
+      },
+      {
+        "path": "diagnose-out/diagnosis.html",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "html",
+        "purpose": "Final self-contained interactive deliverable produced by assemble.py; embeds findings JSON and owner annotation controls"
+      },
+      {
+        "path": "diagnose-out/diagnosis.html",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "html",
+        "purpose": "Read by assemble.py to extract prior Confirmed/Notes annotations for carryover"
+      }
+    ],
+    "hands_off_to": [
+      "slice-candidates"
+    ],
+    "source": "temp/skills/diagnose/SKILL.md"
+  },
+  {
+    "name": "heavy-architect",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "Requires reading the vault (triage.json, concept.json, risk-register.json, spikes, ADRs, actor files), interactive scope confirmation with the user, and writing multiple human-authored vault files.",
+    "summary": "Heavy-mode-only skill that produces the comprehensive upfront architecture vault. Writes only the human-authored irreducible files (threat-model.json, cost-estimation.json, requirements.json, non-functional.json, diagrams.json, actors/) rather than derived component/contract/schema files (left to /sync). For brownfield it seeds the component inventory from code-review-graph code-graph analysis.",
+    "agents": [],
+    "methodology_tools": [],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "code-review-graph build|update | CRG MCP tools (impact-radius, review-context, search)",
+        "purpose": "Code graph via code-review-graph (CRG) — builds/refreshes the code graph; reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read vault prerequisite files and .code-review-graph/ in brownfield step"
+      },
+      {
+        "name": "Write",
+        "purpose": "Write threat-model.json, cost-estimation.json, requirements.json, non-functional.json, diagrams.json, actors/<actor>.md"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run code-review-graph code/query/vault builds"
+      },
+      {
+        "name": "AskUserQuestion",
+        "purpose": "Step 1 scope confirmation — present planned outline and wait for approval before writing"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/triage.json",
+        "kind": "enforcement-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Verify mode is Heavy before proceeding; abort if Standard or Minimal"
+      },
+      {
+        "path": "<vault>/concept.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Source of product concept and actor definitions for component decomposition"
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Confirm all HIGH risks are retired before generating architecture"
+      },
+      {
+        "path": "<vault>/spikes/spike-*.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Risk-spike results informing architecture decisions"
+      },
+      {
+        "path": "<vault>/decisions/ADR-*.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Existing architectural decisions to respect and link from new vault files"
+      },
+      {
+        "path": "<vault>/actors/<actor>.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Heavy-mode actor files used as input for component decomposition"
+      },
+      {
+        "path": ".code-review-graph/",
+        "kind": "external-artifact",
+        "access": "read",
+        "mechanism": "code-review-graph",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Code graph queried for brownfield component seeding (Step 0)"
+      },
+      {
+        "path": "<vault>/threat-model.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": "locked-at: heavy-architect",
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "STRIDE threat model per component (Step 5) — human-authored"
+      },
+      {
+        "path": "<vault>/cost-estimation.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": "locked-at: heavy-architect",
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Per-component infrastructure cost at 1K/10K/100K users (Step 6)"
+      },
+      {
+        "path": "<vault>/requirements.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": "locked-at: heavy-architect",
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Functional requirements by actor (Step 8)"
+      },
+      {
+        "path": "<vault>/non-functional.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": "locked-at: heavy-architect",
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "NFRs and compliance constraints — latency, uptime, HIPAA/PCI/SOC2/GDPR mapping (Step 8)"
+      },
+      {
+        "path": "<vault>/diagrams.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": "locked-at: heavy-architect",
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Mermaid system overview and sequence diagrams — human design intent"
+      },
+      {
+        "path": "<vault>/actors/<actor>.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": "locked-at: heavy-architect",
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Heavy-mode actor files with full role-play definitions (Step 2)"
+      }
+    ],
+    "hands_off_to": [
+      "user-test",
+      "slice"
+    ],
+    "source": "temp/skills/heavy-architect/SKILL.md"
+  },
+  {
+    "name": "sync",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "Requires the full vault and project context (ADRs, triage.json, existing component/contract/schema files, slice history) to detect drift and regenerate code-derived views; drift resolution in Step 5 is interactive.",
+    "summary": "Heavy-mode-only bidirectional vault-code reconciliation skill. Generates code-derived vault files (components/*.md, contracts/*.md, schemas/*.md) fresh from code AST/OpenAPI/type definitions, and detects drift in human-authored vault files. Also runs the cross-spec parity audit (CSP-1) via scripts.lib.cross_spec_parity_audit. Appends a sync record to sync-log.json.",
+    "agents": [],
+    "methodology_tools": [
+      {
+        "name": "cross_spec_parity_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/cross_spec_parity_audit.py\" --root .",
+        "purpose": "CSP-1 audit: validates threat-model.md, requirements.md, nfrs.md status fields and implementation/verification references exist on disk"
+      }
+    ],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "code-review-graph build|update",
+        "purpose": "Code graph via code-review-graph (CRG) — builds/refreshes the code graph. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read triage.json, existing component/contract/schema files, source code (OpenAPI JSON, route definitions, data model code)"
+      },
+      {
+        "name": "Write",
+        "purpose": "Write regenerated components/*.md, contracts/*.md, schemas/*.md; append sync-log.json record"
+      },
+      {
+        "name": "Edit",
+        "purpose": "Update only derived sections within existing files while preserving human-authored sections"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run code-review-graph code/vault builds and scripts.lib.cross_spec_parity_audit"
+      },
+      {
+        "name": "Glob",
+        "purpose": "Locate component/contract/schema files, OpenAPI specs, data model files"
+      },
+      {
+        "name": "Grep",
+        "purpose": "Find route definitions, publisher/subscriber annotations, ADR-claimed library references in code"
+      },
+      {
+        "name": "AskUserQuestion",
+        "purpose": "Step 4/5 drift resolution dialogue — present diff and walk user through each finding"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/triage.json",
+        "kind": "enforcement-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Verify mode is Heavy before proceeding"
+      },
+      {
+        "path": "<vault>/components/<name>.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Code-derived component view regenerated from AST; human-authored sections preserved"
+      },
+      {
+        "path": "<vault>/contracts/<name>.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Code-derived contract view regenerated from OpenAPI/route annotations; human commentary preserved"
+      },
+      {
+        "path": "<vault>/schemas/<entity>.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Code-derived schema view regenerated from data models; state-transition diagrams preserved"
+      },
+      {
+        "path": "<vault>/threat-model.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read for CSP-1 audit and drift detection"
+      },
+      {
+        "path": "<vault>/requirements.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read for CSP-1 audit (REQ-NN status fields and implementation references)"
+      },
+      {
+        "path": "<vault>/nfrs.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read for CSP-1 audit (NFR-NN status fields and verification references)"
+      },
+      {
+        "path": "<vault>/decisions/ADR-*.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Drift check: verify ADR-claimed libraries still in dependencies"
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Drift check: verify 'retired' risk claims still valid"
+      },
+      {
+        "path": "<vault>/sync-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append a dated sync record (mode, files regenerated, drift findings, resolutions)"
+      },
+      {
+        "path": ".code-review-graph/",
+        "kind": "side-effect",
+        "access": "create",
+        "mechanism": "code-review-graph",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Fresh AST code graph built in Step 1; used for all regeneration and drift detection"
+      }
+    ],
+    "hands_off_to": [
+      "slice",
+      "reduce"
+    ],
+    "source": "temp/skills/sync/SKILL.md"
+  }
+]

@@ -1,0 +1,38 @@
+{
+  "_schema": "aisdlc/concept@1",
+  "date": "<ts>",
+  "mode": "standard",
+  "what": "## What\nLets small sellers accept card payments and see orders update live. Out of scope: refunds, multi-currency.",
+  "non_goals": [
+    "refunds",
+    "multi-currency"
+  ],
+  "actors": [
+    {
+      "name": "seller",
+      "role": "runs the shop",
+      "top_actions": [
+        "take payment",
+        "view orders"
+      ],
+      "needs": [
+        "payment status"
+      ],
+      "cannot": [
+        "issue refunds"
+      ]
+    }
+  ],
+  "constraints": {
+    "stack": [
+      {
+        "choice": "Next.js + Stripe",
+        "reversibility": "expensive",
+        "adr": "ADR-002"
+      }
+    ],
+    "infra": "Vercel + managed Postgres.",
+    "team": "solo, 6-week MVP."
+  },
+  "first_slice_candidate": "SC-001"
+}

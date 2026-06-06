@@ -1,0 +1,16 @@
+{
+  "_schema": "aisdlc/non-functional@1",
+  "_note": "Heavy: NFRs + compliance mapping.",
+  "nfrs": [
+    {
+      "id": "NFR-2",
+      "kind": "latency",
+      "target": "webhook->PAID < 2s p95",
+      "status": "met",
+      "verification_ref": "tests/perf_webhook.py",
+      "compliance": [
+        "PCI"
+      ]
+    }
+  ]
+}

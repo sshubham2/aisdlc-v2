@@ -1,0 +1,26 @@
+{
+  "_schema": "aisdlc/risk-register@1",
+  "_note": "The risk LEDGER (not the candidate backlog). score=likelihood×impact (low1/med2/high3 -> 1..9); band 1-2 low,3-4 med,6-9 high. Append/CAS via vault_edit.",
+  "project": "<name>",
+  "updated": "<ts>",
+  "risks": [
+    {
+      "id": "R-13",
+      "title": "Stripe webhook reliability",
+      "likelihood": "high",
+      "impact": "high",
+      "status": "open",
+      "reversibility": "expensive",
+      "score": 9,
+      "band": "high",
+      "mitigation": "Spike SC-014 assumption A1 before building; fallback = queue-based retry.",
+      "discovered": {
+        "phase": "triage",
+        "at": "<ts>",
+        "ref": null
+      },
+      "candidate_ref": "SC-014",
+      "notes": ""
+    }
+  ]
+}

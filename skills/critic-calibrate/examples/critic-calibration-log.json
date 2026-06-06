@@ -1,0 +1,26 @@
+{
+  "_schema": "aisdlc/critic-calibration-log@1",
+  "_note": "Append-only log of /critic-calibrate runs (including zero-proposal runs).",
+  "runs": [
+    {
+      "at": "<ts>",
+      "window": 15,
+      "patterns": [
+        {
+          "category": "missing-auth-checks",
+          "slices": [
+            "slice-014",
+            "slice-019",
+            "slice-021"
+          ]
+        }
+      ],
+      "proposals": [
+        {
+          "text": "Add an explicit auth-on-every-endpoint dimension.",
+          "decision": "accepted"
+        }
+      ]
+    }
+  ]
+}

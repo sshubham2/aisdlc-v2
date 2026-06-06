@@ -1,0 +1,578 @@
+[
+ {
+  "skill": "triage",
+  "mode": "inline",
+  "lines": 287,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "Step 6 Standard mode (line 252) hands off to /risk-spike for HIGH-band risks ('Run /risk-spike next to validate <risk-id> before any design'). This directly contradicts locked Direction #4: 'risk-spike removed from triage/discover/adopt hand-offs (no longer a pre-pipeline step).' The manifest's hands_off_to also omits risk-spike. Fix: replace the /risk-spike branch with '/discover next — it feeds the risk register into /slice → /risk-spike (in-loop).' Also remove risk-spike from the predecessor / successor line (line 285 does not list it, but Step 6 prose contradicts the pipeline position section)."
+   },
+   {
+    "severity": "major",
+    "detail": "Line 110: `$PY -m scripts.lib.risk_register_audit` references a module that does not exist at scripts/lib/risk_register_audit.py. scripts/lib/ contains only README.md. This is an owed v2 port (README confirms it), but invoking it as if it exists will produce a ModuleNotFoundError and silently skip the audit. Either gate the call on file existence, fall back to the v1 tool ($PY -m tools.risk_register_audit with the .json path), or note the call as a stub with a clear TODO comment so the failure is visible."
+   },
+   {
+    "severity": "minor",
+    "detail": "Frontmatter is missing user-invocable: true. The CLAUDE.md conventions table explicitly maps manifest user_invokable → real SKILL.md frontmatter user-invocable (hyphen form). Triage is user_invokable: true in the manifest. Neither template (code-review, slice) sets it either — so this is a systematic omission across all authored skills, not triage-specific — but it remains a spec gap to fix here."
+   }
+  ]
+ },
+ {
+  "skill": "discover",
+  "mode": "inline",
+  "lines": 197,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "Step 4 (line 60) tells the user 'note the next step will be /risk-spike' when a HIGH-risk item needs a spike. This directly contradicts locked Direction #4 in CLAUDE.md: '/risk-spike moves inside the slice loop as a blocking step-0 — risk-spike removed from triage/discover/adopt hand-offs (no longer a pre-pipeline step).' Discover must NOT hand off to /risk-spike; it should only note that the risk stays open and will be addressed when /slice claims the candidate."
+   },
+   {
+    "severity": "major",
+    "detail": "risk-register.json write mechanism conflict: the manifest (skill.json outputs[0]) specifies write_mechanism='raw-write' for risk-register.json, but SKILL.md Step 6 (lines 128–133) routes updates through 'vault_edit append' (SVW-1). _conventions.md and the locked SVW-1 rule both require vault_edit for append-mutated files; raw-write would reintroduce the race condition vault_edit exists to prevent. Either the manifest is wrong (and should say vault_edit-append) or SKILL.md is wrong — they disagree and the manifest is the spec under review. Flag as a spec-vs-implementation contradiction that must be resolved before this pair is authoritative."
+   },
+   {
+    "severity": "minor",
+    "detail": "The word 'graphify' appears on lines 74 and 186. Direction #2 says the swap is fully applied and specifies 'NO graphify anywhere.' Even as a prohibitive comment ('# No graphify / no ingest'), the term appears in the authored skill. Replace both occurrences with a plain positive statement (e.g., 'External references are JSON fields only; no code-graph ingest') to comply with the convention."
+   },
+   {
+    "severity": "minor",
+    "detail": "No dynamic injection (!`cmd`) is used to pre-load triage.json or risk-register.json, despite the locked 'full adopt of efficiency levers' in CLAUDE.md Skill model section. The slice template demonstrates the !`cmd` pattern for vault state. discover reads these files imperatively (prose instruction to Read) instead of injecting them at skill load time. Add !`cmd` blocks for both prerequisite reads, matching the slice/code-review template pattern."
+   },
+   {
+    "severity": "minor",
+    "detail": "ADR mode scope inconsistency between the manifest summary and SKILL.md: the manifest summary field (skill.json line 7) says 'tech-decision ADRs (Standard)' — omitting Heavy — but SKILL.md frontmatter description says '(Standard+Heavy)', Step 6 heading says 'Standard + Heavy', and the manifest outputs[].modes for ADRs is ['standard','heavy']. The SKILL.md is internally correct and matches the outputs array, but it deviates from the manifest's own summary text. The manifest summary is the authoritative description field; it should be corrected to '(Standard+Heavy)' or the SKILL.md description should be flagged as having already diverged from it."
+   }
+  ]
+ },
+ {
+  "skill": "adopt",
+  "mode": "inline",
+  "lines": 198,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "L247 (Critical rules): 'graphify scan + /diagnose findings are evidence' — the word 'graphify' must not appear anywhere in v2 SKILL.md. Rollout #2 is a full swap; use 'code-review-graph' or 'CRG'. Fix: replace 'graphify scan' with 'code-review-graph (CRG) scan'."
+   },
+   {
+    "severity": "blocker",
+    "detail": "L242, L266, L269 (Step 11 + Pipeline position): /risk-spike is offered as a direct post-adopt hand-off option ('HIGH risks need validation first → /risk-spike', 'successor: /slice (or /risk-spike if HIGH risks exist)'). Direction #4 is locked and explicit: 'risk-spike removed from triage/discover/adopt hand-offs (no longer a pre-pipeline step).' The manifest hands_off_to correctly omits it; the SKILL.md body contradicts the spec. Remove all references that treat /risk-spike as a direct adopt successor; it is only reachable inside the slice loop via /slice."
+   },
+   {
+    "severity": "major",
+    "detail": "Step 9: candidates.json output does not cite its bundled example. Every other output in Step 9 follows the pattern 'schema: examples/<artifact>.json'; candidates.json only gives an inline schema stub ('_schema: aisdlc/slice-candidates@1', candidates: [], pick_log: []) without pointing to 'examples/slice-candidates.json' (the manifest-designated example). Add '(schema: examples/slice-candidates.json)' to match the convention used for all other outputs."
+   },
+   {
+    "severity": "major",
+    "detail": "Step 9 (Heavy mode only block): two manifest-listed outputs are absent — '<vault>/cost-estimation.json' and '<vault>/diagrams.json' (both Heavy-only per skill.json). The Heavy block lists components, contracts, schemas, and threat-model but silently omits these two. Add both with their write instructions (mark cost-estimation.json for user population; diagrams.json from CRG code graph), consistent with how threat-model.json is handled."
+   },
+   {
+    "severity": "minor",
+    "detail": "Pipeline position / L12 omit /discover from the post-adopt successor chain. CLAUDE.md pipeline at a glance reads: 'triage/adopt → discover → (user-test) → per-slice loop'. SKILL.md L12 jumps directly to the slice loop with no mention of /discover; the Pipeline position section and Step 11 hand-off block do the same. The manifest's hands_off_to also omits discover, so SKILL.md is consistent with the manifest — but both disagree with the CLAUDE.md overview. At minimum, add a note: brownfield projects may skip /discover if adopt's interview + CRG scan already captures the concept; otherwise surface /discover as an optional next step."
+   }
+  ]
+ },
+ {
+  "skill": "slice-candidates",
+  "mode": "inline",
+  "lines": 176,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "context: fork field is absent from frontmatter. manifest runs_in is 'delegable-to-subagent', which per the CLAUDE.md skill-model table maps directly to 'context: fork' (+ optional 'agent:') in SKILL.md frontmatter. Without it the harness runs this skill inline on the main agent instead of forking a fresh-context subagent. Add 'context: fork' to frontmatter."
+   },
+   {
+    "severity": "major",
+    "detail": "The word 'graphify' appears on line 169 ('Do NOT use graphify — use CRG'). The check is for zero occurrences regardless of context; even a prohibition phrasing violates the NO-graphify rule. Rewrite as: 'Do NOT call graphify or the graphify CLI — use CRG (diagnose-out/.code-review-graph/) for blast-radius queries.'."
+   },
+   {
+    "severity": "major",
+    "detail": "Write is listed in allowed-tools but is absent from the manifest's harness_tools. The obo-3 section says 'Write to a temp file' implying the Write harness tool, yet the manifest does not sanction it. Either add Write to the manifest's harness_tools (if temp-file write via the Write tool is genuinely needed) or replace with a Bash here-doc / mktemp pattern so Write is not required and can be dropped from allowed-tools."
+   },
+   {
+    "severity": "major",
+    "detail": "Line 33 hard-codes PY=\"C:/Users/sshub/.claude/.venv/Scripts/python.exe\" — a user-specific absolute path that will break on any other machine or CI environment. The slice SKILL.md template uses the $PY environment variable provided by the harness. Replace with $PY throughout; do not embed a machine-local path in a bundled skill."
+   },
+   {
+    "severity": "minor",
+    "detail": "No dynamic injection block (!cmd) is used anywhere. CLAUDE.md locks dynamic injection as a required efficiency lever for delegable skills, and the slice template demonstrates it with two blocks. At minimum, inject the vault root resolution or the current candidates.json entry count so the skill's context is pre-loaded before the script runs. Add at least one !cmd block (e.g., resolving $AI_SDLC_VAULT_ROOT or echoing existing candidate count)."
+   },
+   {
+    "severity": "minor",
+    "detail": "The manifest skill.json summary (the spec this SKILL.md was derived from) still says 'produce a DAG-ordered backlog.md' — a v1 artifact name. The SKILL.md description correctly uses candidates.json, so the SKILL.md is right, but it silently diverges from its own stated spec without a note. The manifest summary should be updated (or a comment added) so future readers do not mistake the stale summary for an authoritative target."
+   }
+  ]
+ },
+ {
+  "skill": "query-design",
+  "mode": "inline",
+  "lines": 75,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "major",
+    "detail": "CRG tool 'review-context' is specified in skill.json tools[0].invocation as one of three MCP tools ('impact-radius, review-context, search') but is completely absent from SKILL.md step 3 ('Structure with CRG'). The skill body only lists impact-radius and search. Fix: add 'review-context' to the CRG MCP tools list in step 3, with its use-case (e.g., 'use review-context for richer call-chain context when tracing how a symbol is used across the codebase')."
+   },
+   {
+    "severity": "minor",
+    "detail": "Glob is listed in frontmatter allowed-tools but does not appear in the manifest's harness_tools[] and is never referenced anywhere in the skill body. Per the 'allowed-tools: present + minimal' convention, only tools actually exercised by the skill should be pre-approved. Remove Glob from allowed-tools, or add a concrete usage in the skill body (e.g., for finding files by pattern when Grep by content is insufficient) and add it to the manifest harness_tools."
+   }
+  ]
+ },
+ {
+  "skill": "design-slice",
+  "mode": "inline",
+  "lines": 184,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "major",
+    "detail": "Step 5 omits the schema reference for threat-model.json. The bundled file examples/threat-model.json exists (schema aisdlc/threat-model@1) and the manifest specifies example: examples/threat-model.json for that output, but Step 5's threat-model bullet has no '(schema: examples/threat-model.json)' hint — inconsistent with the component/contract bullets in the same step that do cite their examples. Fix: add 'schema: examples/threat-model.json' to the threat-model.json bullet in Step 5."
+   },
+   {
+    "severity": "minor",
+    "detail": "Step 6 on_resume is hardcoded to 'design-slice complete; next step /critique' even when critic_required: false causes next_action to be '/build-slice'. A reader resuming from milestone.json in that case gets a misleading prompt. Fix: branch on_resume — 'next step /critique' when critic_required: true, 'next step /build-slice' when critic_required: false."
+   },
+   {
+    "severity": "minor",
+    "detail": "SVW-1 compliance gap for ADR writes. _conventions.md explicitly lists ADRs in the 'Append / CAS-only files' category and says 'mutate via tools.vault_edit, never a hand whole-file overwrite'. Step 3 instructs creating ADR files directly via the Write tool (raw-write), and the manifest write_mechanism is raw-write. Even though this is a first-create not an in-place overwrite, the convention draws no such distinction. Either the SKILL.md should route ADR creation through vault_edit or the convention should be amended to permit raw-write for new-file creation — the current state leaves an undocumented exception."
+   }
+  ]
+ },
+ {
+  "skill": "repro",
+  "mode": "inline",
+  "lines": 115,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "Step 5 vault_edit invocation uses a POSIX heredoc (`cat > /tmp/ship_row.json << 'EOF' ... $PY -m scripts.lib.vault_edit append --file shippability.json --content-file /tmp/ship_row.json`) which is POSIX-only and fails on Windows (the deployment platform). Neither reference template (code-review, slice) uses heredocs or /tmp/. Replace with a Python-script approach consistent with `$PY ${CLAUDE_SKILL_DIR}/scripts/...` or a direct `$PY -m scripts.lib.vault_edit append` that accepts the row as an argument / stdin, eliminating the /tmp/ temp-file dependency."
+   },
+   {
+    "severity": "blocker",
+    "detail": "Step 2 CRG query block is entirely comments — no actionable invocation instructions. The bash block contains `# keyword/semantic search on the buggy module`, `# impact-radius: ...`, `# review-context: ...` and nothing else. A model executing this skill will skip CRG queries silently because there are no real commands. The manifest declares `code-review-graph` as a required tool with `purpose: 'reachability / blast-radius / keyword+semantic search via CRG MCP tools'`. This is a hollow stub; the step must give actual invocation instructions (e.g., 'call CRG MCP tool `impact-radius` with the buggy symbol as argument') consistent with how code-review.md Step 3 instructs CRG use."
+   },
+   {
+    "severity": "major",
+    "detail": "The injected live-state block uses `$PY -m scripts.lib.vault_edit read --file shippability.json` but Step 5 cross-references it as 'Step 0' (`id: next SHIP-NNN from the injected catalog (Step 0)`). The section is titled 'Live state — injected', not Step 0. There is no Step 0 in the skill. This broken internal cross-reference creates a navigability bug: a model following the steps will not find 'Step 0'. Fix: relabel the injected section header as '## Step 0 — live state (injected)' or change the cross-reference in Step 5 to 'from the injected catalog above'."
+   },
+   {
+    "severity": "major",
+    "detail": "The manifest's `tools[0]` (vault_edit) has `invocation: '$PY -m tools.vault_edit append --file shippability.md'` — note the v1 path (`tools.vault_edit`) and the `.md` extension on `shippability.md`. The SKILL.md correctly uses `scripts.lib.vault_edit` and `shippability.json`. Although the manifest is generated and SKILL.md is the runnable artifact, this divergence means the manifest spec is itself wrong about the vault_edit invocation path (tools.X vs scripts.lib.X) and uses the banned .md extension on shippability. If the manifest is used as a reference during future authoring, this will propagate the error. Flag for correction in the manifest source (`.build/manifests/`)."
+   },
+   {
+    "severity": "minor",
+    "detail": "The `allowed-tools` frontmatter field does not list `Grep` or `Glob`, yet the skill body (Step 2) directs the model to read code, and the manifest's Read `harness_tool` states its purpose includes 'read existing test files for framework conventions'. While Grep/Glob are not in the manifest's harness_tools either (so the SKILL.md matches the manifest), these tools would be needed in practice to locate test files or confirm the buggy code path. If the intent is to rely purely on CRG MCP tools for code exploration, the SKILL.md should state that explicitly in Step 2 rather than silently omitting file-search tools."
+   },
+   {
+    "severity": "minor",
+    "detail": "No `paths:` frontmatter field is present. The conventions list `paths` as a real (allowed) frontmatter field for auto-activation. The skill could legitimately register `tests/bugs/` or no path, but its absence is worth a conscious decision — other pipeline skills may define paths for activation. Not a correctness bug, but it should be an explicit omission (a comment or documented choice) rather than a silent gap."
+   }
+  ]
+ },
+ {
+  "skill": "build-slice",
+  "mode": "inline",
+  "lines": 175,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "disable-model-invocation missing from frontmatter. CLAUDE.md Skill model section (locked decision, 'full adopt of the efficiency levers') reads: 'disable-model-invocation for side-effecting skills (commit-slice, build-slice)' — build-slice is called out by name. Add 'disable-model-invocation: true' to the frontmatter. File: C:\\Users\\sshub\\aisdlc-v2\\skills\\build-slice\\SKILL.md, frontmatter block."
+   },
+   {
+    "severity": "major",
+    "detail": "Dynamic injection under-uses the vault. Only one injection block is present (stranded_slice_audit). The primary inputs that drive every build decision — mission-brief.json (ACs, must-not-defer, test-first flag, smoke gate) and critique.json (Critic constraints the build must respect) — are not injected. CLAUDE.md mandates 'dynamic injection !`cmd` to pre-load vault JSON into the prompt (now that the vault is JSON)'. Add injection blocks for: cat <vault>/slices/slice-NNN-*/mission-brief.json and cat <vault>/slices/slice-NNN-*/critique.json immediately after the stranded-slice block in the 'Live state — injected' section. File: C:\\Users\\sshub\\aisdlc-v2\\skills\\build-slice\\SKILL.md, lines 14-19."
+   },
+   {
+    "severity": "minor",
+    "detail": "critique-review.json absent from the explicit read list in Prerequisite check Step 1. The manifest reads[] declares it a consumed artifact ('Checked for presence by CRP-1 prerequisite and pre-finish audits'), but Step 1 only enumerates mission-brief.json, design.json, critique.json, and ADRs. The CRP-1 tool checks presence but the skill never reads the contents to incorporate the Critic-review's findings as build constraints. Add critique-review.json to the Step 1 read list with a note to incorporate any MUST-FIX items as hard constraints. File: C:\\Users\\sshub\\aisdlc-v2\\skills\\build-slice\\SKILL.md, line 23."
+   }
+  ]
+ },
+ {
+  "skill": "validate-slice",
+  "mode": "fork",
+  "lines": 239,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "Dynamic injection block (lines 21-23) calls '$PY -m scripts.lib.active_slice_info --vault ...' but scripts/lib/ contains only README.md — this module does not exist. The forked skill will fail to resolve the active slice at startup. Either bundle active_slice_info.py as a per-skill script and reference it via '${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py' (matching the slice/SKILL.md pattern), or replace the injection with a direct glob of '<vault>/slices/slice-NNN-*/' as code-review does."
+   },
+   {
+    "severity": "blocker",
+    "detail": "The 'vault_flip_prose_inventory' tool (ADR-104 vault op-gate) listed in skill.json tools[] with purpose 'run by the Step 5.5 shippability catalog path' is entirely absent from SKILL.md. There is no Step 5.5, no invocation of '$PY -m tools.vault_flip_prose_inventory --op-gate --strict', and no mention of ADR-104. Add Step 5.5 between the pre-catalog gates (Step 6's SCMD-1/PTFCD-1/SVW-1 block) and the catalog run (SRSC-1), invoking the tool and halting on non-zero exit before shippability_runner is called."
+   },
+   {
+    "severity": "major",
+    "detail": "Neither the inline validation.json schema (Step 7, lines 163-188) nor examples/validation.json defines a top-level aggregate 'result' field (e.g. 'result: pass|fail|partial'), yet the Pipeline position section (line 234) conditions auto-advance to /reflect on 'aggregate result: pass'. The manifest outputs[0] declares examples/validation.json as the schema-by-example, so /reflect has no machine-readable field to read. Add a top-level '\"result\": \"pass|fail|partial\"' field to both the inline schema and examples/validation.json, computed as 'pass' only when all criteria are 'pass' and all audits/shippability are green."
+   }
+  ]
+ },
+ {
+  "skill": "critique",
+  "mode": "inline+spawn",
+  "lines": 250,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "major",
+    "detail": "examples/critique.json disposition enum values are stale/wrong. SKILL.md Step 4 defines the valid disposition set as accepted-fixed | accepted-pending | overridden | deferred | escalated, but examples/critique.json uses 'accepted' (not in the enum). The triage.dispositions entry uses 'action: fix-now' where SKILL.md Step 4.5 defines the triage action values matching the same disposition enum (e.g. 'accepted-fixed'). The example is the schema-by-example — any consumer or triage_audit that validates against it will get wrong answers."
+   },
+   {
+    "severity": "major",
+    "detail": "examples/critique.json is missing two fields that SKILL.md declares required in the critique.json schema: (1) 'dimensions_checked' array (the per-dimension coverage record) and (2) 'verdict' inside the triage object. A triage_audit tool checking against this example will silently pass files that should fail missing-field validation."
+   },
+   {
+    "severity": "major",
+    "detail": "examples/milestone.json represents the wrong lifecycle stage. It shows stage='build' and next_action='/code-review', which is the state after /build-slice runs, not after /critique. The critique skill writes milestone.json with stage='critique' and next_action='/build-slice' (or '/critique-review'). A wrong example misleads every skill that reads milestone.json for its update contract."
+   },
+   {
+    "severity": "minor",
+    "detail": "Glob appears in allowed-tools (line 6) but is absent from the manifest's harness_tools and is never called as a Claude Code tool anywhere in the skill body. The only glob usage is Python's built-in glob module invoked via Bash (line 25). Extraneous tool in allowed-tools violates the 'minimal' principle from CLAUDE.md Skill model."
+   },
+   {
+    "severity": "minor",
+    "detail": "Dynamic injection is used only for _worktree_paths and a narrow mission-brief projection (mode/risk_tier/critic_required). design.json, action-points.json, and _index.json — all needed by Step 1 / Step 2 agent prompt — are not injected. CLAUDE.md locks 'dynamic injection of vault JSON where it would pre-load needed vault state' as a required efficiency lever. Missing injection means these files are read in the main thread and then manually pasted into the agent prompt, rather than being pre-loaded at skill invocation time."
+   }
+  ]
+ },
+ {
+  "skill": "critique-review",
+  "mode": "fork",
+  "lines": 109,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "context: fork contradicts manifest runs_in. skill.json declares runs_in: \"main-agent\" and requires_full_context: true, with explicit rationale: \"orchestrates from the main agent thread... hands control back to /critique Step 4.5 TRI-1 which requires the main thread's user-input gate.\" SKILL.md uses context: fork, making it a pure forked persona. The main-thread orchestration layer (read artifacts → invoke subagent → receive return → advance to TRI-1) is entirely missing. Fix: either (a) change skill.json runs_in to delegable-to-subagent if the TRI-1 gate is confirmed to live exclusively in /critique, or (b) write the SKILL.md as a main-thread skill that spawns the critique-review subagent via the Agent tool and then hands off."
+   },
+   {
+    "severity": "blocker",
+    "detail": "Agent tool missing from allowed-tools and never invoked. The manifest harness_tools[] explicitly lists Agent with purpose \"Spawn the 'critique-review' subagent with subagent_type: 'critique-review'\". SKILL.md allowed-tools is Read, Grep, Glob, Bash, Write — Agent is absent. There is also no Agent tool call anywhere in the SKILL.md body. The subagent spawn the manifest requires cannot happen. Fix: add Agent to allowed-tools and add a Step that invokes the Agent tool to spawn the critique-review persona (or, if the skill itself IS the forked persona, resolve the context mismatch blocker first and remove the spawn step accordingly)."
+   },
+   {
+    "severity": "major",
+    "detail": "Hardcoded absolute developer-machine path in Step 4. Line 82 sets PY=\"C:\\Users\\sshub\\.claude\\.venv\\Scripts\\python.exe\" as a literal inside the Bash block. All other skills (including code-review and slice) reference $PY as an environment variable. This path is non-portable and will silently fail on any machine other than the author's. Fix: replace with $PY (relying on the shared env var convention) consistent with every other skill in the repo."
+   },
+   {
+    "severity": "minor",
+    "detail": "Manifest agents[].when contains stale v1 extension: \"after gathering slice context including the first Critic's critique.md\". All v2 vault artifacts are .json; the correct reference is critique.json. SKILL.md itself is correct (references critique.json throughout), but the manifest carries this stale string. Fix: update skill.json agents[0].when to reference critique.json (manifest is a generated artifact — fix in the .build/manifests source and re-run aggregate.py)."
+   }
+  ]
+ },
+ {
+  "skill": "critic-calibrate",
+  "mode": "inline+spawn",
+  "lines": 155,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "major",
+    "detail": "allowed-tools declares Glob but Glob is not in the manifest harness_tools and is never used in the skill body — all folder enumeration uses Bash `ls -t`. Remove Glob from allowed-tools to keep the tool list minimal."
+   },
+   {
+    "severity": "major",
+    "detail": "allowed-tools declares Write but the only write operation (Step 5 log append) routes through vault_edit via Bash — Write is never called directly. If Write is genuinely unused, remove it; if the skill originally intended a direct Write fallback, make it explicit in the step instructions."
+   },
+   {
+    "severity": "major",
+    "detail": "Prerequisite check (archive count >= 5) is implemented as a ```!``` dynamic-injection block. Dynamic injection pre-loads context at skill-load time and cannot branch on results. A gate that halts execution on failure must be a Bash tool call with an explicit if/else conditional in the skill body, matching how slice/SKILL.md uses Bash for the stranded-slice audit gate."
+   },
+   {
+    "severity": "minor",
+    "detail": "manifest reads[] includes <vault>/slices/_index.json (produced by archive, for quick navigation to archived slices) but SKILL.md never references or reads this file in any step. Either add an optional Step 1a lookup of _index.json for slice enumeration, or remove it from the manifest reads[] to keep the manifest accurate."
+   },
+   {
+    "severity": "minor",
+    "detail": "manifest reads[] lists the reflection.json path as <vault>/slices/slice-NNN/reflection.json (non-archive path), but SKILL.md Step 1a correctly reads from <vault>/slices/archive/<folder>/reflection.json. The manifest path is wrong — it should be <vault>/slices/archive/slice-NNN/reflection.json to match actual behavior."
+   }
+  ]
+ },
+ {
+  "skill": "reflect",
+  "mode": "inline",
+  "lines": 286,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "AskUserQuestion missing from allowed-tools. Step 5b presents an explicit interactive y/N gate ('Did this slice surface a recurring pattern that should become a build-check?'). The harness requires the tool to be declared in allowed-tools to execute without a permission prompt; the slice template (the canonical reference skill) confirms AskUserQuestion must appear there whenever a user gate exists. Fix: add AskUserQuestion to the allowed-tools frontmatter line."
+   },
+   {
+    "severity": "major",
+    "detail": "No step to move the shipped candidate from candidates.json to archive/candidates.json. The manifest's outputs[] list <vault>/archive/candidates.json as an output of reflect (write_semantics: append, edited_by: reflect). CLAUDE.md direction #3 states: 'on ship/reject the candidate is moved to <vault>/archive/candidates.json so the live backlog stays small'. SKILL.md never does this — after archiving the slice it simply appends Discovered/Deferred items to candidates.json but never moves the completed candidate out. The live backlog will accumulate every shipped candidate indefinitely, breaking the single-backlog invariant. Fix: add a step between Step 6 (auto-archive) and Step 7 (candidate preview) that vault_edit-moves the claimed candidate's entry from candidates.json to archive/candidates.json."
+   }
+  ]
+ },
+ {
+  "skill": "reduce",
+  "mode": "fork",
+  "lines": 144,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "major",
+    "detail": "Step 7 (line 147) states the normal loop as '/slice → /risk-spike → /design-slice → /critique → /build-slice → /validate-slice → /reflect', omitting '/code-review'. The locked v2 loop in CLAUDE.md is 'slice → risk-spike → design-slice → critique → build-slice → code-review → validate-slice → reflect'. Fix: insert '/code-review' between '/build-slice' and '/validate-slice' in the loop string on line 147."
+   },
+   {
+    "severity": "minor",
+    "detail": "The bundled examples/ directory is empty: 'examples/lessons-learned.json' is referenced in SKILL.md line 160 and in skill.json outputs[].example, but the file does not exist under skills/reduce/examples/. Per CLAUDE.md conventions, each skill must bundle an example of every JSON artifact it produces. Create skills/reduce/examples/lessons-learned.json with a realistic instance conforming to schema aisdlc/lessons-learned@1."
+   },
+   {
+    "severity": "minor",
+    "detail": "concept.json is a required read (manifest reads[] entry; referenced in Step 2 bullet) but has no dynamic injection block (!`...`) to pre-load it. triage.json and vault inventory are injected, but concept.json is not, causing a context cold-start for that data. Add an injection block parallel to the triage.json block: cat \"$AI_SDLC_VAULT_ROOT/concept.json\" 2>/dev/null | python -c '...' or similar."
+   }
+  ]
+ },
+ {
+  "skill": "drift-check",
+  "mode": "inline",
+  "lines": 187,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "Missing `context: fork` in frontmatter. The manifest declares `runs_in: \"delegable-to-subagent\"` and CLAUDE.md direction table is explicit: `requires_full_context: false` maps to `context: fork` (+ `agent: <type>`) in the real SKILL.md. Without this field, the skill will execute inline on the main agent instead of as a forked subagent, defeating the pre-commit-safe / fresh-context guarantee. Fix: add `context: fork` to the frontmatter block (and optionally `agent: drift-check` if a persona system prompt exists, or omit agent: if purely analytical)."
+   },
+   {
+    "severity": "major",
+    "detail": "`AskUserQuestion` missing from `allowed-tools`. The `--resolve` mode (Step 5, line 143) explicitly gates on `AskUserQuestion` per finding, but the frontmatter declares only `Read, Grep, Glob, Bash`. The tool will be unavailable at runtime when `--resolve` is invoked. Fix: add `AskUserQuestion` to `allowed-tools`."
+   },
+   {
+    "severity": "major",
+    "detail": "`Skill` tool missing from `allowed-tools`. Line 154 states \"invoke `/slice \"fix drift: <area>\"` via the Skill tool\" as the resolution action for fix-code findings. The Skill tool is not listed in `allowed-tools: Read, Grep, Glob, Bash`, so the invocation will fail at runtime. Fix: add `Skill` to `allowed-tools` (used only in `--resolve` mode for the fix-code branch)."
+   },
+   {
+    "severity": "minor",
+    "detail": "SVW-1 vs R-32 naming divergence creates a traceability gap. The SKILL.md description (line 3) and body (line 127) correctly use `SVW-1` — the canonical v2 convention name per `_conventions.md` and `CLAUDE.md`. However, the manifest `outputs[].purpose` field uses `R-32 seam-routed, ADR-103`. `R-32` does not appear anywhere in `_conventions.md` or `CLAUDE.md` and appears to be a stale v1 risk-register ID. The SKILL.md itself is correct; the inconsistency is in `skill.json`. Flag for the manifest author to reconcile (either confirm R-32 == SVW-1 or purge the stale R-32 reference from the manifest)."
+   }
+  ]
+ },
+ {
+  "skill": "supersede-slice",
+  "mode": "inline",
+  "lines": 152,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "context: fork missing from frontmatter. skill.json declares runs_in: 'delegable-to-subagent', which per the CLAUDE.md Skill model table mandates 'context: fork' (and optionally 'agent: <type>') in the SKILL.md frontmatter. The field is entirely absent. Without it the skill runs inline in the main agent context rather than as a forked subagent — violating the locked efficiency-levers decision and the manifest's classification. Fix: add 'context: fork' to the frontmatter (no agent persona needed since skill.json agents: [])."
+   },
+   {
+    "severity": "major",
+    "detail": "_index.json write_mechanism mismatch. skill.json outputs[2] declares write_mechanism: 'vault_edit-append' for _index.json, but SKILL.md Step 6 instructs the vault_edit 'rewrite' subcommand (CAS full-file rewrite), not 'append'. These are different operations with different semantics and different safety guarantees. If the manifest is authoritative, the SKILL.md must use 'vault_edit append'; if the CAS rewrite is intentional (the step commentary and SVW-1 citation suggest it is), the manifest's write_mechanism field must be corrected to 'vault_edit-rewrite'. Either fix must be applied; the current state is self-contradictory."
+   },
+   {
+    "severity": "major",
+    "detail": "Hardcoded user-specific Python interpreter path. Steps 5 and 6 both contain 'PY=C:\\Users\\sshub\\.claude\\.venv\\Scripts\\python.exe'. The slice/SKILL.md template (the canonical template) uses '$PY' as a runtime-supplied environment variable, never hardcoding the path. A shipped skill SKILL.md embedding a specific user's home directory will fail silently (wrong interpreter, or path-not-found) for any other user or CI environment. Fix: replace both occurrences with '$PY' consistent with the template convention."
+   },
+   {
+    "severity": "minor",
+    "detail": "Manifest output path omits 'archive/' for reflection.json. skill.json outputs[0] lists the path as '<vault>/slices/slice-NNN/reflection.json', which is the live-slice path, not the archived path '<vault>/slices/archive/<archived-slice-id>/reflection.json' that supersede-slice actually writes. SKILL.md Step 3 is correct; the manifest path is wrong. This is a manifest spec error but it could mislead anyone who reads the manifest to understand what the skill writes."
+   }
+  ]
+ },
+ {
+  "skill": "archive",
+  "mode": "fork",
+  "lines": 144,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "allowed-tools is missing 'Agent'. Step 3b explicitly says 'Invoke the Agent tool (subagent_type: general-purpose, model: haiku)' — this is the load-bearing COST-1 Haiku subagent dispatch that generates both index JSON strings. Without Agent in allowed-tools the harness will refuse the call and the entire index-regeneration path (Steps 3b–3c) is dead. Fix: add Agent to the allowed-tools frontmatter line."
+   },
+   {
+    "severity": "major",
+    "detail": "examples/slice-index.json does not match the schema documented in the SKILL.md. The SKILL.md schema block lists four top-level fields — total, active_count, archived_count, updated — that are absent from the example. The recent[] items in the example also lack the 'summary' field that the schema documents. Because the Haiku subagent is told 'output shapes for both _index.json files (see schemas below)', an example that omits these fields will silently produce truncated output. Fix: add total/active_count/archived_count/updated to the example and add a summary field to the recent[] entry."
+   },
+   {
+    "severity": "major",
+    "detail": "The archive _index.json (slices/archive/_index.json) has a structurally different schema from slices/_index.json — it uses a flat 'slices' array and omits project/mode/active/recent/action_points_ref/archive_ref. Yet skill.json outputs[] points BOTH targets at the same example file (examples/slice-index.json). There is no examples/archive-index.json (or equivalent). The Haiku subagent therefore has no canonical example for the archive index shape. Fix: add a separate examples/archive-index.json (or a second top-level key in the existing example) that matches the archive schema shown in SKILL.md Step 3, and update skill.json outputs[1].example to point to it."
+   },
+   {
+    "severity": "minor",
+    "detail": "The dynamic injection block for 'Archived slice count' (line 26) pipes through 'wc -l', a POSIX-only command unavailable on the Windows/PowerShell environment this project runs in (per env notes and CLAUDE.md shell preference). On Windows the pipe will fail and fall through to '|| echo (unavailable)', making the injection silently uninformative every time. The same block uses '2>/dev/null' (POSIX stderr redirect). Fix: replace with a PowerShell-compatible count, e.g. use a --count flag on vault_edit list if available, or use a Python one-liner via $PY -c."
+   }
+  ]
+ },
+ {
+  "skill": "diagnose",
+  "mode": "inline",
+  "lines": 215,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "minor",
+    "detail": "Line 276 in the Anti-patterns section contains the word 'graphify': '- **Using graphify.** Use CRG (`diagnose-out/.code-review-graph/`) exclusively.' The check rule is 'NO graphify anywhere' — the prohibition is absolute. Reword to remove the banned term, e.g., '- **Do not use the old vault graph tool.** Use CRG exclusively.'"
+   },
+   {
+    "severity": "major",
+    "detail": "skill.json declares v2_format:'json' for three output paths — diagnose-out/sections/*.md, diagnose-out/summary/*.md, and diagnose-out/sections/00-overview.md — yet SKILL.md writes and references all of them as .md files (Steps 3, 5, 6, 6.5, 7, and the Step 5.5 verification command). The SKILL.md is implementing v1 format while the manifest has committed to v2 JSON. Either the manifest v2_format fields are wrong (and should stay markdown since assemble.py concatenates prose), or the SKILL.md must use .json extensions and pass templates / assemble.py must be updated accordingly. The inconsistency must be resolved explicitly."
+   },
+   {
+    "severity": "major",
+    "detail": "Step 8 contains a direct self-contradiction. Lines 263-264 include '/slice-candidates' as step 5 of the owner-workflow instructions that the skill tells the user verbatim ('run /slice-candidates to build the candidate backlog'), while line 265 immediately states 'Mention /slice-candidates only if the user asks \"what now?\" — do not push it.' The skill both pushes and forbids pushing the successor in the same paragraph. Resolve by either removing the explicit mention from the numbered workflow list, or dropping line 265's suppression."
+   }
+  ]
+ },
+ {
+  "skill": "heavy-architect",
+  "mode": "inline",
+  "lines": 143,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "major",
+    "detail": "Manifest reads[] lists spikes/spike-*.json with purpose 'Risk-spike results informing architecture decisions', but SKILL.md contains zero references to spike files — no injection block, no Read step, no instruction to incorporate spike outcomes into threat model or component decisions. A completed /risk-spike that retired a HIGH assumption is entirely invisible to /heavy-architect as written. Add a dynamic injection or explicit Read step (e.g. in Prerequisite state or Step 2) to load spike-*.json results before decomposition begins."
+   },
+   {
+    "severity": "major",
+    "detail": "Manifest reads[] lists decisions/ADR-*.json with purpose 'Existing architectural decisions to respect and link from new vault files', but SKILL.md never reads ADRs before writing vault files. ADRs only appear in the Step 9 completion summary ('ADR refs that informed decisions') — after all files are written, not before. Add an explicit Read or injection of existing ADR-*.json files before Step 2 (component decomposition) so architectural decisions already recorded actually constrain the new architecture."
+   },
+   {
+    "severity": "major",
+    "detail": "Missing bundled example files required by the skill convention: examples/cost-estimation.json and examples/diagrams.json are absent from skills/heavy-architect/examples/ (only threat-model.json, requirements.json, non-functional.json exist). SKILL.md Steps 5 and 8 use inline JSON schemas instead of referencing bundled files. The CLAUDE.md Skill model states 'outputs[].example → bundled examples/<artifact>.json'. Create examples/cost-estimation.json and examples/diagrams.json matching the inline schemas shown in Steps 5 and 8."
+   },
+   {
+    "severity": "minor",
+    "detail": "Manifest harness_tools[1] Write purpose string reads 'actors/<actor>.md' — a markdown extension — contradicting the outputs[] entry for actors/*.json which correctly has v2_format: json. SKILL.md Step 3 is correct (writes actors/<actor>.json). Fix the manifest harness_tools purpose string to say 'actors/<actor>.json'."
+   },
+   {
+    "severity": "minor",
+    "detail": "Manifest output purpose strings cite incorrect step numbers: cost-estimation.json says '(Step 6)' but SKILL.md places it at Step 5; requirements.json says '(Step 8)' but SKILL.md places it at Step 6; non-functional.json also says '(Step 8)' but SKILL.md places it at Step 7. Two outputs share the same Step 8 label, making them indistinguishable. Update manifest output purpose strings to match the actual step numbers in SKILL.md (Steps 5, 6, 7 respectively)."
+   },
+   {
+    "severity": "minor",
+    "detail": "No bundled example for actors/*.json. SKILL.md Step 3 provides an inline schema but no examples/actors/<actor>.json file is bundled. The CLAUDE.md convention says every output with an example field should have a bundled file. Add examples/actors/example-actor.json to demonstrate the actor schema with realistic values."
+   }
+  ]
+ },
+ {
+  "skill": "sync",
+  "mode": "inline",
+  "lines": 151,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "major",
+    "detail": "drift-log.json write in Step 5b ('Accept drift' branch) is unspecified. The skill says 'log to <vault>/drift-log.json with rationale' but provides no vault_edit call. _conventions.md explicitly lists drift-log as an SVW-1 append-only file requiring vault_edit append. The skill correctly routes sync-log.json through vault_edit (Step 6), making this omission a deliberate-looking inconsistency. Fix: add '$PY -m scripts.lib.vault_edit append \"$AI_SDLC_VAULT_ROOT/drift-log.json\" entries ...' in the Accept-drift branch of Step 5b, mirroring the Step 6 pattern."
+   },
+   {
+    "severity": "minor",
+    "detail": "Step 5b 'Fix code' option says 'spawn a /slice' without naming the invocation mechanism. The slice SKILL.md sets the convention: 'invoke /risk-spike via Skill tool'. sync SKILL.md leaves it ambiguous — a Claude Code agent could interpret this as printing a suggestion rather than actually invoking Skill. Fix: change to 'invoke /slice via the Skill tool to address the discrepancy'."
+   },
+   {
+    "severity": "minor",
+    "detail": "Step 3 class 5 ('Slice design path references') reads <vault>/slices/slice-NNN/design.json files but manifest reads[] lists only six paths (triage.json, threat-model.json, requirements.json, nfrs.json, ADR-*.json, risk-register.json). design.json is not listed. This is a SKILL.md-vs-manifest spec divergence: either the behavior is undocumented in the manifest (fix: add design.json to reads[]) or the step belongs in a different skill and should be dropped."
+   }
+  ]
+ },
+ {
+  "skill": "risk-spike",
+  "mode": "inline+spawn",
+  "lines": 114,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "major",
+    "detail": "candidates.json status transition missing on all-proven: manifest outputs[candidates.json].purpose specifies 'on all-proven set status=active, progress=design'; SKILL.md L124 only sets progress=design. The candidate stays status=spiking after a successful spike. Any consumer filtering on status=active (e.g. pulse, reflect) will not see the candidate as through the spike gate. Fix: add --set status=active to the vault_edit command shown, or add a separate vault_edit call after the per-assumption loop when all pass."
+   },
+   {
+    "severity": "major",
+    "detail": "vault_edit mechanism mismatch for candidates.json: manifest write_mechanism=vault_edit-append; SKILL.md Step 5 uses vault_edit --update (CAS/read-modify-write). These are semantically different operations. Additionally, the prose mutations in L124-L126 (set progress=design, set status=blocked, append history entry) have no corresponding vault_edit command — the model must infer them, which is fragile for an executable skill. Fix: either reconcile the manifest to vault_edit-update, or add explicit vault_edit calls for the status/progress/history mutations."
+   },
+   {
+    "severity": "major",
+    "detail": "milestone.json written in Step 6 but absent from manifest outputs[]: SKILL.md Step 6 updates <vault>/slices/slice-NNN-<name>/milestone.json to stage=design, next_action=/design-slice, which is the load-bearing loop-resume state advancement. This output is completely absent from skill.json outputs[]. Fix: add milestone.json as an output entry in the manifest (write_semantics=update, write_mechanism=raw-write, purpose='Advance loop stage from spike to design')."
+   },
+   {
+    "severity": "minor",
+    "detail": "Grep and Glob listed in allowed-tools but never used in the skill body. All search is handled by CRG (code-review-graph search in Step 2), and vault reads go through vault_edit --read or Write/Read tools. Over-permissioned allowed-tools inflate the tool surface unnecessarily. Fix: remove Grep and Glob from allowed-tools."
+   }
+  ]
+ },
+ {
+  "skill": "commit-slice",
+  "mode": "inline",
+  "lines": 240,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "major",
+    "detail": "context:fork field is missing from frontmatter. Manifest runs_in is 'delegable-to-subagent'; CLAUDE.md convention table maps this to context:fork (+agent:<type> when a persona applies). Every other delegable skill with an authored SKILL.md (archive, pulse, reduce, validate-slice) carries context:fork. Fix: add 'context: fork' to the frontmatter block (no agent: needed since commit-slice is not a Critic/persona skill)."
+   },
+   {
+    "severity": "major",
+    "detail": "non-functional.json is referenced in the Step 4 Heavy-mode commit message template ('Compliance: <applicable frameworks from non-functional.json>') but is absent from the manifest reads[] array AND from the Step 2 'read vault artifacts' enumeration. This is an undeclared runtime read dependency: the skill will silently fail or produce an empty compliance line in Heavy mode without telling the user why. Fix: either add '<vault>/non-functional.json' to Step 2 reads and to the manifest, or guard the template line with '(if non-functional.json exists)' and document its conditional nature."
+   },
+   {
+    "severity": "minor",
+    "detail": "Zero dynamic injection (!`cmd`) blocks are present anywhere in the skill. CLAUDE.md marks adoption of the !`cmd` efficiency lever as LOCKED: 'dynamic injection !`cmd` to pre-load vault JSON into the prompt (now that the vault is JSON)'. Template peers code-review and slice both inject live state at load time. commit-slice iterates over vault JSON files (shippability.json snippet, top archived slice folder) that could reduce Step 1-2 latency if pre-injected. Fix: add at minimum one !`cmd` block, e.g. injecting the most-recently-archived slice folder name or top shippability entry, mirroring the pattern in slice's candidates_top.py injection."
+   },
+   {
+    "severity": "minor",
+    "detail": "examples/parallel-conflict-resolution-log.json is not bundled. CLAUDE.md states 'each skill bundles an example of every JSON artifact it produces at skills/<name>/examples/<artifact>.json'. outputs[1] in the manifest is <vault>/parallel-conflict-resolution-log.json (write_semantics: append, v2_format: json) and has no example field and no file in examples/. Fix: add examples/parallel-conflict-resolution-log.json showing the schema-by-example for both a PCR auto-resolution entry and a PCR-2b HARD resolution record."
+   }
+  ]
+ },
+ {
+  "skill": "pulse",
+  "mode": "fork",
+  "lines": 158,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "major",
+    "detail": "Dynamic injection not used for vault JSON pre-load. CLAUDE.md locked rule: 'dynamic injection `!cmd` to pre-load vault JSON' is mandatory for delegable skills. Step 1 lists 12 vault JSON files (triage.json, concept.json, risk-register.json, slices/_index.json, action-points.json, milestone.json, build-log.json, shippability.json, critic-calibration-log.json, lessons-learned.json, drift-log.json, changelog.json) but uses implied Read tool calls at runtime instead of injecting them into the prompt context upfront. Fix: add `!` injection blocks for the core vault files (or at minimum the high-frequency ones: milestone.json, candidates.json, triage.json) so the forked subagent has vault state in-context without tool calls."
+   },
+   {
+    "severity": "major",
+    "detail": "Override-precedence table drops MERGED and UNKNOWN worktree states. v1 SKILL.md (temp/skills/pulse/SKILL.md lines 103-111) had an 8-row table that explicitly WARNed on MERGED (CLEANUP-CANDIDATE, whether CAL-1 overdue or not) and UNKNOWN worktree states. v2 Step 2 table has only 4 rows; MERGED and UNKNOWN fall through to 'Otherwise → milestone next_action' silently. This removes load-bearing warning behavior: a MERGED worktree that was never cleaned up should warn the user; an UNKNOWN classification should name its sub-reason. Fix: add MERGED and UNKNOWN rows to the Step 2 precedence table with explicit WARN behavior."
+   },
+   {
+    "severity": "minor",
+    "detail": "Milestone fallback stage-derivation is unimplementable as written. 'If milestone.json is missing, derive stage from file existence as fallback and warn the user.' gives no file list. v1 enumerated the exact chain: no mission-brief.json → none; +mission-brief.json → spike/slice; +design.json → design; +build-log.json → build; +validation.json → validate; +reflection.json → reflect. Fix: add the v2-equivalent file list (using .json extensions throughout) so the fallback branch is self-contained."
+   }
+  ]
+ },
+ {
+  "skill": "user-test",
+  "mode": "inline",
+  "lines": 167,
+  "verdict": "ISSUES",
+  "issues": [
+   {
+    "severity": "blocker",
+    "detail": "Primary output artifact has no bundled example file. CLAUDE.md mandates 'each skill bundles an example of every JSON artifact it produces at skills/<name>/examples/<artifact>.json'. The skill's primary output is <vault>/user-tests/<name>.json, but examples/ contains only risk-register.json — there is no examples/user-test.json (or similar). The manifest outputs[] entry for user-tests/*.json also lacks an 'example' field (contrast: risk-register output has 'example': 'examples/risk-register.json'). Add examples/user-test.json with a realistic instance."
+   },
+   {
+    "severity": "blocker",
+    "detail": "Step 5 cites the wrong bundled example as schema reference. The text reads 'schema by example: examples/risk-register.json shows the vault JSON pattern; shape your output file as:'. risk-register.json is the example for the RISK REGISTER output, not for the user-test output. This will mislead anyone authoring a user-tests/<name>.json. Fix: add examples/user-test.json and reference that file here instead."
+   },
+   {
+    "severity": "major",
+    "detail": "No dynamic injection (!`cmd`) anywhere in the skill. CLAUDE.md explicitly mandates: 'dynamic injection !`cmd` to pre-load vault JSON into the prompt (where it would pre-load needed vault state)' — this is listed as a locked efficiency lever. Step 6 instructs 'For each...new risk NOT already in risk-register.json' but never injects or reads the register, so the model cannot actually deduplicate without a live Read. At minimum, inject the current risk-register via !`cat $AI_SDLC_VAULT_ROOT/risk-register.json` (or a filtered version) before the duplicate-check step. Compare: slice/SKILL.md uses two injection blocks."
+   },
+   {
+    "severity": "major",
+    "detail": "allowed-tools includes Read, Grep, Glob but the skill never uses them — there are no file-read steps, no reads[] in the manifest, and no injected-file fallback reads in the body. Over-permissioning violates the 'allowed-tools present + minimal' convention. Either add the missing injection/read steps that justify these tools (fix the dynamic injection gap above), or remove Read/Grep/Glob from allowed-tools if the skill genuinely needs none."
+   },
+   {
+    "severity": "minor",
+    "detail": "Step 6 vault_edit module path differs from the shared-scripts location. The SKILL.md calls '$PY -m scripts.lib.vault_edit'; the manifest tools[].invocation shows '$PY -m tools.vault_edit' (old v1 path). The SKILL.md path is correct per CLAUDE.md ('scripts/lib/' holds shared tooling), but the inconsistency signals the manifest was not updated; if anyone re-derives the invocation from the manifest they get the wrong path. The manifest is generated (do not hand-edit), but the discrepancy is worth flagging for the next aggregate.py run."
+   },
+   {
+    "severity": "minor",
+    "detail": "The 'Pipeline at a glance' in CLAUDE.md also lists risk-register as 'risk-register.md' (line: 'Risk ledger: risk-register.md') — that is a CLAUDE.md stale reference, not a SKILL.md bug. However the SKILL.md correctly uses .json throughout (risk-register.json, user-tests/<name>.json). No fix needed in SKILL.md, but worth noting the CLAUDE.md itself contains a stale .md reference to risk-register that could cause confusion if cross-checked."
+   }
+  ]
+ }
+]

@@ -1,0 +1,304 @@
+{
+  "name": "diagnose",
+  "user_invokable": true,
+  "requires_full_context": true,
+  "runs_in": "main-agent",
+  "context_rationale": "The orchestrating skill must hold pass-template content in memory, manage the sequential Agent-spawn loop, invoke write_pass.py after each subagent returns, and run assemble.py — all requiring the parent conversation's tool access and cwd context.",
+  "summary": "Produces a single self-contained interactive HTML diagnosis of a target codebase for the repo owner. Runs 11 analysis passes (10 general-purpose subagents plus one cross-reference pass) via code-review-graph-backed code graph analysis, then spawns the diagnose-narrator named subagent for the executive summary, and assembles everything via assemble.py. The deliverable is diagnose-out/diagnosis.html, which embeds findings as JSON for owner annotation. Never modifies source files in the target repo.",
+  "reads": [
+    {
+      "path": "diagnose-out/diagnosis.html",
+      "kind": "content-file",
+      "produced_by": [
+        "diagnose"
+      ],
+      "purpose": "Read by assemble.py to extract prior Confirmed/Notes annotations for carryover"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "diagnose-out/",
+      "kind": "directory",
+      "v1_format": "directory",
+      "v2_format": "directory",
+      "write_semantics": "create",
+      "write_mechanism": "mkdir",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "diagnose"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Root output directory for all diagnose artifacts"
+    },
+    {
+      "path": "diagnose-out/sections/",
+      "kind": "directory",
+      "v1_format": "directory",
+      "v2_format": "directory",
+      "write_semantics": "create",
+      "write_mechanism": "mkdir",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "diagnose"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Per-pass prose markdown files"
+    },
+    {
+      "path": "diagnose-out/findings/",
+      "kind": "directory",
+      "v1_format": "directory",
+      "v2_format": "directory",
+      "write_semantics": "create",
+      "write_mechanism": "mkdir",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "diagnose"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Per-pass structured YAML findings"
+    },
+    {
+      "path": "diagnose-out/summary/",
+      "kind": "directory",
+      "v1_format": "directory",
+      "v2_format": "directory",
+      "write_semantics": "create",
+      "write_mechanism": "mkdir",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "diagnose"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Per-pass one-paragraph summaries"
+    },
+    {
+      "path": "diagnose-out/.code-review-graph/",
+      "kind": "external-artifact",
+      "v1_format": "other",
+      "v2_format": "other",
+      "write_semantics": "create",
+      "write_mechanism": "code-review-graph",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "diagnose"
+      ],
+      "edited_by": [],
+      "read_by": [
+        "slice-candidates"
+      ],
+      "validated_by": [],
+      "purpose": "AST-level code graph consumed by all analysis subagent passes"
+    },
+    {
+      "path": "diagnose-out/sections/*.md",
+      "kind": "content-file",
+      "v1_format": "markdown",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "diagnose"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Per-pass prose sections written by write_pass.py"
+    },
+    {
+      "path": "diagnose-out/findings/*.yaml",
+      "kind": "content-file",
+      "v1_format": "other",
+      "v2_format": "other",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "diagnose"
+      ],
+      "edited_by": [],
+      "read_by": [
+        "slice-candidates"
+      ],
+      "validated_by": [],
+      "purpose": "Per-pass structured findings YAML; 03b-duplicates.yaml and 03d-half-wired.yaml also read by 04-ai-bloat subagent"
+    },
+    {
+      "path": "diagnose-out/summary/*.md",
+      "kind": "content-file",
+      "v1_format": "markdown",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "diagnose"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Per-pass one-paragraph summaries written by write_pass.py"
+    },
+    {
+      "path": "diagnose-out/.tmp/<pass-name>.raw",
+      "kind": "content-file",
+      "v1_format": "other",
+      "v2_format": "other",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "diagnose"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Raw subagent response saved before write_pass.py invocation"
+    },
+    {
+      "path": "diagnose-out/sections/00-overview.md",
+      "kind": "content-file",
+      "v1_format": "markdown",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "diagnose"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Executive summary written by the diagnose-narrator named subagent"
+    },
+    {
+      "path": "diagnose-out/diagnosis.html",
+      "kind": "content-file",
+      "v1_format": "html",
+      "v2_format": "html",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "diagnose"
+      ],
+      "edited_by": [],
+      "read_by": [
+        "adopt",
+        "diagnose",
+        "slice-candidates"
+      ],
+      "validated_by": [],
+      "purpose": "Final self-contained interactive deliverable produced by assemble.py; embeds findings JSON and owner annotation controls"
+    }
+  ],
+  "agents": [
+    {
+      "name": "diagnose-narrator",
+      "when": "Step 6.5 — after all 11 forensic passes have written their YAMLs and summaries",
+      "purpose": "Writes the executive summary (sections/00-overview.md) from findings/*.yaml and summary/*.md using fresh context"
+    }
+  ],
+  "tools": [
+    {
+      "name": "code-review-graph",
+      "type": "external-package",
+      "invocation": "code-review-graph build|update | CRG MCP tools (impact-radius, review-context, search)",
+      "purpose": "Code graph via code-review-graph (CRG) — builds/refreshes the code graph; reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+      "found": false,
+      "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "Bash",
+      "purpose": "Run code-review-graph build, code-review-graph queries, write_pass.py, assemble.py, directory checks"
+    },
+    {
+      "name": "Read",
+      "purpose": "Load pass templates and finding-schema for embedding in subagent prompts; read source files within TARGET"
+    },
+    {
+      "name": "Glob",
+      "purpose": "Verify expected per-pass output files exist"
+    },
+    {
+      "name": "Grep",
+      "purpose": "Symbol-string verification within TARGET source"
+    },
+    {
+      "name": "Write",
+      "purpose": "Write raw subagent response to $OUT/.tmp/<pass-name>.raw before invoking write_pass.py"
+    },
+    {
+      "name": "Agent",
+      "purpose": "Spawn each of the 10+1 analysis-pass general-purpose subagents and the diagnose-narrator named subagent"
+    }
+  ],
+  "hands_off_to": [
+    "slice-candidates"
+  ],
+  "source": "temp/skills/diagnose/SKILL.md",
+  "missing_references": [
+    {
+      "ref": "code-review-graph",
+      "kind": "tool",
+      "found": false,
+      "expected": true,
+      "reason": "External pip package, intentionally not bundled in the plugin."
+    }
+  ]
+}

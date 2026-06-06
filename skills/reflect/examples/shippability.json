@@ -1,0 +1,15 @@
+{
+  "_schema": "aisdlc/shippability@1",
+  "_note": "Regression catalog. Each row has a prose-free machine_cmd (SCMD-1). Run by tools.shippability_runner. Append via vault_edit.",
+  "rows": [
+    {
+      "id": "SHIP-007",
+      "slice": "slice-019",
+      "kind": "test",
+      "description": "Webhook signature verification rejects tampered payloads.",
+      "machine_cmd": "pytest tests/bugs/test_webhook_sig.py -q",
+      "critical_path": true,
+      "added": "<ts>"
+    }
+  ]
+}

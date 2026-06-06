@@ -1,0 +1,30 @@
+{
+  "_schema": "aisdlc/design@1",
+  "slice": "slice-021",
+  "whats_new": "## What's new\nSSE presence endpoint + client subscriber.",
+  "components_touched": [
+    "presence",
+    "doc-view"
+  ],
+  "contracts": [
+    {
+      "name": "GET /presence/:doc",
+      "kind": "sse",
+      "notes": "emits {userId,joined}"
+    }
+  ],
+  "data_model_deltas": [],
+  "wiring_matrix": [
+    {
+      "module": "presence.ts",
+      "consumer_entrypoint": "doc-view subscribes on mount",
+      "consumer_test": "tests/presence.test.ts"
+    }
+  ],
+  "adrs": [
+    "ADR-014"
+  ],
+  "auth_model": "session cookie",
+  "error_model": "SSE retry w/ backoff",
+  "at": "<ts>"
+}

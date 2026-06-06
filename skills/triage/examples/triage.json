@@ -1,0 +1,35 @@
+{
+  "_schema": "aisdlc/triage@1",
+  "mode": "standard",
+  "date": "<ts>",
+  "classification": {
+    "domain_clarity": "fuzzy",
+    "compliance": "light",
+    "audience": "b2c"
+  },
+  "mode_rationale": "B2C product with a fuzzy domain and light compliance -> Standard.",
+  "pipeline_path": [
+    "discover",
+    "slice",
+    "risk-spike",
+    "design-slice",
+    "critique",
+    "build-slice",
+    "code-review",
+    "validate-slice",
+    "reflect"
+  ],
+  "deferred_steps": [
+    {
+      "step": "user-test",
+      "why": "no UI yet",
+      "revisit_if": "first clickable prototype exists"
+    }
+  ],
+  "history": [
+    {
+      "event": "triage",
+      "at": "<ts>"
+    }
+  ]
+}

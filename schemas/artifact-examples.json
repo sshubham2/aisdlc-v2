@@ -1,0 +1,249 @@
+{
+  "_doc": "Canonical compact example per vault artifact (the JSON each skill produces). Source for the `output_example` embedded into each skills/<name>/skill.json by aggregate.py. Pattern: structure-fields + markdown-valued prose strings. See _conventions.md.",
+  "triage": {
+    "_schema": "aisdlc/triage@1",
+    "mode": "standard",
+    "date": "<ts>",
+    "classification": { "domain_clarity": "fuzzy", "compliance": "light", "audience": "b2c" },
+    "mode_rationale": "B2C product with a fuzzy domain and light compliance -> Standard.",
+    "pipeline_path": ["discover", "slice", "risk-spike", "design-slice", "critique", "build-slice", "code-review", "validate-slice", "reflect"],
+    "deferred_steps": [{ "step": "user-test", "why": "no UI yet", "revisit_if": "first clickable prototype exists" }],
+    "history": [{ "event": "triage", "at": "<ts>" }]
+  },
+  "concept": {
+    "_schema": "aisdlc/concept@1",
+    "date": "<ts>", "mode": "standard",
+    "what": "## What\nLets small sellers accept card payments and see orders update live. Out of scope: refunds, multi-currency.",
+    "non_goals": ["refunds", "multi-currency"],
+    "actors": [{ "name": "seller", "role": "runs the shop", "top_actions": ["take payment", "view orders"], "needs": ["payment status"], "cannot": ["issue refunds"] }],
+    "constraints": { "stack": [{ "choice": "Next.js + Stripe", "reversibility": "expensive", "adr": "ADR-002" }], "infra": "Vercel + managed Postgres.", "team": "solo, 6-week MVP." },
+    "first_slice_candidate": "SC-001"
+  },
+  "risk-register": {
+    "_schema": "aisdlc/risk-register@1",
+    "_note": "The risk LEDGER (not the candidate backlog). score=likelihood×impact (low1/med2/high3 -> 1..9); band 1-2 low,3-4 med,6-9 high. Append/CAS via vault_edit.",
+    "project": "<name>", "updated": "<ts>",
+    "risks": [{
+      "id": "R-13", "title": "Stripe webhook reliability",
+      "likelihood": "high", "impact": "high", "status": "open", "reversibility": "expensive",
+      "score": 9, "band": "high",
+      "mitigation": "Spike SC-014 assumption A1 before building; fallback = queue-based retry.",
+      "discovered": { "phase": "triage", "at": "<ts>", "ref": null },
+      "candidate_ref": "SC-014", "notes": ""
+    }]
+  },
+  "slice-candidates": {
+    "_schema": "aisdlc/slice-candidates@1",
+    "_note": "Full example + field docs in schemas/slice-candidates.example.json. LIVE candidates only; shipped move to <vault>/archive/candidates.json.",
+    "project": "<name>", "updated": "<ts>",
+    "candidates": [{
+      "id": "SC-014", "title": "stripe-webhook-receiver", "status": "candidate", "progress": "not-started",
+      "slice": null, "claimed_by": null, "started_at": null,
+      "source": [{ "type": "risk", "ref": "R-13" }],
+      "description": "Receive + verify Stripe webhooks; persist to events.",
+      "rationale": "Retires R-13; ships a user-visible PAID state.",
+      "dependencies": ["SC-009"],
+      "priority": { "score": 7, "effort": "M", "blast_radius": "orders, billing" },
+      "assumptions": [{ "id": "A1", "statement": "Signatures verify; events <2s p95.", "risk_ref": "R-13", "blocking": true, "spike_status": "unproven", "spike_ref": null, "spike_evidence": null, "fallback": null }],
+      "verification_plan": "Real test-mode event -> verified -> order PAID.",
+      "history": [{ "event": "created", "by": "discover", "at": "<ts>" }]
+    }],
+    "pick_log": []
+  },
+  "adr": {
+    "_schema": "aisdlc/adr@1",
+    "_note": "Append-only: to change a decision, write a NEW ADR with `supersedes` and set the old one's `superseded_by`. Never edit the body.",
+    "id": "ADR-014", "title": "Use SSE for presence transport",
+    "status": "accepted", "reversibility": "expensive",
+    "supersedes": "ADR-008", "superseded_by": null,
+    "slice": "slice-021", "date": "<ts>",
+    "context": "## Context\nManaged host caps WebSockets at ~120 concurrent.",
+    "decision": "## Decision\nUse SSE + short-poll fallback.",
+    "consequences": "## Consequences\nOne-way only; revisit if we need client->server streaming."
+  },
+  "shippability": {
+    "_schema": "aisdlc/shippability@1",
+    "_note": "Regression catalog. Each row has a prose-free machine_cmd (SCMD-1). Run by tools.shippability_runner. Append via vault_edit.",
+    "rows": [{
+      "id": "SHIP-007", "slice": "slice-019", "kind": "test",
+      "description": "Webhook signature verification rejects tampered payloads.",
+      "machine_cmd": "pytest tests/bugs/test_webhook_sig.py -q",
+      "critical_path": true, "added": "<ts>"
+    }]
+  },
+  "mission-brief": {
+    "_schema": "aisdlc/mission-brief@1",
+    "slice": "slice-021", "candidate": "SC-015", "title": "realtime-presence",
+    "mode": "standard", "risk_tier": "medium",
+    "intent": "## Intent\nShow which teammates are viewing a doc, live.",
+    "acceptance_criteria": [{ "id": "AC1", "text": "Active viewers' avatars appear within 2s.", "verification": "two real browsers, observe avatar within 2s", "status": "pending" }],
+    "must_not_defer": ["signed-out users must not leak presence"],
+    "out_of_scope": ["cursor positions"],
+    "verification_plan": "## Verification\nTwo devices on one doc; observe live avatars.",
+    "variants": { "test_first": false, "walking_skeleton": false, "exploratory_charter": false },
+    "supersedes": null, "created_by": "slice", "at": "<ts>"
+  },
+  "milestone": {
+    "_schema": "aisdlc/milestone@1",
+    "slice": "slice-021", "stage": "build", "next_action": "/code-review",
+    "progress": [
+      { "step": "spike", "done": true }, { "step": "design", "done": true },
+      { "step": "critique", "done": true }, { "step": "build", "done": false },
+      { "step": "code-review", "done": false }, { "step": "validate", "done": false }, { "step": "reflect", "done": false }
+    ],
+    "current_focus": "wiring the SSE transport",
+    "on_resume": "## On resume\nFinish the SSE handler in presence.ts, then run /code-review.",
+    "updated_by": "build-slice", "at": "<ts>"
+  },
+  "design": {
+    "_schema": "aisdlc/design@1",
+    "slice": "slice-021",
+    "whats_new": "## What's new\nSSE presence endpoint + client subscriber.",
+    "components_touched": ["presence", "doc-view"],
+    "contracts": [{ "name": "GET /presence/:doc", "kind": "sse", "notes": "emits {userId,joined}" }],
+    "data_model_deltas": [],
+    "wiring_matrix": [{ "module": "presence.ts", "consumer_entrypoint": "doc-view subscribes on mount", "consumer_test": "tests/presence.test.ts" }],
+    "adrs": ["ADR-014"], "auth_model": "session cookie", "error_model": "SSE retry w/ backoff",
+    "at": "<ts>"
+  },
+  "build-log": {
+    "_schema": "aisdlc/build-log@1",
+    "slice": "slice-021", "result": "shipped",
+    "plan": ["add SSE endpoint", "client subscriber", "tests"],
+    "events": [{ "at": "<ts>", "note": "smoke gate passed at 50%" }],
+    "gates": [{ "id": "WIRE-1", "status": "pass" }, { "id": "TF-1", "status": "n/a" }],
+    "deferrals": [],
+    "files_changed": ["src/presence.ts", "src/doc-view.tsx", "tests/presence.test.ts"]
+  },
+  "validation": {
+    "_schema": "aisdlc/validation@1",
+    "slice": "slice-021",
+    "result": "pass",
+    "criteria": [{ "id": "AC1", "result": "pass", "evidence": "two browsers, avatar in 1.4s", "cause": null }],
+    "reality_surprises": [{ "note": "Safari needs an explicit retry header", "becomes_candidate": "SC-024" }],
+    "shippability_regression": { "ran": true, "failed_rows": [] },
+    "at": "<ts>"
+  },
+  "reflection": {
+    "_schema": "aisdlc/reflection@1",
+    "slice": "slice-021",
+    "validated": [{ "claim": "SSE holds presence at scale", "evidence": "load test 500 ok" }],
+    "corrected": [{ "was": "design said WebSocket", "now": "SSE", "artifact": "ADR-014" }],
+    "discovered": [{ "item": "Safari retry header", "becomes": "candidate", "ref": "SC-024" }],
+    "deferred": [{ "item": "cursor positions", "why": "out of scope", "becomes_candidate": "SC-025" }],
+    "critic_calibration": [{ "finding": "WS scale risk", "verdict": "VALIDATED" }],
+    "lessons": ["Prove transport limits with a spike before designing realtime features."],
+    "supersession": null, "at": "<ts>"
+  },
+  "lessons-learned": {
+    "_schema": "aisdlc/lessons-learned@1",
+    "_note": "Chronological, append-only via vault_edit.",
+    "entries": [{ "slice": "slice-021", "at": "<ts>", "lesson": "Spike transport limits before designing realtime." }]
+  },
+  "slice-index": {
+    "_schema": "aisdlc/slice-index@1",
+    "_note": "Thin router: active slices + recent-10 one-liners + pointer to action-points + archive. CAS via vault_edit.",
+    "project": "<name>", "mode": "standard",
+    "active": [{ "slice": "slice-021", "title": "realtime-presence", "stage": "build" }],
+    "recent": [{ "slice": "slice-020", "title": "webhook-receiver", "shipped": "<ts>" }],
+    "action_points_ref": "<vault>/slices/action-points.json",
+    "archive_ref": "<vault>/slices/archive/_index.json"
+  },
+  "critique": {
+    "_schema": "aisdlc/critique@1",
+    "_note": "Critic findings + Builder dispositions + user-ratified TRI-1 triage. verdict gates /build-slice. disposition enum: accepted-fixed | accepted-pending | overridden | deferred | escalated.",
+    "slice": "slice-021", "reviewed_by": "critique agent", "verdict": "needs-fixes",
+    "findings": [{ "id": "C1", "dimension": "security", "severity": "major", "claim": "SSE endpoint lacks an auth check.", "fix": "gate on session cookie", "disposition": "accepted-pending" }],
+    "dimensions_checked": [{ "dimension": "security", "result": "1 major" }, { "dimension": "edge-cases", "result": "none" }],
+    "triage": { "verdict": "needs-fixes", "ratified_by": "<user>", "at": "<ts>", "dispositions": [{ "finding": "C1", "action": "fix-now" }] }
+  },
+  "critique-review": {
+    "_schema": "aisdlc/critique-review@1",
+    "_note": "Meta-Critic review of critique.json (DR-1). Verdict in {accept, adjust, extend}.",
+    "slice": "slice-021", "reviewed_by": "critique-review agent", "verdict": "adjust", "date": "<ts>",
+    "assessments": [{ "finding": "C1", "classification": "valid" }],
+    "missed": [{ "dimension": "edge-case", "claim": "no test for a dropped SSE reconnect" }]
+  },
+  "code-review": {
+    "_schema": "aisdlc/code-review@1",
+    "_note": "Adversarial code-Critic on the slice diff (CRSI-1). Advisory in v1.",
+    "slice": "slice-021", "reviewed_by": "code-review agent",
+    "findings": [{ "id": "CR1", "dimension": "edge-case", "severity": "minor", "file": "src/presence.ts:42", "claim": "no backoff cap on SSE retry", "fix": "cap retry at 30s" }],
+    "dimensions_checked": ["assumptions", "edge-cases", "security", "contract-gaps", "drift"]
+  },
+  "spike": {
+    "_schema": "aisdlc/spike@1",
+    "_note": "Throwaway proof for one candidate assumption (in-loop slice step-0). Verdict feeds candidates.json + risk-register.",
+    "name": "spike-ws-presence", "candidate": "SC-015", "assumption": "A1", "date": "<ts>",
+    "assumption_under_test": "Managed host holds 500 concurrent WebSockets.",
+    "method": "Ramp synthetic WS connections; measure the drop point.",
+    "verdict": "no-go",
+    "evidence": "Capped at ~120 before 503s.",
+    "fallback": "SSE + short-poll, OR managed pub/sub; re-spike before unblocking.",
+    "risk_ref": "R-27"
+  },
+  "drift-log": {
+    "_schema": "aisdlc/drift-log@1",
+    "_note": "Append-only audit (R-32). Categories: drift | unspecified-code | stale-claim.",
+    "entries": [{ "at": "<ts>", "trigger": "slice-021", "category": "stale-claim", "finding": "ADR-008 claims WebSocket; code uses SSE.", "resolution": "superseded by ADR-014" }]
+  },
+  "critic-calibration-log": {
+    "_schema": "aisdlc/critic-calibration-log@1",
+    "_note": "Append-only log of /critic-calibrate runs (including zero-proposal runs).",
+    "runs": [{ "at": "<ts>", "window": 15, "patterns": [{ "category": "missing-auth-checks", "slices": ["slice-014", "slice-019", "slice-021"] }], "proposals": [{ "text": "Add an explicit auth-on-every-endpoint dimension.", "decision": "accepted" }] }]
+  },
+  "sync-log": {
+    "_schema": "aisdlc/sync-log@1",
+    "_note": "Heavy-mode bidirectional reconciliation record (append-only).",
+    "runs": [{ "at": "<ts>", "regenerated": ["components/orders.json", "contracts/webhook.json"], "drift": [{ "claim": "retired R-3", "reality": "only simple case retired", "action": "updated risk-register" }] }]
+  },
+  "build-checks": {
+    "_schema": "aisdlc/build-checks@1",
+    "_note": "Project evergreen rules surfaced at /build-slice (BC-1). Append via vault_edit.",
+    "rules": [{ "id": "BC-PROJ-3", "severity": "critical", "applies_when": { "glob": "**/*.py" }, "rule": "Every tools/*.py main() reconfigures stdout to UTF-8.", "rationale": "Windows cp1252 crashes on non-ASCII output." }]
+  },
+  "requirements": {
+    "_schema": "aisdlc/requirements@1",
+    "_note": "Heavy: functional + non-functional requirements by actor.",
+    "items": [{ "id": "REQ-7", "actor": "seller", "statement": "Seller can view live order status.", "status": "planned", "implementation_ref": null, "verification_ref": null }]
+  },
+  "threat-model": {
+    "_schema": "aisdlc/threat-model@1",
+    "_note": "Heavy: STRIDE per component. CSP-1 validates status + implementation/verification refs.",
+    "threats": [{ "id": "TM-4", "component": "webhook", "stride": "spoofing", "threat": "Forged webhook events.", "mitigation": "Verify Stripe signature.", "status": "mitigated", "implementation_ref": "src/webhook.ts", "verification_ref": "tests/webhook_sig.test.ts" }]
+  },
+  "non-functional": {
+    "_schema": "aisdlc/non-functional@1",
+    "_note": "Heavy: NFRs + compliance mapping.",
+    "nfrs": [{ "id": "NFR-2", "kind": "latency", "target": "webhook->PAID < 2s p95", "status": "met", "verification_ref": "tests/perf_webhook.py", "compliance": ["PCI"] }]
+  },
+  "component": {
+    "_schema": "aisdlc/component@1",
+    "_note": "Heavy code-derived view (regenerated by /sync from AST; human sections preserved).",
+    "name": "orders", "public_surface": ["createOrder", "markPaid"], "depends_on": ["db", "billing"],
+    "responsibility": "## Responsibility\nOwns the order lifecycle.",
+    "failure_modes": "## Failure modes\nDB write fails -> retry with backoff."
+  },
+  "contract": {
+    "_schema": "aisdlc/contract@1",
+    "_note": "Heavy code-derived API/event contract (regenerated by /sync).",
+    "name": "webhook", "kind": "http",
+    "endpoints": [{ "method": "POST", "path": "/webhook/stripe", "request": "StripeEvent", "response": "200|400" }],
+    "notes": "## Notes\nSignature required."
+  },
+  "schema": {
+    "_schema": "aisdlc/schema@1",
+    "_note": "Heavy code-derived data-model view (regenerated by /sync).",
+    "entity": "order",
+    "fields": [{ "name": "id", "type": "uuid" }, { "name": "status", "type": "enum(pending,paid,failed)" }],
+    "constraints": ["status transitions: pending -> paid -> failed"],
+    "state_diagram": "## States\npending -> paid -> failed"
+  },
+  "user-test": {
+    "_schema": "aisdlc/user-test@1",
+    "_note": "Real-user validation findings (mockup / prototype / working slice). Surfaced risks append to risk-register.json; surfaced work becomes candidates.",
+    "test": "checkout-flow-mockup", "mode": "prototype", "date": "<ts>", "participants": 1,
+    "tasks": [{ "task": "complete a purchase", "result": "stuck", "observation": "user could not find the pay button" }],
+    "findings": [{ "kind": "stuck", "detail": "pay button below the fold", "becomes_candidate": "SC-030", "becomes_risk": null }]
+  }
+}

@@ -1,0 +1,662 @@
+[
+  {
+    "name": "risk-spike",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "Interactive blocking gate: writes and runs throwaway proof code, needs credentials/device access, and on failure requires a human discussion of a risk-free fallback before re-spiking — depends on the live slice session.",
+    "summary": "First step of the slice loop (slice step-0 gate). Reads the picked candidate's blocking assumptions from candidates.json and proves each with throwaway code on real environments; spawns the field-recon subagent to survey current platform reality first. All assumptions proven -> advances to /design-slice; any FAILED -> marks the candidate blocked and halts the slice until a risk-free fallback is discussed and re-spiked. Records spike verdicts back into candidates.json and the risk ledger.",
+    "agents": [
+      {
+        "name": "field-recon",
+        "when": "Step 2.5 for each spike target",
+        "purpose": "Web survey of current real-world knowledge about the technology under test — post-training-cutoff platform changes, quotas, deprecations, known failure modes"
+      }
+    ],
+    "methodology_tools": [],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "CRG MCP tools (impact-radius, review-context, search)",
+        "purpose": "Code graph via code-review-graph (CRG) — reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read risk-register.json to identify spike targets"
+      },
+      {
+        "name": "Write",
+        "purpose": "Write spike document spike-<name>.md and field-recon.md"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Execute throwaway spike code and capture output"
+      },
+      {
+        "name": "Edit",
+        "purpose": "Update risk-register.json with GO/NO-GO/CONDITIONAL result"
+      },
+      {
+        "name": "Agent",
+        "purpose": "Spawn field-recon subagent for web survey of the technology"
+      },
+      {
+        "name": "AskUserQuestion",
+        "purpose": "Ask user which risks to spike when no argument provided"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Identify HIGH-risk items that need spiking"
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "raw-write",
+        "safety_marker": "<!-- vault-write-safe: project-open-single-shot -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Mark risk as RETIRED/BLOCKING/CONDITIONAL after spike"
+      },
+      {
+        "path": "<vault>/spikes/spike-<name>.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Spike result document with test, outcome, and decision"
+      },
+      {
+        "path": "<vault>/spikes/spike-<name>/field-recon.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Field reconnaissance findings from the field-recon subagent"
+      },
+      {
+        "path": "<vault>/spikes/code/spike-<name>/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "mkdir",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Throwaway spike code directory"
+      },
+      {
+        "path": "<vault>/candidates.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read the active candidate's blocking assumptions[] to prove."
+      },
+      {
+        "path": "<vault>/candidates.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Record each assumption's spike_status (proven/failed), spike_ref, spike_evidence; on FAILED set candidate status=blocked + fallback; on all-proven set status=active, progress=design."
+      }
+    ],
+    "hands_off_to": [
+      "design-slice"
+    ],
+    "source": "temp/skills/risk-spike/SKILL.md"
+  },
+  {
+    "name": "commit-slice",
+    "user_invokable": true,
+    "requires_full_context": false,
+    "runs_in": "delegable-to-subagent",
+    "context_rationale": "Generates commit messages from vault files on disk; no interactive main-thread context needed except for the --merge/--push confirmation gates which are explicit checkpoints.",
+    "summary": "Generates an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, ADRs). Dispatches message rendering to a Haiku subagent for cost efficiency. Supports three mutually exclusive execution modes: --merge, --push, and --sync-after-pr. Default mode generates and displays the message only.",
+    "agents": [
+      {
+        "name": "code-review",
+        "when": "PCR-2b HARD/MIXED rebase conflict gate (Step 5b) — after user resolves conflict markers and --verify-resolution passes CLEAN",
+        "purpose": "Review the resolved conflict diff for lost-hunk/dropped-side, both-sides-intent preservation, semantic correctness, stray markers, and vault/ADR contradiction"
+      }
+    ],
+    "methodology_tools": [
+      {
+        "name": "stale_branch_classifier",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/stale_branch_classifier.py\" --repo-root . --json",
+        "purpose": "Classify slice/* branches as orphan (worktree-less) or legitimate concurrent slice; gates --merge and --push pre-flight"
+      },
+      {
+        "name": "parallel_conflict_resolver",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py\" --resolve-soft --json",
+        "purpose": "Attempt auto-resolution of SOFT/VAULT_CLAIM rebase conflicts during PSQ-3 rebase in --merge flow"
+      },
+      {
+        "name": "parallel_conflict_resolver",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py\" --diagnose --json",
+        "purpose": "Produce structured diagnostic of conflict class, concerned slices, blast-radius, and claim history"
+      },
+      {
+        "name": "parallel_conflict_resolver",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py\" --verify-resolution --json",
+        "purpose": "Verify all U-files are staged and no conflict markers remain after manual HARD/MIXED resolution"
+      },
+      {
+        "name": "parallel_conflict_resolver",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py\" --record-hard-resolution --json",
+        "purpose": "Audit-append record of HARD resolution outcome to parallel-conflict-resolution-log.md"
+      }
+    ],
+    "external_tools": [],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, shippability.json from target slice folder"
+      },
+      {
+        "name": "Glob",
+        "purpose": "Find most recently archived slice folder and new ADRs referencing the slice"
+      },
+      {
+        "name": "Grep",
+        "purpose": "Find ADRs referencing the current slice (grep -l 'slice: slice-NNN')"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run git status, add, commit, merge, rebase, push, branch, log, worktree, ls-remote, cherry, fetch"
+      },
+      {
+        "name": "Agent",
+        "purpose": "Dispatch to Haiku subagent for commit message template rendering; dispatch code-review subagent for PCR-2b HARD/MIXED resolution verification"
+      },
+      {
+        "name": "AskUserQuestion",
+        "purpose": "TRI-RESOLVE-1 structured three-option gate for HARD/MIXED conflict resolution; confirmation checkpoints before git state changes"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/mission-brief.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Source of slice intent and acceptance criteria count for commit message"
+      },
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/critique.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Critic blocker count and addressed status"
+      },
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/build-log.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Files changed and deferrals"
+      },
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/build-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append PCR auto-resolution and PCR-2b breadcrumb events to Events section"
+      },
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/validation.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Per-AC PASS/FAIL and shippability regression status"
+      },
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/reflection.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Validated items and design corrections"
+      },
+      {
+        "path": "<vault>/decisions/",
+        "kind": "directory",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Find new ADRs referencing the current slice"
+      },
+      {
+        "path": "<vault>/shippability.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Shippability entry for the slice"
+      },
+      {
+        "path": "<vault>/parallel-conflict-resolution-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Audit log of PCR auto-resolutions and HARD resolution records"
+      }
+    ],
+    "hands_off_to": [
+      "slice",
+      "pulse"
+    ],
+    "source": "temp/skills/commit-slice/SKILL.md"
+  },
+  {
+    "name": "pulse",
+    "user_invokable": true,
+    "requires_full_context": false,
+    "runs_in": "delegable-to-subagent",
+    "context_rationale": "Read-only vault summarization from files on disk; all required state is in vault files and git state, no main-thread conversation context needed.",
+    "summary": "Scans the AI SDLC vault and produces a compact macro-state summary covering active slice stage, risk exposure, regression health, Critic calibration status, top lessons, and recommended next action. Read-only — never modifies vault files. Dispatches summary text rendering to a Haiku subagent for cost efficiency. Supports three modes: default, --brief, and --full.",
+    "agents": [],
+    "methodology_tools": [
+      {
+        "name": "pulse_worktree_resolver",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/pulse_worktree_resolver.py\" --detect --json",
+        "purpose": "Enumerate non-main worktrees on slice/* branches for BRANCH-2 worktree detection"
+      },
+      {
+        "name": "pulse_worktree_resolver",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/pulse_worktree_resolver.py\" --classify slice-NNN-<name> --json",
+        "purpose": "Classify each detected worktree into one of 4 WorktreeState values"
+      },
+      {
+        "name": "risk_register_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py\" <vault>/risk-register.json --json --filter-status open --sort score",
+        "purpose": "Produce scored, sorted output of open risks for the Risk exposure section"
+      },
+      {
+        "name": "stranded_slice_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/stranded_slice_audit.py\" --repo-root . --json",
+        "purpose": "Classify unmerged slice/* branches without worktrees into 4-class divergence model"
+      }
+    ],
+    "external_tools": [],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read vault files: triage.json, concept.json, risk-register.json, slices/_index.json, action-points.json, active slice milestone.json, build-log.json tail, shippability.json, critic-calibration-log.json, lessons-learned.json, drift-log.json, changelog.json"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run git worktree list --porcelain for BRANCH-2 worktree detection"
+      },
+      {
+        "name": "Agent",
+        "purpose": "Dispatch to Haiku subagent for summary text rendering"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/triage.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Mode, classification, pipeline path, deferred steps"
+      },
+      {
+        "path": "<vault>/concept.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "One-line project description"
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Open risks with status and score for Risk exposure section"
+      },
+      {
+        "path": "<vault>/slices/_index.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Active slice list and recent-10 slices"
+      },
+      {
+        "path": "<vault>/slices/action-points.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Curated cross-slice action-points register"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/milestone.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Active slice stage, next-action, progress checkboxes, on-resume data"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/build-log.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Last 15 lines of Events section when stage is build or later"
+      },
+      {
+        "path": "<vault>/shippability.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Count of critical paths and last full catalog run"
+      },
+      {
+        "path": "<vault>/critic-calibration-log.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Last calibration run date and slices since last run for CAL-1 cadence enforcement"
+      },
+      {
+        "path": "<vault>/lessons-learned.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Last 3-5 most recent lessons for Top lessons section"
+      },
+      {
+        "path": "<vault>/drift-log.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Unresolved drift count for Drift and bypass section"
+      },
+      {
+        "path": "<vault>/changelog.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Pipeline-bypass count for Drift and bypass section"
+      },
+      {
+        "path": "<vault>/candidates.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Surface the live candidate backlog (counts, top-priority, blocked-on-spike) in the macro-state summary."
+      }
+    ],
+    "hands_off_to": [],
+    "source": "temp/skills/pulse/SKILL.md"
+  },
+  {
+    "name": "user-test",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "Interactive: requires live user participation, real-time session facilitation, and post-session Q&A to capture observations; cannot run as a headless subagent.",
+    "summary": "Runs a real-user validation gate using mockup, prototype, or working slice before /design-slice. Helps prepare the artifact, suggests behavior-focused observation questions, frames the test session protocol, and captures findings in a structured vault document. Updates risk-register.json with any new risks surfaced by user behavior via scripts.lib.vault_edit append (SVW-1). Applies to B2C and user-facing projects.",
+    "agents": [],
+    "methodology_tools": [
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file risk-register.json --content-file <tmp>",
+        "purpose": "Append new risks surfaced by user behavior observations (SVW-1 safe channel)"
+      }
+    ],
+    "external_tools": [],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Write",
+        "purpose": "Create <vault>/user-tests/<test-name>.md with structured findings"
+      },
+      {
+        "name": "Edit",
+        "purpose": "Append new risks to risk-register.json via scripts.lib.vault_edit append (SVW-1)"
+      },
+      {
+        "name": "AskUserQuestion",
+        "purpose": "Confirm project fit (Step 1) and ask which mode to use if no argument provided"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/user-tests/<test-name>.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Structured user test findings document"
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Add new risks surfaced by user behavior observations"
+      }
+    ],
+    "hands_off_to": [
+      "slice",
+      "design-slice",
+      "discover"
+    ],
+    "source": "temp/skills/user-test/SKILL.md"
+  }
+]

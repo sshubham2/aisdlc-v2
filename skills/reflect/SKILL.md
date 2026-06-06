@@ -1,0 +1,255 @@
+---
+name: reflect
+description: "Capture what the just-completed slice taught you and update the vault with reality across four categories: validated, corrected, discovered, and deferred. Writes reflection.json, appends to lessons-learned.json and shippability.json, optionally promotes build-checks and auto-archives the slice. Tracks Critic calibration per TRI-1. Use after /validate-slice, before next /slice."
+when_to_use: "Trigger phrases: /reflect, 'reflect on slice', 'capture learnings', 'update vault with reality', 'slice retrospective'. Prerequisite: validation.json must exist. Auto-advance terminus — /commit-slice is always user-invoked."
+allowed-tools: Read, Write, Edit, Glob, Bash, AskUserQuestion
+---
+
+# /reflect — Capture Reality, Update Vault
+
+The cure for spec rot: structured vault updates at every slice boundary so the vault tracks reality, not the original plan.
+
+> Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT`).
+> SVW-1: shared aggregate files (`risk-register.json`, `lessons-learned.json`, `shippability.json`,
+> `build-checks.json`, `_index.json`) mutate ONLY through `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py"` (append or CAS-rewrite).
+> NEVER raw-Write or Edit these files directly.
+
+## Active slice + inputs — injected
+
+```!
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --json
+```
+
+Read all of the following before proceeding (stop if `validation.json` is missing — run `/validate-slice` first):
+
+- `<vault>/slices/slice-NNN/mission-brief.json` — intent and acceptance criteria
+- `<vault>/slices/slice-NNN/design.json` — design claims to categorize
+- `<vault>/slices/slice-NNN/critique.json` — Critic findings for calibration scoring
+- `<vault>/slices/slice-NNN/build-log.json` — build deviations
+- `<vault>/slices/slice-NNN/validation.json` — PASS/FAIL evidence (prerequisite)
+
+---
+
+## Step 1 — Synthesize into four categories
+
+Read all slice files above. Produce one finding per item; be honest, not promotional.
+
+**Validated** — design claims reality confirmed.
+> "POST /receipts accepts HEIC with EXIF normalization — curl tests on all formats passed."
+
+**Corrected** — design claims reality refuted. Each corrected item triggers a vault update (Step 2).
+> "Design said async queue via SQS; shipped sync. ADR-008 superseded by ADR-014."
+
+**Discovered** — things not in the spec: new risks, edge cases, constraints.
+> "Safari retry header absent on SSE — thumbnails appeared sideways without EXIF handling."
+
+**Deferred** — out-of-scope items, per mission-brief or deliberate cut.
+> "Multiple receipts per transaction — separate slice."
+
+**Honesty rule**: if Discovered is empty across multiple slices, you are not capturing. Push harder.
+
+---
+
+## Step 2 — Update affected vault files
+
+For each **Corrected** item:
+
+- **Decision wrong** → supersede: mark original ADR `status: superseded` + `superseded_by: ADR-NNN`; create new ADR with `supersedes: ADR-NNN`. Never edit original ADR content (append-only).
+- **Risk claim wrong** → CAS-rewrite `<vault>/risk-register.json`:
+  ```bash
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read   --file risk-register.json --out-file base.bin
+  # edit a copy, then:
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file risk-register.json --base-file base.bin --content-file edited.json
+  # exit 3 = parallel write conflict → re-read + re-apply + retry (max 5, then STOP)
+  ```
+  A **new** risk entry is an append, not a rewrite:
+  ```bash
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file risk-register.json --array risks --content-file new-risk.json
+  ```
+- **Concept assumption wrong** → raw-Write `<vault>/concept.json` (created_by skill, single owner).
+- **Slice design wrong** → Edit `<vault>/slices/slice-NNN/design.json`; note the deviation in `build-log.json`.
+
+For each **Discovered** item:
+- Append to `<vault>/risk-register.json` via `vault_edit append` (R-32 safe channel).
+- Append to `<vault>/candidates.json` via `vault_edit append` (future slice seed).
+
+For each **Deferred** item:
+- Append to `<vault>/candidates.json` via `vault_edit append`.
+
+---
+
+## Step 3 — Critic calibration (TRI-1)
+
+For every finding in `critique.json`, score its outcome using build/validate evidence:
+
+| Verdict | Meaning |
+|---|---|
+| `VALIDATED` | Critic was right; concern materialized |
+| `FALSE-ALARM` | User overrode; reality confirmed the user (Critic over-reached) |
+| `OVERRIDE-MISJUDGED` | User overrode; reality showed Critic was right — signal for both |
+| `NOT-YET` | Deferred; re-score in the future slice that addresses it |
+| `MISSED` | Surfaced during build/validate, absent from Critic findings entirely |
+
+Pattern observations feed `/critic-calibrate` every 10–20 slices.
+
+---
+
+## Step 4 — Write reflection.json
+
+Write `<vault>/slices/slice-NNN/reflection.json` (schema: `examples/reflection.json`).
+
+---
+
+## Step 5 — Append to lessons-learned.json (SVW-1)
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file lessons-learned.json --array entries --content-file lesson-entry.json
+```
+
+Schema by example: `examples/lessons-learned.json`. One entry per slice: `{ "slice", "at", "lesson" }`.
+
+---
+
+## Step 5b — Build-checks promotion (BC-1, opt-in)
+
+Ask the user:
+
+> Did this slice surface a **recurring pattern** that should become a build-check? (y/N)
+>
+> Promote: "Image uploads need EXIF orientation normalization" — third time this slice hit it.
+> Do NOT promote: one-off typo fixes, library version bumps, endpoint-specific bugs.
+
+If yes, gather: **title** (imperative), **severity** (`critical`/`important`), **applies_when** (glob or `always:true`), **rule** (actionable check), **rationale**, **validation_hint**. Assign next `BC-PROJ-NNN` id.
+
+Append the rule to `<vault>/build-checks.json` under `rules[]` via:
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file build-checks.json --array rules --content-file bc-rule.json
+```
+Schema by example: `examples/build-checks.json`.
+
+**BCI-1 post-write gate (mandatory when a rule was promoted)**:
+1. Also add the rule to the canonical fixture `tests/methodology/fixtures/build_checks/canonical_project_checks.json`.
+2. Reconstruct the live file from the fixture (byte-copy), then run:
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/build_checks_integrity.py"
+   ```
+3. Exit non-zero → STOP, reconstruct from fixture, re-run until exit 0.
+
+---
+
+## Step 5.3 — Append to shippability.json (SVW-1)
+
+One critical-path test per slice: "If this slice silently broke later, what is THE one test that would catch it first?"
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file shippability.json --array rows --content-file ship-row.json
+```
+
+Schema by example: `examples/shippability.json`. The `machine_cmd` must be runnable from project root; runtime < 10 s.
+
+---
+
+## Step 5.8 — Update milestone.json
+
+Edit `<vault>/slices/slice-NNN/milestone.json`:
+- `stage: "complete"`, `next_action: "none"`, `updated: <today>`
+- Check progress step `reflect: done: true`
+- `current_focus`: "Slice shipped. Lessons captured. Auto-archiving next."
+
+Schema by example: `examples/milestone.json`.
+
+---
+
+## Step 6 — Auto-archive this slice
+
+After `reflection.json` is written and `milestone.json` is complete:
+
+1. **Move the slice folder** (R-32 seam-routed, ADR-103):
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" move --from slices/slice-NNN --to slices/archive/
+   ```
+   Refuses if `slices/archive/slice-NNN` already exists (no-overwrite).
+
+2. **Update `<vault>/slices/_index.json`** (active → recent-10, CAS-rewrite):
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file slices/_index.json --out-file base.bin
+   # regen: remove slice from active[], add thin one-liner to recent[] (keep exactly 10), then:
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file slices/_index.json --base-file base.bin --content-file regen.json
+   # exit 3 → re-read + re-regen + retry (max 5)
+   ```
+   Schema by example: `examples/slice-index.json`. Thin one-liner ≤ 500 chars from mission-brief intent.
+
+3. **Prepend to `<vault>/slices/archive/_index.json`** (newest-first, CAS-rewrite):
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file slices/archive/_index.json --out-file base.bin
+   # insert the thin one-liner row at TOP of recent[] (after table separator), then:
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file slices/archive/_index.json --base-file base.bin --content-file edited.json
+   ```
+   NOT `vault_edit append` — appending at EOF would put the row at the oldest position.
+
+---
+
+## Step 6b — Move shipped candidate to archive (CAND-1)
+
+After the slice folder is archived, move the candidate that was claimed for this slice from the live
+backlog to the archive, so the live backlog stays small (Direction #3):
+
+1. Read `<vault>/candidates.json`, identify the candidate whose `slice` field matches `slice-NNN`
+   and `status` is `shipped` (or set it to `shipped` first if it is still `spiking`/`in-progress`).
+2. Write the candidate entry to `<vault>/archive/candidates.json` via append:
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file archive/candidates.json --array candidates --content-file shipped-candidate.json
+   ```
+3. Remove the entry from `<vault>/candidates.json` via CAS-rewrite:
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read   --file candidates.json --out-file base.bin
+   # remove the candidate entry from candidates[], then:
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file candidates.json --base-file base.bin --content-file updated.json
+   # exit 3 → re-read + re-apply + retry (max 5)
+   ```
+
+Schema by example: `examples/slice-candidates.json`.
+
+---
+
+## Step 7 — Preview next-slice candidates
+
+Surface 2–3 top candidates from Discovered, Deferred, active high risks in `candidates.json`. Keep it brief — `/slice` does full scoring. Example:
+
+```
+Next-slice candidates (preview — run /slice for full ranking):
+#1: fix-safari-sse-retry — retires R-27 (Safari SSE reliability)
+#2: add-receipt-deletion — completes deferred scope from this slice
+#3: harden-s3-put-timeout — discovered: default 30 s too aggressive for >5 MB
+```
+
+---
+
+## Step 8 — Close
+
+State:
+- "Reflection complete. Vault updates: `<list files>`."
+- "Slice archived → `slices/archive/slice-NNN/`. Index refreshed."
+- "Discoveries: `<count>` (added to risk-register + candidates)."
+- "Deferrals: `<count>` (surfaced as slice candidates)."
+- "Run `/slice` to define the next cut."
+
+---
+
+## Critical rules
+
+- HONESTY: not a victory lap. Capture what didn't work, where you got lucky, where you're still guessing.
+- UPDATE THE VAULT for every Corrected item — the vault must reflect reality, not the original design.
+- NEVER edit superseded ADRs — decisions are append-only history.
+- TRACK Critic accuracy every slice — calibration data compounds.
+- SVW-1: all shared-aggregate file writes route through `vault_edit`. No raw-Write/Edit on those files.
+
+---
+
+## Pipeline position
+
+- predecessor: `/validate-slice`
+- successor: `/commit-slice` (then `/slice` for next cut)
+- auto-advance: **false** — this is the auto-advance terminus
+- user-input gates: build-checks promotion (Step 5b, opt-in y/N)
+- on-clean-completion: present the hand-off summary ("slice complete; run `/commit-slice` to generate the audit-grade commit") and the next-slice candidate preview. NEVER auto-invoke `/commit-slice` — it is always user-invoked by contract (PCA-1).

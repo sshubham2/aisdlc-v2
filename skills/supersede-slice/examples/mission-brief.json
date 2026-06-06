@@ -1,0 +1,32 @@
+{
+  "_schema": "aisdlc/mission-brief@1",
+  "slice": "slice-021",
+  "candidate": "SC-015",
+  "title": "realtime-presence",
+  "mode": "standard",
+  "risk_tier": "medium",
+  "intent": "## Intent\nShow which teammates are viewing a doc, live.",
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "text": "Active viewers' avatars appear within 2s.",
+      "verification": "two real browsers, observe avatar within 2s",
+      "status": "pending"
+    }
+  ],
+  "must_not_defer": [
+    "signed-out users must not leak presence"
+  ],
+  "out_of_scope": [
+    "cursor positions"
+  ],
+  "verification_plan": "## Verification\nTwo devices on one doc; observe live avatars.",
+  "variants": {
+    "test_first": false,
+    "walking_skeleton": false,
+    "exploratory_charter": false
+  },
+  "supersedes": null,
+  "created_by": "slice",
+  "at": "<ts>"
+}

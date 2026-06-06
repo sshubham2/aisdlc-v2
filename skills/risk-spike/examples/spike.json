@@ -1,0 +1,14 @@
+{
+  "_schema": "aisdlc/spike@1",
+  "_note": "Throwaway proof for one candidate assumption (in-loop slice step-0). Verdict feeds candidates.json + risk-register.",
+  "name": "spike-ws-presence",
+  "candidate": "SC-015",
+  "assumption": "A1",
+  "date": "<ts>",
+  "assumption_under_test": "Managed host holds 500 concurrent WebSockets.",
+  "method": "Ramp synthetic WS connections; measure the drop point.",
+  "verdict": "no-go",
+  "evidence": "Capped at ~120 before 503s.",
+  "fallback": "SSE + short-poll, OR managed pub/sub; re-spike before unblocking.",
+  "risk_ref": "R-27"
+}

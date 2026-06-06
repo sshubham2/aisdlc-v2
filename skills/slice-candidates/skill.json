@@ -1,0 +1,148 @@
+{
+  "name": "slice-candidates",
+  "user_invokable": true,
+  "requires_full_context": false,
+  "runs_in": "delegable-to-subagent",
+  "context_rationale": "The default path is a mechanical pass — run build_backlog.py against diagnose-out/ inputs and emit backlog.md — with no dependency on conversation history; the --obo mode is interactive but bounded to structured AskUserQuestion calls that do not need accumulated thread context.",
+  "summary": "Reads an annotated diagnosis.html (produced by /diagnose and round-tripped through the repo owner), extracts confirmed findings, and uses build_backlog.py to produce a DAG-ordered backlog.md of slice candidates. It uses code-review-graph blast-radius queries to detect file-overlap coupling between candidates, topo-sorts them by dependency plus a severity/blast/effort priority score, and detects must-do-together cycles. An optional --obo mode walks the owner through findings one at a time via structured prompts and writes a diagnosis.annotated.html before building the backlog.",
+  "reads": [
+    {
+      "path": "diagnose-out/diagnosis.html",
+      "kind": "content-file",
+      "produced_by": [
+        "diagnose"
+      ],
+      "purpose": "Primary input: annotated HTML with embedded findings JSON and owner annotations"
+    },
+    {
+      "path": "diagnose-out/findings/*.yaml",
+      "kind": "content-file",
+      "produced_by": [
+        "diagnose"
+      ],
+      "purpose": "Fallback input if the HTML has no embedded findings list (older runs)"
+    },
+    {
+      "path": "diagnose-out/.code-review-graph/",
+      "kind": "external-artifact",
+      "produced_by": [
+        "diagnose"
+      ],
+      "purpose": "Prebuilt code-review-graph graph used for blast-radius dependency detection"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "diagnose-out/diagnosis.annotated.html",
+      "kind": "content-file",
+      "v1_format": "html",
+      "v2_format": "html",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "slice-candidates"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "--obo mode output: copy of diagnosis.html with owner decisions baked in; original diagnosis.html is asserted byte-unchanged"
+    },
+    {
+      "path": "diagnose-out/obo-run.log",
+      "kind": "content-file",
+      "v1_format": "other",
+      "v2_format": "other",
+      "write_semantics": "append",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [],
+      "edited_by": [
+        "slice-candidates"
+      ],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Append-only audit log of --obo-peek and --obo-write operations"
+    },
+    {
+      "path": "<vault>/candidates.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "discover",
+        "slice-candidates"
+      ],
+      "edited_by": [
+        "reflect",
+        "risk-spike",
+        "slice",
+        "validate-slice"
+      ],
+      "read_by": [
+        "pulse",
+        "reflect",
+        "risk-spike",
+        "slice"
+      ],
+      "validated_by": [],
+      "purpose": "Write confirmed-finding candidates (DAG-ordered) into the unified candidates backlog (replaces diagnose-out/backlog.md).",
+      "example_schema": "aisdlc/slice-candidates@1",
+      "example": "examples/slice-candidates.json"
+    }
+  ],
+  "agents": [],
+  "tools": [
+    {
+      "name": "code-review-graph",
+      "type": "external-package",
+      "invocation": "CRG MCP tools (impact-radius, review-context, search)",
+      "purpose": "Code graph via code-review-graph (CRG) — reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+      "found": false,
+      "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "Bash",
+      "purpose": "Run build_backlog.py with appropriate flags and locate diagnose-out/ inputs"
+    },
+    {
+      "name": "AskUserQuestion",
+      "purpose": "Present per-finding approve/validate/defer/reject/exit options during --obo interactive review mode"
+    },
+    {
+      "name": "Read",
+      "purpose": "Read returned --obo-peek content to give a real/likely-real/not-real verdict (ADR-054 carve-out, finding evidence files only)"
+    }
+  ],
+  "hands_off_to": [
+    "slice"
+  ],
+  "source": "temp/skills/slice-candidates/SKILL.md",
+  "missing_references": [
+    {
+      "ref": "code-review-graph",
+      "kind": "tool",
+      "found": false,
+      "expected": true,
+      "reason": "External pip package, intentionally not bundled in the plugin."
+    }
+  ]
+}

@@ -1,0 +1,1040 @@
+[
+  {
+    "name": "reflect",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "Reflect synthesizes slice artifacts from the current session and interactively gates on user decisions (build-checks promotion), so it depends on main-thread context.",
+    "summary": "Captures learnings from the just-completed slice and updates the vault with reality across four categories: validated, corrected, discovered, and deferred. Writes reflection.json, appends to lessons-learned.json and shippability.json, optionally promotes build-checks, and auto-archives the slice. Tracks Critic calibration per TRI-1. Hands off to /commit-slice after completion.",
+    "agents": [],
+    "methodology_tools": [
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file risk-register.json --content-file <tmp>",
+        "purpose": "Append new discovered risk entries to risk-register.md (R-32 safe channel, SVW-1/ADR-087)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" read --file risk-register.json --out-file base.bin && $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" rewrite --file risk-register.json --base-file base.bin --content-file <edited>",
+        "purpose": "Read-modify-write risk status flips in risk-register.md (R-32 CAS, ADR-088)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file lessons-learned.json --content-file <tmp>",
+        "purpose": "Append chronological lessons entry to lessons-learned.md (Step 5, SVW-1)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file build-checks.json --content-file <tmp>",
+        "purpose": "Append promoted build-check rule to build-checks.md (Step 5b, BC-1)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file shippability.json --content-file <tmp>",
+        "purpose": "Append critical-path test entry to shippability.md (Step 5.3)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" move --from slices/slice-NNN-<name> --to slices/archive/",
+        "purpose": "Seam-routed archive move of the completed slice folder (Step 6, ADR-103)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" rewrite --file slices/_index.json ...",
+        "purpose": "Read-modify-write _index.md to remove slice from Active table and add to Most-recent-10 (Step 6, ADR-088 CAS)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" rewrite --file slices/archive/_index.json ...",
+        "purpose": "Prepend thin one-liner row to archive/_index.md (Step 6, ADR-088 CAS)"
+      },
+      {
+        "name": "build_checks_integrity",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/build_checks_integrity.py\"",
+        "purpose": "Post-write integrity gate ensuring build-checks.md matches canonical fixture (BCI-1)"
+      }
+    ],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "code-review-graph build|update",
+        "purpose": "Code graph via code-review-graph (CRG) — builds/refreshes the code graph. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read slice artifacts: mission-brief.json, design.json, critique.json, build-log.json, validation.json, concept.json, risk-register.json, ADRs"
+      },
+      {
+        "name": "Write",
+        "purpose": "Create reflection.json; create shippability.json or build-checks.json if they do not yet exist"
+      },
+      {
+        "name": "Edit",
+        "purpose": "Update active slice design.json for corrected claims; update build-log.json; update concept.json; mark ADR status:superseded"
+      },
+      {
+        "name": "Glob",
+        "purpose": "Find active slice folder and enumerate its artifacts"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run build_checks_integrity"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/mission-brief.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Input: slice intent and acceptance criteria"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/design.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Input: design claims to categorize as validated/corrected"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/critique.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Input: Critic findings to score for calibration"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/build-log.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Input: build deviations"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/validation.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Input: validation results (prerequisite — stops if missing)"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/reflection.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Output: structured retrospective with validated/corrected/discovered/deferred/critic-calibration"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/milestone.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Update stage to complete, check /reflect box (Step 5.8)"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/design.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Correct design claims that reality refuted (Corrected items)"
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append new discovered risk entries (R-32 safe channel)"
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read-modify-write for status flips (e.g. retiring a risk) via vault_edit rewrite CAS (ADR-088)"
+      },
+      {
+        "path": "<vault>/concept.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Update concept assumption if found wrong during slice"
+      },
+      {
+        "path": "<vault>/decisions/ADR-*.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Mark superseded ADR status:superseded + add superseded-by field (content NOT edited)"
+      },
+      {
+        "path": "<vault>/decisions/ADR-*.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Create new ADR superseding the old one with updated decision"
+      },
+      {
+        "path": "<vault>/lessons-learned.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append chronological slice lessons entry (Step 5, SVW-1/ADR-087)"
+      },
+      {
+        "path": "<vault>/build-checks.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append promoted build-check rule under ## Rules heading (Step 5b, BC-1, opt-in)"
+      },
+      {
+        "path": "<vault>/build-checks.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Create build-checks.json with canonical header if it does not yet exist"
+      },
+      {
+        "path": "<vault>/shippability.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append critical-path test row for this slice (Step 5.3)"
+      },
+      {
+        "path": "<vault>/shippability.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Create shippability.json with table header if it does not yet exist"
+      },
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Destination for auto-archived completed slice folder (scripts.lib.vault_edit move, ADR-103)"
+      },
+      {
+        "path": "<vault>/slices/_index.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Remove slice from Active table, add to Most-recent-10; vault_edit rewrite CAS (ADR-088)"
+      },
+      {
+        "path": "<vault>/slices/archive/_index.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Prepend thin one-liner row at top of newest-first full catalog; vault_edit rewrite CAS (ADR-088)"
+      },
+      {
+        "path": "<vault>/candidates.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append Discovered/Deferred items as new candidates."
+      },
+      {
+        "path": "<vault>/candidates.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Mark the shipped candidate complete, then MOVE it out of the live backlog (live/archive split)."
+      },
+      {
+        "path": "<vault>/archive/candidates.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Destination for the shipped candidate moved out of candidates.json."
+      }
+    ],
+    "hands_off_to": [
+      "commit-slice",
+      "slice"
+    ],
+    "source": "temp/skills/reflect/SKILL.md"
+  },
+  {
+    "name": "reduce",
+    "user_invokable": true,
+    "requires_full_context": false,
+    "runs_in": "delegable-to-subagent",
+    "context_rationale": "Reduce audits the vault and code graph for structural complexity signals using file inputs and code-review-graph queries; the audit phase is mechanically runnable over file inputs with no main-thread session state required.",
+    "summary": "Complexity budget enforcer that audits the vault and codebase for over-engineering, dead claims, and speculative generality against mode-specific thresholds. Produces a ranked list of reduction candidates and optionally proposes a simplification slice. Appends a post-reduction lesson to lessons-learned.json after a reduction slice ships. Can be forked as a background subagent on larger codebases.",
+    "agents": [],
+    "methodology_tools": [
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file lessons-learned.json --content-file <tmp>",
+        "purpose": "Append over-engineering pattern lesson after reduction slice ships (Step 8, SVW-1/ADR-087)"
+      }
+    ],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "code-review-graph build|update | CRG MCP tools (impact-radius, review-context, search)",
+        "purpose": "Code graph via code-review-graph (CRG) — builds/refreshes the code graph; reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read vault files: triage.json for mode, concept.json for scope, decisions/ADR-*.json for referenced ADRs, component/contract files in Heavy mode"
+      },
+      {
+        "name": "Grep",
+        "purpose": "Check ADR references across vault to identify unreferenced ADRs (grep -r 'ADR-NNN')"
+      },
+      {
+        "name": "Glob",
+        "purpose": "Enumerate vault files for component/contract/ADR counts"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run code-review-graph queries; run git diff for changed-file scoping"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/triage.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read project mode to apply correct complexity thresholds (Step 1)"
+      },
+      {
+        "path": "<vault>/decisions/ADR-*.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Audit ADR count, reference usage, and detect unreferenced/premature ADRs"
+      },
+      {
+        "path": "<vault>/concept.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read scope to compare against component/ADR counts"
+      },
+      {
+        "path": "<vault>/lessons-learned.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append over-engineering pattern lesson after reduction slice ships (Step 8)"
+      },
+      {
+        "path": ".code-review-graph/",
+        "kind": "external-artifact",
+        "access": "read",
+        "mechanism": "code-review-graph",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "God-node detection: read pre-built graph report for highest in/out degree nodes"
+      }
+    ],
+    "hands_off_to": [
+      "slice"
+    ],
+    "source": "temp/skills/reduce/SKILL.md"
+  },
+  {
+    "name": "drift-check",
+    "user_invokable": true,
+    "requires_full_context": false,
+    "runs_in": "delegable-to-subagent",
+    "context_rationale": "Drift-check compares vault files against code reality using file inputs and code-review-graph queries with no dependency on the current session's conversational state, making it fully mechanically runnable as a pre-commit hook or fresh-context subagent.",
+    "summary": "Audits vault claims against code reality and flags divergence across three categories: DRIFT (blocker), UNSPECIFIED CODE (major), and STALE CLAIM (major). Runs in fast mode for pre-commit hooks or full mode for on-demand audits. Appends findings to drift-log.json via the R-32 safe channel and supports interactive --resolve mode. Designed as the detect-only, all-modes counterpart to the Heavy-mode-only /sync skill.",
+    "agents": [],
+    "methodology_tools": [
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file drift-log.json --content-file <entry-file>",
+        "purpose": "Append drift audit entry to drift-log.md (R-32 seam-routed channel, ADR-103, append-only)"
+      },
+      {
+        "name": "cross_spec_parity_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/cross_spec_parity_audit.py\" --root .",
+        "purpose": "Heavy-mode only: validate cross-spec Implementation/Verification references in threat-model.md/requirements.md/nfrs.md (CSP-1)"
+      }
+    ],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "CRG MCP tools (impact-radius, review-context, search)",
+        "purpose": "Code graph via code-review-graph (CRG) — reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read vault files: decisions/*.md, risk-register.json, active slice design.json and mission-brief.json"
+      },
+      {
+        "name": "Grep",
+        "purpose": "Fallback verification of ADR claims when code-review-graph is unavailable"
+      },
+      {
+        "name": "Glob",
+        "purpose": "Enumerate active slice folders under slices/ (excluding archive/)"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Run git diff --name-only HEAD for --fast mode scoping; run drift-check as pre-commit hook script"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/decisions/*.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Load accepted ADR claims (tech choices, library choices) to verify against code"
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read risks claimed retired to verify retirement is real"
+      },
+      {
+        "path": "<vault>/slices/*/design.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Active slices only: verify design file references against actual code"
+      },
+      {
+        "path": "<vault>/slices/*/mission-brief.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Active slices only: check must-not-defer items are implemented"
+      },
+      {
+        "path": "<vault>/drift-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append full-mode audit entry with findings and resolutions (R-32 seam-routed, ADR-103)"
+      },
+      {
+        "path": "<vault>/components/*.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Heavy mode: include component doc claims in drift audit"
+      },
+      {
+        "path": "<vault>/contracts/*.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Heavy mode: include contract endpoint signature claims in drift audit"
+      },
+      {
+        "path": "<vault>/schemas/*.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Heavy mode: include schema field claims in drift audit"
+      }
+    ],
+    "hands_off_to": [],
+    "source": "temp/skills/drift-check/SKILL.md"
+  },
+  {
+    "name": "supersede-slice",
+    "user_invokable": true,
+    "requires_full_context": false,
+    "runs_in": "delegable-to-subagent",
+    "context_rationale": "Supersede-slice operates on named archived and active slice folders using a provided slice ID argument; the file-manipulation steps are delegable.",
+    "summary": "Establishes a formal bidirectional supersession link between an archived slice whose design has been contradicted by reality and a new active slice that fixes it, per SUP-1. Appends a Supersession section to the archived reflection.json, updates the active slice's mission-brief.json frontmatter, updates _index.json to mark the archived row as superseded, and validates the link via supersede_audit.",
+    "agents": [],
+    "methodology_tools": [
+      {
+        "name": "supersede_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/supersede_audit.py\" --root .",
+        "purpose": "Validate bidirectional supersession link consistency — both archived reflection.md and active mission-brief.md must reference each other (Step 5)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" rewrite --file slices/_index.json ...",
+        "purpose": "Read-modify-write _index.md to mark archived slice row as superseded (Step 6, R-32 CAS ADR-088)"
+      }
+    ],
+    "external_tools": [],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Read",
+        "purpose": "Read archived slice reflection.json to surface one-line summary; read active slice mission-brief.json to update frontmatter"
+      },
+      {
+        "name": "Edit",
+        "purpose": "Append Supersession section to archived reflection.json; add Supersedes field to active mission-brief.json frontmatter"
+      },
+      {
+        "name": "Glob",
+        "purpose": "List available archived slices when target ID is not found"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Validate archived slice directory exists; run supersede_audit"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/reflection.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append ## Supersession section (append-only; no other content modified)"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/mission-brief.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Add Supersedes: <archived-slice-id> to frontmatter to close bidirectional link"
+      },
+      {
+        "path": "<vault>/slices/_index.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Mark archived slice row as superseded by active slice in the catalog table (vault_edit rewrite CAS, ADR-088)"
+      },
+      {
+        "path": "<vault>/slices/archive/",
+        "kind": "directory",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "List available archived slice IDs when target not found (Glob fallback)"
+      }
+    ],
+    "hands_off_to": [
+      "critique"
+    ],
+    "source": "temp/skills/supersede-slice/SKILL.md"
+  },
+  {
+    "name": "archive",
+    "user_invokable": true,
+    "requires_full_context": false,
+    "runs_in": "delegable-to-subagent",
+    "context_rationale": "Archive operates mechanically on vault directory structure with no dependency on the current session's conversational state; it reads folder contents and regenerates index files from file inputs alone.",
+    "summary": "Archives completed slices (those with reflection.json) from slices/ to slices/archive/ and regenerates both _index.json files. In normal flow /reflect auto-archives each slice; /archive handles batch cleanup and stale index rebuilds. Index regeneration is dispatched to a Haiku subagent for cost efficiency (COST-1), with the main thread owning the compare-and-swap write via vault_edit rewrite. The _index.json is kept thin: recent-10 one-liner router rows plus a pointer to action-points.json; action-points.json is never regenerated here.",
+    "agents": [
+      {
+        "name": "general-purpose (Haiku)",
+        "when": "Step 3 and Step 4 index regeneration",
+        "purpose": "Read active and archived slice mission-brief.md files to extract one-line intents and assemble _index.md and archive/_index.md table content (COST-1)"
+      }
+    ],
+    "methodology_tools": [
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" move --from slices/<slice-folder> --to slices/archive/",
+        "purpose": "Per-slice seam-routed archive move preserving folder contents (Step 2, ADR-103)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" rewrite --file slices/_index.json ...",
+        "purpose": "CAS write of regenerated _index.md (Step 3, ADR-088 R-32)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" rewrite --file slices/archive/_index.json ...",
+        "purpose": "CAS write of regenerated archive/_index.md (Step 4, ADR-088 R-32)"
+      }
+    ],
+    "external_tools": [],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Glob",
+        "purpose": "Enumerate slice folders in slices/ and slices/archive/ to detect active vs completed (presence of reflection.json)"
+      },
+      {
+        "name": "Read",
+        "purpose": "Read each slice's mission-brief.json (by Haiku subagent) for one-line intent to populate index tables"
+      },
+      {
+        "name": "Bash",
+        "purpose": "Check directory existence prerequisites; run vault_edit move and rewrite commands"
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/slices/",
+        "kind": "directory",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Enumerate active slice folders (non-recursive scan) to find violators with reflection.json"
+      },
+      {
+        "path": "<vault>/slices/archive/",
+        "kind": "directory",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Enumerate archived slice folders for index regeneration"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/",
+        "kind": "directory",
+        "access": "update",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Source of vault_edit move operation (completed slice relocated to archive)"
+      },
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Destination of vault_edit move operation"
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/mission-brief.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read Intent field (first sentence) for thin one-liner index rows (by Haiku subagent)"
+      },
+      {
+        "path": "<vault>/slices/_index.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Regenerate active table + recent-10 router + action-points pointer via vault_edit rewrite CAS (ADR-088)"
+      },
+      {
+        "path": "<vault>/slices/_index.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Create _index.json if absent (first run or after corruption)"
+      },
+      {
+        "path": "<vault>/slices/archive/_index.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "vault_edit-append",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Regenerate full chronological catalog via vault_edit rewrite CAS (ADR-088)"
+      },
+      {
+        "path": "<vault>/slices/archive/_index.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Create archive/_index.json if absent"
+      },
+      {
+        "path": "<vault>/slices/action-points.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read pointer only; explicitly NOT regenerated or modified by /archive (curated artifact, ADR-093)"
+      },
+      {
+        "path": "<vault>/concept.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read project name for _index.json header (by Haiku subagent)"
+      },
+      {
+        "path": "<vault>/triage.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read project mode for _index.json header (by Haiku subagent)"
+      }
+    ],
+    "hands_off_to": [
+      "slice"
+    ],
+    "source": "temp/skills/archive/SKILL.md"
+  }
+]

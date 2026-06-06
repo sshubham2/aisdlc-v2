@@ -1,0 +1,228 @@
+---
+name: build-slice
+description: "Executes the current slice end-to-end using plan mode plus a sequence of verification gates. The Builder enters plan mode to explore code with code-review-graph queries and targeted Reads, drafts a task sequence, and obtains explicit user approval before writing code. Execution proceeds task-by-task with per-task verification, a mandatory mid-slice smoke gate, and a multi-audit pre-finish gate before declaring the slice done."
+when_to_use: "Trigger phrases: /build-slice, 'build this slice', 'implement the slice', 'ship the slice'. Use after /critique blockers are addressed (and /critique-review where required). Outputs build-log.json + updated milestone.json; hands off to /code-review."
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash, Skill, AskUserQuestion
+disable-model-invocation: true
+---
+
+# /build-slice — Execute with Plan Mode + Verification Gates
+
+The mission brief is the **intent**. The design is the **shape**. The Critic findings are the **constraints**. Plan mode is the **route through actual code**.
+
+> Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT`). Active slice = latest `<vault>/slices/slice-NNN-*/`.
+
+## Live state — injected
+
+Active slice context:
+```!
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/stranded_slice_audit.py" --repo-root . --json 2>/dev/null | head -5
+```
+
+Active mission brief (acceptance criteria, must-not-defer, test-first flag, smoke gate):
+```!
+cat "${AI_SDLC_VAULT_ROOT}/slices/$(ls -1t "${AI_SDLC_VAULT_ROOT}/slices/" | grep -v archive | head -1)/mission-brief.json" 2>/dev/null
+```
+
+Critic constraints (Critic findings the build must respect):
+```!
+cat "${AI_SDLC_VAULT_ROOT}/slices/$(ls -1t "${AI_SDLC_VAULT_ROOT}/slices/" | grep -v archive | head -1)/critique.json" 2>/dev/null
+```
+
+## Prerequisite check
+
+1. Find the active slice folder. Read `mission-brief.json`, `design.json`, `critique.json`, `critique-review.json` (if present — incorporate any MUST-FIX items as hard build constraints), and any ADRs created this slice.
+2. If `critique.json` is absent (Standard / Heavy mode): STOP — run `/critique` first.
+3. If `critique.json` shows `"result": "BLOCKED"`: STOP — address blockers before build.
+4. **TPHD-1 pre-flight**: scan the `mission-brief.json` TF-1 plan table; verify each Test path will exist at the right path and the Test function name matches what will be built. Flag any drift for user fix BEFORE entering plan mode.
+5. **CRP-1** (critique-review prerequisite):
+   ```bash
+   $PY ${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py <vault>/slices/slice-NNN-<name>
+   ```
+   On `mandatory-critique-review-absent` exit 1: STOP and tell the user verbatim: **"STOP: this slice has a mandatory /critique-review (DR-1) that has not been run. Run /critique-review for this slice before /build-slice. If the skip is deliberate, document it by adding `critique-review-skip: \"skip — rationale: <text>\"` to milestone.json."** Do not enter plan mode until exit 0.
+
+### Branch / worktree state (BRANCH-2 / BRANCH-3)
+
+Compute paths once:
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+wt_base="$(dirname "$repo_root")/$(basename "$repo_root")-wt"
+default=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+[ -z "$default" ] && default=$(git config init.defaultBranch 2>/dev/null)
+# STOP if neither resolves
+```
+
+Then:
+1. **Worktree exists** at `<wt_base>/slice-NNN-<name>` (BRANCH-3 normal case): `cd` into it, verify `git branch --show-current` matches `slice/NNN-<name>`.
+2. **No worktree** (legacy / `WORKTREE=skip`): create it via the shared helper:
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder slice-NNN-<name> --repo-root "$repo_root"
+   git worktree add <wt_path> -b slice/NNN-<name> "$default"
+   ```
+3. **Wrong branch / other slice**: STOP — ask user to switch context or document `WORKTREE=skip` in build-log.json events.
+4. **Dirty main tree** (legacy pre-BRANCH-3 only): apply the canonical switch-commit-switch-worktree sequence; no auto-stash.
+
+Escape-hatch shape (audit-required): `<YYYY-MM-DD HH:MM> DEVIATION: WORKTREE=skip — rationale: <text>`.
+
+## Step 1: Load full slice context
+
+State briefly:
+- "Slice NNN: <name>"
+- "Acceptance criteria: <count>"
+- "Must-not-defer items: <count>"
+- "Critic blockers addressed: yes / pending"
+
+Update `milestone.json`: `stage: "build"`, `current_focus: "plan mode"`, `next_action: "plan approval"`.
+
+## Step 2: Plan mode — explore actual code
+
+Use code-review-graph MCP tools for structural understanding before Reads:
+- `impact-radius` on the module(s) this slice touches — what it reaches transitively
+- `search` for symbols and integration points
+
+Then Read specific files for detail. Build dependency understanding for this slice's surface area.
+
+Draft a concrete task sequence:
+- Grounded in code you have actually read (not what `design.json` assumes)
+- Specific: file paths, function names
+- Ordered so the mid-slice smoke gate is reachable at ~50% of work
+- Each task independently verifiable
+
+## Step 3: User approval (PCA-1 gate-halt)
+
+Present the plan. **HALT for explicit user sign-off — do NOT auto-advance into Step 4.**
+
+If user requests changes: revise and re-present.
+
+If the plan reveals the design is wrong: STOP. Surface to user: "Design says X. Code reality requires Y. Revise design, or proceed with a deviation?"
+
+## Step 4: Execute task-by-task
+
+For each task:
+1. Implement the task.
+2. Run the relevant AC check (or smoke test if AC is not yet testable).
+3. Pass: mark complete, move on.
+4. Fail: fix then re-verify. Still failing after reasonable attempts: STOP, ask for help — do not accumulate broken state.
+
+Update `milestone.json` after each task: progress counter, current work, files being edited, next step.
+Append a one-line event to `build-log.json` events **before** any tool call that could fail and erase in-memory context (screenshots, large reads, binary outputs). Format: `<YYYY-MM-DD HH:MM> <CATEGORY>: <description>` where CATEGORY is `BUILD | TEST | SMOKE | FINDING | ERROR | DEFERRAL | DEVIATION`.
+
+## Step 5: Mid-slice smoke gate (~50%)
+
+Run the smoke gate from `mission-brief.json` on a real environment:
+- Backend: hit the endpoint with curl / test client; check DB state
+- Frontend: open the page in a real browser
+- Mobile: install on a real device
+- ML: run inference on a real sample
+
+Fail: **STOP (PCA-1 gate-halt)** — diagnose, surface to user, HALT. Do NOT auto-advance on a broken base.
+
+## Step 6: Pre-finish gate
+
+All of the following must pass before declaring done:
+
+- [ ] All ACs pass with evidence
+- [ ] All must-not-defer items addressed (no TODO, no stub, no silent except)
+- [ ] No new TODOs / FIXMEs / debug prints / console.logs
+- [ ] Mid-slice smoke still passes (no regression)
+- [ ] `/drift-check` **full mode** (appends `Trigger` entry to `<vault>/drift-log.json` — DCE-1 verifies this)
+
+Run audit gates in this order:
+
+```bash
+# DCE-1 — drift-check enforcement (run /drift-check full mode FIRST, then audit)
+$PY ${CLAUDE_SKILL_DIR}/scripts/drift_check_audit.py <vault>/slices/slice-NNN-<name>
+
+# LINT-MOCK — mock-budget lint (pass changed test files; add --seam-allowlist if present; --strict in Heavy)
+$PY ${CLAUDE_SKILL_DIR}/scripts/mock_budget_lint.py <changed-test-files> [--seam-allowlist <vault>/.cross-chunk-seams]
+
+# WIRE-1 — wiring matrix audit
+$PY ${CLAUDE_SKILL_DIR}/scripts/wiring_matrix_audit.py <vault>/slices/slice-NNN-<name>
+
+# BC-1 — build-checks audit (enumerate Critical rules, address each, then re-run with --strict --ack-critical)
+$PY ${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py --slice <vault>/slices/slice-NNN-<name> --changed-files <list> --json
+$PY ${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py --slice <vault>/slices/slice-NNN-<name> --changed-files <list> \
+    --strict --ack-critical <addressed-ids>
+
+# TF-1 — test-first audit (only when mission-brief.json test_first == true)
+$PY ${CLAUDE_SKILL_DIR}/scripts/test_first_audit.py <vault>/slices/slice-NNN-<name> --strict-pre-finish
+
+# BRANCH-1 — branch workflow audit
+$PY ${CLAUDE_SKILL_DIR}/scripts/branch_workflow_audit.py <vault>/slices/slice-NNN-<name>
+
+# UTF8-STDOUT-1 — utf-8 stdout audit
+$PY ${CLAUDE_SKILL_DIR}/scripts/utf8_stdout_audit.py
+
+# CRP-1 — critique-review prerequisite audit (defense-in-depth re-run)
+$PY ${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py <vault>/slices/slice-NNN-<name>
+
+# PCA-1 — pipeline-chain audit
+$PY ${CLAUDE_SKILL_DIR}/scripts/pipeline_chain_audit.py
+
+# BCI-1 — build-checks integrity audit
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/build_checks_integrity.py"
+
+# STP-1 — state-transition stale-pin audit
+$PY ${CLAUDE_SKILL_DIR}/scripts/state_transition_pin_audit.py
+
+# NAW-1 — new-agent warning audit
+$PY ${CLAUDE_SKILL_DIR}/scripts/new_agent_warning_audit.py
+
+# SVW-1 — skill-vault-write-safety audit
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/skill_vault_write_safety_audit.py"
+```
+
+If any gate fails: do not declare done — fix or escalate.
+
+**BC-1 Critical rule handling**: address each applicable Critical rule, attest in `build-log.json` (e.g. "BC-PROJ-3: this slice performs no destructive git reset of uncommitted work"), then pass the IDs via `--ack-critical`. Important rules may be deferred with rationale logged in `build-log.json`.
+
+**SVW-1 scope**: append-mutating a shared-aggregate vault file (`risk-register.json`, `lessons-learned.json`, `shippability.json`, `drift-log.json`, `build-checks.json`, `_index.json`) MUST route through `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append` (SVW-1). Raw whole-file overwrites are only permitted for per-slice active-folder artifacts (build-log.json, milestone.json, etc.).
+
+## Step 7: Do-not-defer enforcement
+
+Items in `mission-brief.json` `must_not_defer` CANNOT be shipped as TODO / stub / silent-except / skipped. If deferring any: STOP, ask user explicitly. Approved deferrals go in `build-log.json` `deferrals` with rationale.
+
+## Step 8: Write output artifacts
+
+### build-log.json (create)
+Schema by example: `examples/build-log.json`
+
+### milestone.json (update)
+Schema by example: `examples/milestone.json`. At pre-finish gate pass: `stage: "build"`, `next_action: "/code-review"`. Preserve any `critique-review-skip` / `drift-check-skip` frontmatter keys verbatim throughout — they are CRP-1 / DCE-1 escape-hatch records and must survive every rewrite.
+
+### drift-log.json (append via vault_edit)
+If `/drift-check` found entries, route through `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append`. Schema by example: `examples/drift-log.json`. **Never raw-overwrite** this file.
+
+## When the design is wrong mid-build
+
+1. STOP execution immediately.
+2. Write what you discovered in the conversation (not a file yet).
+3. Ask: "Design says X. Code reality requires Y. Revise design, or proceed with documented deviation?"
+4. If revise: stop the slice, run `/design-slice` updates, re-run `/critique` on changed parts, then resume.
+5. If deviate: log the deviation in `build-log.json` events and continue.
+
+## Heavy mode additions
+
+- Test coverage report at pre-finish (compliance trail).
+- `sign_off` field in `build-log.json` (human reviewer).
+- Audit-grade commit messages referencing slice + ADRs.
+- `--strict` flag required on `mock_budget_lint` (Important rules block).
+
+## Critical rules
+
+- ENTER PLAN MODE FIRST. Do not start editing without a user-approved plan.
+- USE code-review-graph + Read/Grep/Glob to understand actual code BEFORE planning.
+- DO NOT skip the mid-slice smoke gate. Catches "builds but doesn't work" early.
+- DO NOT bypass the pre-finish gate. If something cannot pass, the slice is not done.
+- DO NOT silently defer must-not-defer items. Ask explicitly; log approved deferrals.
+- APPEND to build-log.json events BEFORE risky tool calls. Tool failures erase in-memory context; committed files persist.
+- IF design is wrong: STOP and surface — do not silently "make it work."
+
+## Pipeline position
+
+- predecessor: `/critique` (post-TRI-1, on CLEAN or NEEDS-FIXES) · successor: `/code-review` · auto-advance: true
+- on-clean-completion: once the pre-finish gate fully passes (all ACs, must-not-defer, drift-check, all Step 6 audits) and `build-log.json` is written, invoke `/code-review` via the Skill tool. `/code-review` auto-advances to `/validate-slice` on clean completion.
+- user-input gates (halt auto-advance):
+  - Plan-mode approval (Step 3) — HALT for explicit user sign-off before any code edits.
+  - Mid-slice smoke-gate failure (Step 5) — HALT, diagnose; do NOT auto-advance on a broken base.
+  - Design-is-wrong mid-build — HALT and surface ("design says X, code says Y; revise or deviate?").

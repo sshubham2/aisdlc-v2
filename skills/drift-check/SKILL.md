@@ -1,0 +1,162 @@
+---
+name: drift-check
+description: "Audits vault claims against code reality and flags divergence in three categories: DRIFT (blocker), UNSPECIFIED CODE (major), and STALE CLAIM (major). Runs in fast mode (<2s, pre-commit) or full mode (on-demand audit). Appends findings to drift-log.json via the SVW-1 safe channel. Detect-only, all-modes counterpart to the Heavy-mode-only /sync skill."
+when_to_use: "Trigger phrases: /drift-check, 'check for drift', 'vault sync check', 'is the vault still accurate', 'audit vault vs code'. Use as pre-commit hook (auto, --fast), as the /build-slice pre-finish gate, or on-demand before starting a new slice or after external changes."
+argument-hint: "[--fast] [--resolve] [path]"
+allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion, Skill
+---
+
+# /drift-check — Vault vs Code Sync Audit
+
+Compares vault claims against code reality. Runs fast enough for pre-commit hooks and thorough enough for full audits.
+
+> Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / the git config `aisdlc/vault-root`).
+
+## Live state — injected
+
+Changed files in working tree (for --fast scoping):
+```!
+git diff --name-only HEAD 2>/dev/null | head -60
+```
+
+Active slice folders (skip archive):
+```!
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" list --vault "$AI_SDLC_VAULT_ROOT" --dir slices/ 2>/dev/null || true
+```
+
+## Step 1 — Detect mode
+
+- `--fast`: scope to files changed since last commit (from injected diff above); target <2s; skip deep graph traversal.
+- `--resolve`: load existing drift findings, walk user through each interactively (see Step 5).
+- `<path>` argument: scope the audit to that component/contract folder.
+- Default: full audit (all accepted ADRs + active slices; Heavy mode adds components/contracts/schemas).
+
+## Step 2 — Load vault state
+
+Read only the live-claim surfaces. Always included:
+
+- `<vault>/decisions/ADR-*.json` — status `accepted` only; extract tech/library/approach claims.
+- `<vault>/risk-register.json` — risks with `status: retired`; verify retirement is real.
+- `<vault>/slices/*/mission-brief.json` — active slices only; check `must_not_defer` items are implemented.
+- `<vault>/slices/*/design.json` — active slices only; verify referenced file paths exist and components are touched.
+
+**Skip**: `slices/archive/*` (historical, not live assertions), `slices/_index.json` (metadata), any folder that doesn't exist.
+
+**Heavy mode only** (if `<vault>/components/`, `<vault>/contracts/`, `<vault>/schemas/` exist): include component doc claims, contract endpoint signatures, and schema field claims.
+
+## Step 3 — Verify each claim against code
+
+For each vault claim, check against code reality. Prefer CRG MCP tools when available; fall back to Grep/Read.
+
+| Claim type | Verification |
+|---|---|
+| ADR chose library `X` | CRG search for `X` in imports/pyproject.toml/package.json; fallback: `Grep "X" pyproject.toml` |
+| ADR chose framework `Y` | CRG search for framework imports; fallback: Grep top-level imports |
+| Slice design references `src/foo.py` | Check file exists (Glob); CRG impact-radius if available |
+| Risk `R-NN` marked retired | Read the spike evidence; check the guard/code is present |
+| Must-not-defer item (e.g. auth on POST /X) | CRG search for auth middleware on the route; fallback: Grep route handler |
+| Heavy: contract endpoint signature | CRG search for the handler; compare param/return types |
+| Heavy: schema field | Grep model/schema definition for field name |
+
+For each mismatch capture: vault file path, vault claim text, code evidence, severity.
+
+In `--fast` mode: only check claims in files touched by the injected diff. Skip deep graph traversal.
+
+## Step 4 — Classify findings
+
+- **DRIFT (blocker)** — vault says X, code does Y. Must pick one: update vault or fix code.
+- **UNSPECIFIED CODE (major)** — code does X, vault doesn't mention it. Either scope creep or missing ADR.
+- **STALE CLAIM (major)** — vault mentions a removed feature/library/file. Delete or supersede.
+
+## Step 5 — Output
+
+### `--fast` mode (pre-commit)
+
+Print to stdout. Exit 0 if clean, 1 if blockers, 2 if warns only. Format:
+
+```
+DRIFT BLOCKING COMMIT:
+
+[BLOCKER] decisions/ADR-008.json claims WebSocket transport
+          but src/transport.py uses SSE (EventSource)
+          Resolve: /drift-check --resolve  OR  fix code  OR  supersede ADR
+
+[WARN]    decisions/ADR-012.json claims pyheif for HEIC decoding
+          but pyproject.toml has no pyheif dependency (removed)
+          Resolve: update ADR or restore dependency
+
+To bypass (NOT RECOMMENDED): git commit --no-verify
+```
+
+Do NOT write `drift-log.json` in `--fast` mode — stdout only.
+
+### Full mode (audit)
+
+Build an audit entry matching the bundled example (schema: `examples/drift-log.json`, schema id `aisdlc/drift-log@1`).
+
+Build each entry with `build_entry.py` and append it via the SVW-1 stdin channel (never
+whole-file overwrite):
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/scripts/build_entry.py" \
+    --category <drift|unspecified-code|stale-claim> \
+    --finding "<finding>" --trigger slice-NNN [--resolution "<how resolved>"] \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --file drift-log.json --array entries --stdin
+```
+
+`build_entry.py` stamps the timestamp, canonicalizes the `slice-NNN` trigger (DCE-1), and
+omits empty fields. (Prefer `build_entry.py … --out <file>` + `vault_edit append
+--content-file <file>` if you want a temp file instead of the pipe.)
+
+Print a 2-line summary: finding counts + whether the audit is clean.
+
+### `--resolve` mode (interactive)
+
+For each finding, present an `AskUserQuestion` gate:
+
+```
+Finding [DRIFT blocker]: ADR-008.json claims WebSocket; src/transport.py uses SSE.
+
+Options:
+  [1] Update vault — supersede ADR-008 (code is correct)
+  [2] Fix code — create /slice "fix-transport-to-websocket"
+  [3] Accept drift — log rationale (intentional; planned reconciliation)
+```
+
+Execute the chosen action:
+- **Update vault**: edit the relevant JSON file via `vault_edit`; commit with the code change.
+- **Fix code**: invoke `/slice "fix drift: <area>"` via the Skill tool — do NOT silently fix; track it.
+- **Accept drift**: append an entry via `build_entry.py --category <cat> --finding "<f>" --trigger slice-NNN --action accept-drift --rationale "<rationale incl. next-action slice>"` piped to `vault_edit append --file drift-log.json --array entries --stdin`. `build_entry` fail-closes if `accept-drift` has no `rationale`.
+
+## Step 6 — Heavy mode: cross-spec parity (CSP-1)
+
+In Heavy mode only, after the main audit, run:
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/cross_spec_parity_audit.py" --root .
+```
+
+This validates `Implementation:` / `Verification:` cross-references in `threat-model.json`, `requirements.json`, `non-functional.json` against real file paths. Findings are appended to `drift-log.json` via the same `scripts.lib.vault_edit append --array entries` channel. This is complementary to `/sync`'s Step 3b — `/drift-check` is fast and pre-commit-friendly; CSP-1 is per-artifact-deep.
+
+## Critical rules
+
+- DO NOT silently fix code drift. Even small fixes go through `/slice` for traceability.
+- IN `--fast` MODE: <2s budget. Skip graph rebuilds and deep schema diffs. File existence + key imports only.
+- IN FULL MODE: deep checks acceptable; up to 30s for Heavy mode.
+- ACCEPT DRIFT entries MUST include a `rationale` with a planned reconciliation slice. Periodic audits of `drift-log.json` catch accumulation.
+- DO NOT write `drift-log.json` in `--fast` mode (stdout only, no side effects).
+- Trigger field in `drift-log.json` entries: use canonical dashed form `slice-NNN` (the DCE-1 audit tool matches on this pattern).
+
+## /sync vs /drift-check
+
+`/drift-check` is **detect-only** and works in **all modes** (Minimal / Standard / Heavy). It's pre-commit-safe.
+
+`/sync` is **bidirectional** (regenerates code-derived vault files) and **Heavy mode only**. Use `/drift-check` for fast pre-commit; use `/sync` periodically for deeper reconciliation including component/contract/schema regeneration.
+
+## Pipeline position
+
+- predecessor: invoked by `/build-slice` (pre-finish gate); also standalone on-demand or as pre-commit hook
+- successor: none (`hands_off_to: []`) — clean means continue; blockers mean resolve via `--resolve` or create a fix slice
+- auto-advance: no (detect-only; user decides resolution path)
+- user-input gates: `--resolve` mode gates on each finding (AskUserQuestion per finding)

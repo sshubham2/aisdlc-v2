@@ -1,0 +1,566 @@
+{
+  "name": "reflect",
+  "user_invokable": true,
+  "requires_full_context": true,
+  "runs_in": "main-agent",
+  "context_rationale": "Reflect synthesizes slice artifacts from the current session and interactively gates on user decisions (build-checks promotion), so it depends on main-thread context.",
+  "summary": "Captures learnings from the just-completed slice and updates the vault with reality across four categories: validated, corrected, discovered, and deferred. Writes reflection.json, appends to lessons-learned.json and shippability.json, optionally promotes build-checks, and auto-archives the slice. Tracks Critic calibration per TRI-1. Hands off to /commit-slice after completion.",
+  "reads": [
+    {
+      "path": "<vault>/slices/slice-NNN/mission-brief.json",
+      "kind": "content-file",
+      "produced_by": [
+        "slice"
+      ],
+      "purpose": "Input: slice intent and acceptance criteria"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/design.json",
+      "kind": "content-file",
+      "produced_by": [
+        "design-slice"
+      ],
+      "purpose": "Input: design claims to categorize as validated/corrected"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/critique.json",
+      "kind": "content-file",
+      "produced_by": [
+        "critique"
+      ],
+      "purpose": "Input: Critic findings to score for calibration"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/build-log.json",
+      "kind": "content-file",
+      "produced_by": [
+        "build-slice"
+      ],
+      "purpose": "Input: build deviations"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/validation.json",
+      "kind": "content-file",
+      "produced_by": [
+        "validate-slice"
+      ],
+      "purpose": "Input: validation results (prerequisite — stops if missing)"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "<vault>/slices/slice-NNN/reflection.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "reflect"
+      ],
+      "edited_by": [
+        "supersede-slice"
+      ],
+      "read_by": [
+        "code-review",
+        "commit-slice",
+        "critic-calibrate",
+        "critique",
+        "design-slice",
+        "slice",
+        "supersede-slice"
+      ],
+      "validated_by": [],
+      "purpose": "Output: structured retrospective with validated/corrected/discovered/deferred/critic-calibration",
+      "example_schema": "aisdlc/reflection@1",
+      "example": "examples/reflection.json"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/milestone.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "update",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "slice"
+      ],
+      "edited_by": [
+        "build-slice",
+        "code-review",
+        "critique",
+        "design-slice",
+        "reflect",
+        "validate-slice"
+      ],
+      "read_by": [
+        "build-slice",
+        "code-review",
+        "critique",
+        "design-slice",
+        "pulse",
+        "reflect",
+        "validate-slice"
+      ],
+      "validated_by": [],
+      "purpose": "Update stage to complete, check /reflect box (Step 5.8)",
+      "example_schema": "aisdlc/milestone@1",
+      "example": "examples/milestone.json"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/design.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "update",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "design-slice"
+      ],
+      "edited_by": [
+        "reflect"
+      ],
+      "read_by": [
+        "build-slice",
+        "code-review",
+        "critique",
+        "critique-review",
+        "reflect"
+      ],
+      "validated_by": [],
+      "purpose": "Correct design claims that reality refuted (Corrected items)",
+      "example_schema": "aisdlc/design@1",
+      "example": "examples/design.json"
+    },
+    {
+      "path": "<vault>/risk-register.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append+update",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "triage"
+      ],
+      "edited_by": [
+        "discover",
+        "reflect",
+        "risk-spike",
+        "user-test",
+        "validate-slice"
+      ],
+      "read_by": [
+        "build-slice",
+        "discover",
+        "drift-check",
+        "heavy-architect",
+        "pulse",
+        "reflect",
+        "risk-spike",
+        "slice",
+        "sync"
+      ],
+      "validated_by": [
+        "risk_register_audit",
+        "vault_edit"
+      ],
+      "purpose": "Append new discovered risk entries (R-32 safe channel)",
+      "example_schema": "aisdlc/risk-register@1",
+      "example": "examples/risk-register.json"
+    },
+    {
+      "path": "<vault>/concept.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "update",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "discover"
+      ],
+      "edited_by": [
+        "reflect"
+      ],
+      "read_by": [
+        "archive",
+        "heavy-architect",
+        "pulse",
+        "reduce",
+        "reflect",
+        "slice"
+      ],
+      "validated_by": [],
+      "purpose": "Update concept assumption if found wrong during slice",
+      "example_schema": "aisdlc/concept@1",
+      "example": "examples/concept.json"
+    },
+    {
+      "path": "<vault>/decisions/ADR-*.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create+update",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "design-slice",
+        "discover",
+        "reflect",
+        "triage"
+      ],
+      "edited_by": [
+        "reflect"
+      ],
+      "read_by": [
+        "code-review",
+        "commit-slice",
+        "critique",
+        "critique-review",
+        "drift-check",
+        "heavy-architect",
+        "reduce",
+        "reflect",
+        "sync"
+      ],
+      "validated_by": [],
+      "purpose": "Mark superseded ADR status:superseded + add superseded-by field (content NOT edited)",
+      "example_schema": "aisdlc/adr@1",
+      "example": "examples/adr.json"
+    },
+    {
+      "path": "<vault>/lessons-learned.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [],
+      "edited_by": [
+        "reduce",
+        "reflect"
+      ],
+      "read_by": [
+        "pulse"
+      ],
+      "validated_by": [
+        "vault_edit"
+      ],
+      "purpose": "Append chronological slice lessons entry (Step 5, SVW-1/ADR-087)",
+      "example_schema": "aisdlc/lessons-learned@1",
+      "example": "examples/lessons-learned.json"
+    },
+    {
+      "path": "<vault>/build-checks.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append+create",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "reflect"
+      ],
+      "edited_by": [
+        "reflect"
+      ],
+      "read_by": [
+        "build-slice"
+      ],
+      "validated_by": [
+        "vault_edit"
+      ],
+      "purpose": "Append promoted build-check rule under ## Rules heading (Step 5b, BC-1, opt-in)",
+      "example_schema": "aisdlc/build-checks@1",
+      "example": "examples/build-checks.json"
+    },
+    {
+      "path": "<vault>/shippability.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append+create",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "reflect"
+      ],
+      "edited_by": [
+        "reflect",
+        "repro"
+      ],
+      "read_by": [
+        "build-slice",
+        "commit-slice",
+        "pulse",
+        "slice",
+        "validate-slice"
+      ],
+      "validated_by": [
+        "shippability_decoupling_audit",
+        "shippability_path_audit",
+        "shippability_runner",
+        "vault_edit"
+      ],
+      "purpose": "Append critical-path test row for this slice (Step 5.3)",
+      "example_schema": "aisdlc/shippability@1",
+      "example": "examples/shippability.json"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/",
+      "kind": "directory",
+      "v1_format": "directory",
+      "v2_format": "directory",
+      "write_semantics": "create",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "archive",
+        "reflect"
+      ],
+      "edited_by": [
+        "archive"
+      ],
+      "read_by": [
+        "archive"
+      ],
+      "validated_by": [],
+      "purpose": "Destination for auto-archived completed slice folder (scripts.lib.vault_edit move, ADR-103)"
+    },
+    {
+      "path": "<vault>/slices/_index.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "update",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "archive"
+      ],
+      "edited_by": [
+        "archive",
+        "reflect",
+        "supersede-slice"
+      ],
+      "read_by": [
+        "archive",
+        "code-review",
+        "critic-calibrate",
+        "critique",
+        "pulse",
+        "reflect",
+        "slice",
+        "supersede-slice"
+      ],
+      "validated_by": [
+        "vault_edit"
+      ],
+      "purpose": "Remove slice from Active table, add to Most-recent-10; vault_edit rewrite CAS (ADR-088)",
+      "example_schema": "aisdlc/slice-index@1",
+      "example": "examples/slice-index.json"
+    },
+    {
+      "path": "<vault>/slices/archive/_index.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "update",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "archive"
+      ],
+      "edited_by": [
+        "archive",
+        "reflect"
+      ],
+      "read_by": [
+        "archive",
+        "reflect",
+        "slice"
+      ],
+      "validated_by": [
+        "vault_edit"
+      ],
+      "purpose": "Prepend thin one-liner row at top of newest-first full catalog; vault_edit rewrite CAS (ADR-088)",
+      "example_schema": "aisdlc/slice-index@1",
+      "example": "examples/slice-index.json"
+    },
+    {
+      "path": "<vault>/candidates.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append+update",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "adopt",
+        "discover",
+        "slice-candidates"
+      ],
+      "edited_by": [
+        "reflect",
+        "risk-spike",
+        "slice",
+        "validate-slice"
+      ],
+      "read_by": [
+        "pulse",
+        "reflect",
+        "risk-spike",
+        "slice"
+      ],
+      "validated_by": [],
+      "purpose": "Append Discovered/Deferred items as new candidates.",
+      "example_schema": "aisdlc/slice-candidates@1",
+      "example": "examples/slice-candidates.json"
+    },
+    {
+      "path": "<vault>/archive/candidates.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [],
+      "edited_by": [
+        "reflect"
+      ],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Destination for the shipped candidate moved out of candidates.json.",
+      "example_schema": "aisdlc/slice-candidates@1",
+      "example": "examples/slice-candidates.json"
+    }
+  ],
+  "agents": [],
+  "tools": [
+    {
+      "name": "vault_edit",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file risk-register.json --content-file <tmp>",
+      "purpose": "Append new discovered risk entries to risk-register.md (R-32 safe channel, SVW-1/ADR-087)",
+      "found": true,
+      "path": "scripts/lib/vault_edit.py"
+    },
+    {
+      "name": "build_checks_integrity",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/build_checks_integrity.py\"",
+      "purpose": "Post-write integrity gate ensuring build-checks.md matches canonical fixture (BCI-1)",
+      "found": true,
+      "path": "scripts/lib/build_checks_integrity.py"
+    },
+    {
+      "name": "code-review-graph",
+      "type": "external-package",
+      "invocation": "code-review-graph build|update",
+      "purpose": "Code graph via code-review-graph (CRG) — builds/refreshes the code graph. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+      "found": false,
+      "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "Read",
+      "purpose": "Read slice artifacts: mission-brief.json, design.json, critique.json, build-log.json, validation.json, concept.json, risk-register.json, ADRs"
+    },
+    {
+      "name": "Write",
+      "purpose": "Create reflection.json; create shippability.json or build-checks.json if they do not yet exist"
+    },
+    {
+      "name": "Edit",
+      "purpose": "Update active slice design.json for corrected claims; update build-log.json; update concept.json; mark ADR status:superseded"
+    },
+    {
+      "name": "Glob",
+      "purpose": "Find active slice folder and enumerate its artifacts"
+    },
+    {
+      "name": "Bash",
+      "purpose": "Run build_checks_integrity"
+    }
+  ],
+  "hands_off_to": [
+    "commit-slice",
+    "slice"
+  ],
+  "source": "temp/skills/reflect/SKILL.md",
+  "missing_references": [
+    {
+      "ref": "code-review-graph",
+      "kind": "tool",
+      "found": false,
+      "expected": true,
+      "reason": "External pip package, intentionally not bundled in the plugin."
+    }
+  ]
+}

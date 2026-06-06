@@ -1,0 +1,338 @@
+[
+  {
+    "name": "triage",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "Interactive: asks mode/risk questions one at a time and engages with each answer, picks mode collaboratively, and writes project-open artifacts. Needs the live user conversation, so it cannot be delegated to a fresh-context subagent.",
+    "summary": "Greenfield AI SDLC project opener. Picks the pipeline mode (Minimal / Standard / Heavy) via interactive Q&A (or accepts a pre-declared mode), builds the initial reversibility-tagged risk register, writes the thin vault skeleton (triage.json, risk-register.json, decisions/, spikes/, slices/) plus a small project-root CLAUDE.md, optionally installs code-review-graph integration, and tells the user the mode-specific next step. Re-runnable for mid-project re-scoping. Greenfield only — routes substantial existing codebases to /adopt.",
+    "agents": [],
+    "methodology_tools": [
+      {
+        "name": "risk_register_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py\" <vault>/risk-register.json",
+        "purpose": "Validates the risk register written in Step 5 (required fields, valid values, scoring/sorting per RR-1)."
+      }
+    ],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "code-review-graph install --platform claude-code | code-review-graph build|update",
+        "purpose": "Code graph via code-review-graph (CRG) — installs the Claude Code MCP integration (30 MCP tools + slash commands + git hooks); builds/refreshes the code graph. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "AskUserQuestion",
+        "purpose": "Load-bearing — structured-options Q&A for mode selection, risk questions, and the code-review-graph-install / git-init prompts."
+      },
+      {
+        "name": "Read",
+        "purpose": "Re-triage detection (read existing triage.json), reading existing CLAUDE.md before append."
+      },
+      {
+        "name": "Write",
+        "purpose": "Write triage.json, risk-register.json, vault skeleton dirs, project-root CLAUDE.md."
+      },
+      {
+        "name": "Bash",
+        "purpose": "Step 0 preflight detection and the optional code-review-graph install commands."
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/triage.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Re-triage detection (Step 1) — read existing mode + risks to update rather than overwrite."
+      },
+      {
+        "path": "<vault>/triage.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Triage snapshot: mode, classification, rationale, pipeline path, deferred steps, initial risk snapshot."
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": "<!-- vault-write-safe: project-open-single-shot -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Running risk ledger, one RR-1 block per risk; validated by risk_register_audit."
+      },
+      {
+        "path": "<vault>/decisions/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "mkdir",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Empty dir for ADRs."
+      },
+      {
+        "path": "<vault>/spikes/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "mkdir",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Empty dir for /risk-spike output."
+      },
+      {
+        "path": "<vault>/slices/",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "mkdir",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Empty dir for slice folders."
+      },
+      {
+        "path": "<vault>/components/<name>.json",
+        "kind": "directory",
+        "access": "create",
+        "mechanism": "mkdir",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "directory",
+        "purpose": "Heavy mode only — empty comprehensive-vault dirs pre-created for compliance (components/contracts/actors/test-plan/frontend/schemas)."
+      },
+      {
+        "path": "./CLAUDE.md",
+        "kind": "enforcement-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "markdown",
+        "purpose": "Step 5b — read to decide fresh-create vs append."
+      },
+      {
+        "path": "./CLAUDE.md",
+        "kind": "enforcement-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "markdown",
+        "purpose": "Project-root pipeline-enforcement file (created fresh or appended). STAYS MARKDOWN in v2 — Claude Code reads it natively."
+      },
+      {
+        "path": "code-review-graph integration (MCP tools + git hooks + .code-review-graph/ store)",
+        "kind": "side-effect",
+        "access": "create",
+        "mechanism": "code-review-graph",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "other",
+        "purpose": "Step 5b-pre, opt-in. Installs the always-on code-review-graph integration."
+      }
+    ],
+    "hands_off_to": [
+      "discover",
+      "user-test",
+      "heavy-architect",
+      "slice"
+    ],
+    "source": "temp/skills/triage/SKILL.md"
+  },
+  {
+    "name": "discover",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "Interactive, one-topic-at-a-time conversation that engages with each answer, pushes back on scope, and co-derives the first slice candidate from the dialogue. Needs the live user conversation, so it cannot be delegated to a fresh-context subagent.",
+    "summary": "Discovery step of the AI SDLC pipeline. Runs after /triage. Interactive concept + users + tech-constraints exploration in one unified loop, one topic at a time: WHAT (concept, scope, non-goals), WHO (actors with top actions, needs, boundaries), CONSTRAINTS (stack/infra/team, reversibility-tagged). Addresses HIGH-risk items, optionally records external references as JSON fields, and names the first slice candidate. Writes mode-scoped outputs: concept.json (all modes); tech-decision ADRs (Standard); requirements.json + per-actor files (Heavy).",
+    "agents": [],
+    "methodology_tools": [],
+    "external_tools": [],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "AskUserQuestion",
+        "purpose": "Structured-options prompts for the one-topic-at-a-time WHAT/WHO/CONSTRAINTS conversation, the HIGH-risk spike question, and the external-references ask."
+      },
+      {
+        "name": "Read",
+        "purpose": "Prerequisite check (read triage.json for mode + risks); read risk-register.json HIGH items."
+      },
+      {
+        "name": "Write",
+        "purpose": "Write concept.json (all modes); tech-decision ADRs (Standard); requirements.json, actors/<actor>.md (Heavy); update risk-register.json."
+      },
+      {
+        "name": "Bash",
+        "purpose": "Step 4.5: record external references as JSON fields (multimodal ingest dropped in the code-review-graph->CRG swap)."
+      }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/triage.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Prerequisite check — read the mode (controls what discover produces) plus audience/risks."
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Step 3 — read HIGH-risk items to ask which can be spiked before designing."
+      },
+      {
+        "path": "<vault>/risk-register.json",
+        "kind": "content-file",
+        "access": "update",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Update the existing register with discovery-phase risks."
+      },
+      {
+        "path": "<vault>/concept.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "1-page brief: What/Who/Constraints + named first slice candidate."
+      },
+      {
+        "path": "<vault>/decisions/ADR-NNN-<short-name>.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "One ADR per non-trivial tech decision, reversibility-tagged. Not produced in Minimal mode."
+      },
+      {
+        "path": "<vault>/requirements.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Functional + non-functional requirements. Heavy mode only."
+      },
+      {
+        "path": "<vault>/actors/<actor>.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "One file per actor with role-play walkthroughs. Heavy mode only."
+      },
+      {
+        "path": "<vault>/candidates.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Materialize the named first slice candidate into the unified candidates backlog."
+      }
+    ],
+    "hands_off_to": [
+      "user-test",
+      "slice"
+    ],
+    "source": "temp/skills/discover/SKILL.md"
+  }
+]

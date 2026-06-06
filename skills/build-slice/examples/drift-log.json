@@ -1,0 +1,13 @@
+{
+  "_schema": "aisdlc/drift-log@1",
+  "_note": "Append-only audit (R-32). Categories: drift | unspecified-code | stale-claim.",
+  "entries": [
+    {
+      "at": "<ts>",
+      "trigger": "slice-021",
+      "category": "stale-claim",
+      "finding": "ADR-008 claims WebSocket; code uses SSE.",
+      "resolution": "superseded by ADR-014"
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "name": "critique-review",
+  "user_invokable": true,
+  "requires_full_context": true,
+  "runs_in": "main-agent",
+  "context_rationale": "The skill orchestrates from the main agent thread — reads existing critique.json and slice artifacts, invokes the meta-Critic subagent, runs a structural audit, and hands control back to /critique Step 4.5 TRI-1 which requires the main thread's user-input gate.",
+  "summary": "Dual review (DR-1) of the first Critic's output for per-slice false positives, false negatives, and severity miscalibrations. Spawns a 'critique-review' subagent that independently re-applies the 8 review dimensions against mission-brief, design, and the first Critic's critique.json. After receiving the meta-Critic's output, runs critique_review_audit to validate structure, then hands findings back to /critique Step 4.5 TRI-1 for user reconciliation. Recommended for high-tier and auth/data-model/contract slices; optional for low-tier slices.",
+  "reads": [
+    {
+      "path": "<vault>/slices/slice-NNN/mission-brief.json",
+      "kind": "content-file",
+      "produced_by": [
+        "slice"
+      ],
+      "purpose": "Slice intent and ACs handed to meta-Critic"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/design.json",
+      "kind": "content-file",
+      "produced_by": [
+        "design-slice"
+      ],
+      "purpose": "Slice design handed to meta-Critic for independent re-review"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/critique.json",
+      "kind": "content-file",
+      "produced_by": [
+        "critique"
+      ],
+      "purpose": "First Critic's findings — primary input for the meta-Critic"
+    },
+    {
+      "path": "<vault>/decisions/ADR-*.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "design-slice",
+        "discover",
+        "reflect",
+        "triage"
+      ],
+      "purpose": "New ADRs from this slice handed to meta-Critic"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "<vault>/slices/slice-NNN/critique-review.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "critique-review"
+      ],
+      "edited_by": [],
+      "read_by": [
+        "build-slice"
+      ],
+      "validated_by": [],
+      "purpose": "Meta-Critic findings: VALID/SUSPICIOUS/SEVERITY-WRONG per finding plus missed findings",
+      "example_schema": "aisdlc/critique-review@1",
+      "example": "examples/critique-review.json"
+    }
+  ],
+  "agents": [
+    {
+      "name": "critique-review",
+      "when": "Step 2, after gathering slice context including the first Critic's critique.md",
+      "purpose": "Meta-Critic review of the first Critic's findings for VALID/SUSPICIOUS/SEVERITY-WRONG classifications and missed findings"
+    }
+  ],
+  "tools": [
+    {
+      "name": "project_frame_synth",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py\" --repo-root . --slice-dir <vault>/slices/slice-NNN-<name>",
+      "purpose": "Synthesizes project frame so the meta-Critic can re-check the first Critic's review against strategic direction (PFS-1/ADR-080)",
+      "found": true,
+      "path": "scripts/lib/project_frame_synth.py"
+    },
+    {
+      "name": "critique_review_audit",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py\" <vault>/slices/slice-NNN-<name>",
+      "purpose": "Validates critique-review.md structure: 4 required sections, dual-review verdict in {ACCEPT,ADJUST,EXTEND}, Reviewed-by and Date fields",
+      "found": true,
+      "path": "skills/critique-review/scripts/critique_review_audit.py"
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "Read",
+      "purpose": "Read mission-brief.json, design.json, critique.json, ADRs, triage.json, milestone.json"
+    },
+    {
+      "name": "Write",
+      "purpose": "Write critique-review.json to the slice folder"
+    },
+    {
+      "name": "Bash",
+      "purpose": "Run project_frame_synth and critique_review_audit via $PY"
+    },
+    {
+      "name": "Agent",
+      "purpose": "Spawn the 'critique-review' subagent with subagent_type: 'critique-review'"
+    }
+  ],
+  "hands_off_to": [
+    "critique"
+  ],
+  "source": "temp/skills/critique-review/SKILL.md",
+  "missing_references": []
+}

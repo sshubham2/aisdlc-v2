@@ -1,0 +1,4 @@
+# POSIX shell scripts MUST stay LF — they run via git-bash; a CRLF checkout
+# puts \r in the shebang/commands and breaks bash (notably the SessionStart
+# hook hooks/setup-env.sh). Pin them regardless of core.autocrlf.
+*.sh text eol=lf

@@ -1,0 +1,48 @@
+{
+  "name": "query-design",
+  "user_invokable": true,
+  "requires_full_context": true,
+  "runs_in": "main-agent",
+  "context_rationale": "The skill is an interactive, back-and-forth Q&A conversation that follows up on user questions, drills down iteratively, and optionally offers a handoff to /slice based on what emerged in the session — it fundamentally depends on the accumulated conversation context.",
+  "summary": "Holds a read-only, grounded Q&A conversation about an existing codebase, answering questions by reading actual code via Grep, Read, and code-review-graph queries rather than recall. Every answer cites specific file/line/symbol evidence. It changes nothing — no writes, no file creation, no vault mutations. If the conversation surfaces a concrete actionable finding, it offers (but never forces) a single delegated handoff to /slice.",
+  "reads": [],
+  "outputs": [],
+  "agents": [],
+  "tools": [
+    {
+      "name": "code-review-graph",
+      "type": "external-package",
+      "invocation": "CRG MCP tools (impact-radius, review-context, search)",
+      "purpose": "Code graph via code-review-graph (CRG) — reachability / blast-radius / keyword+semantic search via CRG MCP tools. Replaces graphify; vault-graph & multimodal-ingest uses dropped.",
+      "found": false,
+      "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; graph stored in .code-review-graph/. Replaces graphify."
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "Grep",
+      "purpose": "Locate symbols and patterns in the codebase to ground answers in evidence"
+    },
+    {
+      "name": "Read",
+      "purpose": "Inspect actual file contents and definitions to answer questions accurately"
+    },
+    {
+      "name": "Skill",
+      "purpose": "Invoke /slice once via the Skill tool when the user accepts the offered handoff"
+    }
+  ],
+  "hands_off_to": [
+    "slice"
+  ],
+  "source": "temp/skills/query-design/SKILL.md",
+  "missing_references": [
+    {
+      "ref": "code-review-graph",
+      "kind": "tool",
+      "found": false,
+      "expected": true,
+      "reason": "External pip package, intentionally not bundled in the plugin."
+    }
+  ]
+}

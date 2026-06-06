@@ -1,0 +1,40 @@
+{
+  "_schema": "aisdlc/milestone@1",
+  "slice": "slice-021",
+  "stage": "build",
+  "next_action": "/code-review",
+  "progress": [
+    {
+      "step": "spike",
+      "done": true
+    },
+    {
+      "step": "design",
+      "done": true
+    },
+    {
+      "step": "critique",
+      "done": true
+    },
+    {
+      "step": "build",
+      "done": false
+    },
+    {
+      "step": "code-review",
+      "done": false
+    },
+    {
+      "step": "validate",
+      "done": false
+    },
+    {
+      "step": "reflect",
+      "done": false
+    }
+  ],
+  "current_focus": "wiring the SSE transport",
+  "on_resume": "## On resume\nFinish the SSE handler in presence.ts, then run /code-review.",
+  "updated_by": "build-slice",
+  "at": "<ts>"
+}

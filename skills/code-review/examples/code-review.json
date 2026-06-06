@@ -1,0 +1,23 @@
+{
+  "_schema": "aisdlc/code-review@1",
+  "_note": "Adversarial code-Critic on the slice diff (CRSI-1). Advisory in v1.",
+  "slice": "slice-021",
+  "reviewed_by": "code-review agent",
+  "findings": [
+    {
+      "id": "CR1",
+      "dimension": "edge-case",
+      "severity": "minor",
+      "file": "src/presence.ts:42",
+      "claim": "no backoff cap on SSE retry",
+      "fix": "cap retry at 30s"
+    }
+  ],
+  "dimensions_checked": [
+    "assumptions",
+    "edge-cases",
+    "security",
+    "contract-gaps",
+    "drift"
+  ]
+}

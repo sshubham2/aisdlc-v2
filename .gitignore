@@ -1,0 +1,20 @@
+# ── Working / build notes — kept local, NOT part of the shipped plugin ──
+/MILESTONE.md
+/CLAUDE.md
+
+# ── Local Claude Code settings (machine-specific) ──
+/.claude/settings.local.json
+
+# ── v1 reference (verbatim copy of C:\Users\sshub\ai_sdlc) — not shipped ──
+/temp/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── OS / editor ──
+.DS_Store
+Thumbs.db
+*.swp

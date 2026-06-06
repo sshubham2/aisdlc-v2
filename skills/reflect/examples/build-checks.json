@@ -1,0 +1,15 @@
+{
+  "_schema": "aisdlc/build-checks@1",
+  "_note": "Project evergreen rules surfaced at /build-slice (BC-1). Append via vault_edit.",
+  "rules": [
+    {
+      "id": "BC-PROJ-3",
+      "severity": "critical",
+      "applies_when": {
+        "glob": "**/*.py"
+      },
+      "rule": "Every tools/*.py main() reconfigures stdout to UTF-8.",
+      "rationale": "Windows cp1252 crashes on non-ASCII output."
+    }
+  ]
+}

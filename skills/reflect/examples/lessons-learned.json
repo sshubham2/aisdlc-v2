@@ -1,0 +1,11 @@
+{
+  "_schema": "aisdlc/lessons-learned@1",
+  "_note": "Chronological, append-only via vault_edit.",
+  "entries": [
+    {
+      "slice": "slice-021",
+      "at": "<ts>",
+      "lesson": "Spike transport limits before designing realtime."
+    }
+  ]
+}

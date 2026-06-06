@@ -1,0 +1,32 @@
+{
+  "_schema": "aisdlc/build-log@1",
+  "slice": "slice-021",
+  "result": "shipped",
+  "plan": [
+    "add SSE endpoint",
+    "client subscriber",
+    "tests"
+  ],
+  "events": [
+    {
+      "at": "<ts>",
+      "note": "smoke gate passed at 50%"
+    }
+  ],
+  "gates": [
+    {
+      "id": "WIRE-1",
+      "status": "pass"
+    },
+    {
+      "id": "TF-1",
+      "status": "n/a"
+    }
+  ],
+  "deferrals": [],
+  "files_changed": [
+    "src/presence.ts",
+    "src/doc-view.tsx",
+    "tests/presence.test.ts"
+  ]
+}

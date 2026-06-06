@@ -1,0 +1,183 @@
+{
+  "name": "critique",
+  "user_invokable": true,
+  "requires_full_context": true,
+  "runs_in": "main-agent",
+  "context_rationale": "The skill orchestrates from the main agent thread — reads vault files, runs tools, gates build-slice, and halts on TRI-1 user input — while spawning a fresh-context 'critique' subagent for the adversarial heavy lifting.",
+  "summary": "Adversarial review of the current slice's design by a separate Critic AI persona. Spawns a 'critique' subagent with 9 fixed attack dimensions, writes findings to critique.json, and gates /build-slice behind a user-owned TRI-1 triage step. Mandatory in Standard (medium/high tier) and Heavy modes; skippable on low-tier slices with no mandatory triggers. BLOCKED verdict prevents auto-advance; CLEAN or NEEDS-FIXES proceed to /build-slice.",
+  "reads": [
+    {
+      "path": "<vault>/slices/slice-NNN/mission-brief.json",
+      "kind": "content-file",
+      "produced_by": [
+        "slice"
+      ],
+      "purpose": "Slice intent, ACs, must-not-defer, out-of-scope, risk tier"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/design.json",
+      "kind": "content-file",
+      "produced_by": [
+        "design-slice"
+      ],
+      "purpose": "Slice design handed to Critic for adversarial review"
+    },
+    {
+      "path": "<vault>/decisions/ADR-*.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "design-slice",
+        "discover",
+        "reflect",
+        "triage"
+      ],
+      "purpose": "New ADRs from this slice handed to Critic"
+    },
+    {
+      "path": "<vault>/slices/action-points.json",
+      "kind": "content-file",
+      "produced_by": [],
+      "purpose": "Curated cross-slice action points register for Critic context"
+    },
+    {
+      "path": "<vault>/slices/_index.json",
+      "kind": "content-file",
+      "produced_by": [
+        "archive"
+      ],
+      "purpose": "Most-recent-10 slice table for pattern recognition context"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/reflection.json",
+      "kind": "content-file",
+      "produced_by": [
+        "reflect"
+      ],
+      "purpose": "Specific archived reflections when semantic query or register points to a direct match"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "<vault>/slices/slice-NNN/critique.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "critique"
+      ],
+      "edited_by": [],
+      "read_by": [
+        "build-slice",
+        "commit-slice",
+        "critique-review",
+        "reflect"
+      ],
+      "validated_by": [],
+      "purpose": "Critic findings, Builder draft dispositions, and user-ratified triage table",
+      "example_schema": "aisdlc/critique@1",
+      "example": "examples/critique.json"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/milestone.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "update",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "slice"
+      ],
+      "edited_by": [
+        "build-slice",
+        "code-review",
+        "critique",
+        "design-slice",
+        "reflect",
+        "validate-slice"
+      ],
+      "read_by": [
+        "build-slice",
+        "code-review",
+        "critique",
+        "design-slice",
+        "pulse",
+        "reflect",
+        "validate-slice"
+      ],
+      "validated_by": [],
+      "purpose": "Update stage, progress box, current focus, on-resume after critique",
+      "example_schema": "aisdlc/milestone@1",
+      "example": "examples/milestone.json"
+    }
+  ],
+  "agents": [
+    {
+      "name": "critique",
+      "when": "Step 2, after gathering slice context",
+      "purpose": "Performs adversarial review of mission-brief.md + design.md + ADRs along 9 dimensions, returning findings as critique.md content"
+    }
+  ],
+  "tools": [
+    {
+      "name": "project_frame_synth",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py\" --repo-root . --slice-dir <vault>/slices/slice-NNN-<name>",
+      "purpose": "Synthesizes project Identity/Trajectory/Impact frame to give the Critic strategic-direction context (PFS-1/ADR-080)",
+      "found": true,
+      "path": "scripts/lib/project_frame_synth.py"
+    },
+    {
+      "name": "triage_audit",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/triage_audit.py\" <vault>/slices/slice-NNN-<name>",
+      "purpose": "Validates critique.md Triage section for required fields, valid verdict, complete disposition rows, and non-empty rationale on OVERRIDDEN/DEFERRED/ESCALATED",
+      "found": true,
+      "path": "skills/critique/scripts/triage_audit.py"
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "Read",
+      "purpose": "Read mission-brief.json, design.json, ADRs, action-points.json, _index.json, triage.json, milestone.json"
+    },
+    {
+      "name": "Write",
+      "purpose": "Write critique.json to the slice folder"
+    },
+    {
+      "name": "Edit",
+      "purpose": "Update milestone.json (stage, progress box, current focus, on-resume)"
+    },
+    {
+      "name": "Bash",
+      "purpose": "Run project_frame_synth and triage_audit via $PY (past-lessons lookup now queries the JSON archive directly)"
+    },
+    {
+      "name": "Agent",
+      "purpose": "Spawn the 'critique' subagent with subagent_type: 'critique'"
+    },
+    {
+      "name": "AskUserQuestion",
+      "purpose": "Step 4.5 TRI-1 user-owned triage — present findings + Builder drafts and halt for user ratification"
+    }
+  ],
+  "hands_off_to": [
+    "critique-review",
+    "build-slice"
+  ],
+  "source": "temp/skills/critique/SKILL.md",
+  "missing_references": []
+}

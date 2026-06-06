@@ -1,0 +1,15 @@
+{
+  "_schema": "aisdlc/adr@1",
+  "_note": "Append-only: to change a decision, write a NEW ADR with `supersedes` and set the old one's `superseded_by`. Never edit the body.",
+  "id": "ADR-014",
+  "title": "Use SSE for presence transport",
+  "status": "accepted",
+  "reversibility": "expensive",
+  "supersedes": "ADR-008",
+  "superseded_by": null,
+  "slice": "slice-021",
+  "date": "<ts>",
+  "context": "## Context\nManaged host caps WebSockets at ~120 concurrent.",
+  "decision": "## Decision\nUse SSE + short-poll fallback.",
+  "consequences": "## Consequences\nOne-way only; revisit if we need client->server streaming."
+}

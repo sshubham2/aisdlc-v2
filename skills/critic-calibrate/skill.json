@@ -1,0 +1,91 @@
+{
+  "name": "critic-calibrate",
+  "user_invokable": true,
+  "requires_full_context": false,
+  "runs_in": "main-agent",
+  "context_rationale": "The skill itself orchestrates from the main agent but all heavy analysis is delegated to a fresh-context 'critic-calibrate' subagent; the skill only collects and presents inputs and logs results, which does not depend on the main thread's current slice state.",
+  "summary": "Cross-slice meta-skill that mines 'Missed by Critic' and 'Critic calibration' entries from the last N (default 15) archived reflections to identify blind-spot patterns in the Critic prompt. Spawns a 'critic-calibrate' subagent that classifies patterns, applies a >=3-distinct-slices threshold, and produces 0-3 evidence-backed proposals. Proposals are presented one-at-a-time to the user for accept/modify/reject; this skill never auto-applies edits to the Critic agent prompt. Logs every run to critic-calibration-log.json for longitudinal effectiveness tracking.",
+  "reads": [
+    {
+      "path": "<vault>/slices/archive/",
+      "kind": "directory",
+      "produced_by": [],
+      "purpose": "Enumerate last N archived slice folders for reflection window"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/reflection.json",
+      "kind": "content-file",
+      "produced_by": [
+        "reflect"
+      ],
+      "purpose": "Extract Critic calibration + Missed by Critic sections for pattern analysis"
+    },
+    {
+      "path": "<vault>/slices/_index.json",
+      "kind": "content-file",
+      "produced_by": [
+        "archive"
+      ],
+      "purpose": "Optional quick navigation to archived slices"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "<vault>/critic-calibration-log.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [],
+      "edited_by": [
+        "critic-calibrate"
+      ],
+      "read_by": [
+        "pulse"
+      ],
+      "validated_by": [],
+      "purpose": "Audit trail of calibration runs: pattern summary, proposals, user decisions, effectiveness checks",
+      "example_schema": "aisdlc/critic-calibration-log@1",
+      "example": "examples/critic-calibration-log.json"
+    }
+  ],
+  "agents": [
+    {
+      "name": "critic-calibrate",
+      "when": "Step 2, after gathering archived reflections, current Critic prompt, and calibration log",
+      "purpose": "Classifies Critic miss patterns, applies evidence threshold, and generates 0-3 targeted prompt-update proposals for critique.md"
+    }
+  ],
+  "tools": [],
+  "harness_tools": [
+    {
+      "name": "Read",
+      "purpose": "Read archived reflection.json files (Critic calibration sections), ~/.claude/agents/critique.json, critic-calibration-log.json"
+    },
+    {
+      "name": "Write",
+      "purpose": "Append calibration run record to <vault>/critic-calibration-log.json"
+    },
+    {
+      "name": "Bash",
+      "purpose": "List archived slice folders (ls -t)"
+    },
+    {
+      "name": "Agent",
+      "purpose": "Spawn the 'critic-calibrate' subagent with subagent_type: 'critic-calibrate'"
+    },
+    {
+      "name": "AskUserQuestion",
+      "purpose": "Present each proposal one-at-a-time for user accept/modify/reject decision"
+    }
+  ],
+  "hands_off_to": [],
+  "source": "temp/skills/critic-calibrate/SKILL.md",
+  "missing_references": []
+}

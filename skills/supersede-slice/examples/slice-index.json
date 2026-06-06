@@ -1,0 +1,22 @@
+{
+  "_schema": "aisdlc/slice-index@1",
+  "_note": "Thin router: active slices + recent-10 one-liners + pointer to action-points + archive. CAS via vault_edit.",
+  "project": "<name>",
+  "mode": "standard",
+  "active": [
+    {
+      "slice": "slice-021",
+      "title": "realtime-presence",
+      "stage": "build"
+    }
+  ],
+  "recent": [
+    {
+      "slice": "slice-020",
+      "title": "webhook-receiver",
+      "shipped": "<ts>"
+    }
+  ],
+  "action_points_ref": "<vault>/slices/action-points.json",
+  "archive_ref": "<vault>/slices/archive/_index.json"
+}
