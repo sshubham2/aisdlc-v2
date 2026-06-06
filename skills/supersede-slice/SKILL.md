@@ -92,7 +92,7 @@ If no active slice exists yet: tell the user to set this field when running `/sl
 ## Step 5 — Run the supersession audit
 
 ```bash
-$PY ${CLAUDE_SKILL_DIR}/scripts/supersede_audit.py --root .
+$PY "${CLAUDE_SKILL_DIR}/scripts/supersede_audit.py" --root .
 ```
 
 Expected: 1 link validated, no violations.

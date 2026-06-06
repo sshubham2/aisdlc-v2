@@ -373,7 +373,7 @@ def _cmd_rewrite(args: argparse.Namespace) -> int:
     try:
         content = (Path(args.content_file).read_text(encoding="utf-8")
                    if args.content_file is not None else sys.stdin.read())
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # BB-03: ValueError covers UnicodeDecodeError (non-UTF-8 content/stdin)
         _err(f"cannot read content: {exc}"); return 2
     try:
         safe_rewrite_text(target, content, expected_base=base)

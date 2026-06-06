@@ -39,6 +39,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+# --- plugin-root import bootstrap (BB-17) — a skill invokes this by ABSOLUTE PATH from
+# the user's CWD, where `scripts.lib` is not importable; add the plugin root, mirroring
+# the sibling shared libs (active_slice, stranded_slice_audit, …). No-op under `-m`. ---
+_PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+if str(_PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_ROOT))
+# --- end plugin-root bootstrap ---
+
 from scripts.lib import _stdout
 from scripts.lib._git_default_branch import resolve_default_branch as _resolve_default_branch
 from scripts.lib._vault_paths import VAULT_ROOT
@@ -386,7 +394,7 @@ def _run_classify(slice_arg: str, repo_root: Path, json_mode: bool) -> int:
             {"action": "classify", "slice": slice_arg, "classification": _classification_to_dict(cls)}) + "\n")
     else:
         sys.stdout.write(f"{slice_arg}: {cls.state.value} — {cls.reason}\n")
-    return 1 if cls.state == WorktreeState.UNKNOWN else 0
+    return 0  # BB-18: UNKNOWN is a valid computed classification (carried in the payload), not a runtime error
 
 
 def main(argv: list[str] | None = None) -> int:

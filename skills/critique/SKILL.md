@@ -17,7 +17,7 @@ is delegated to a forked `critique` subagent. Skill = orchestration; agent = wor
 ## Live state — injected
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --repo-root . --json 2>/dev/null || echo "{}"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/pulse_worktree_resolver.py" --detect --repo-root . --json 2>/dev/null || echo "{}"
 ```
 
 Active slice mission-brief (mode + risk tier + critic_required):
@@ -134,9 +134,25 @@ Required top-level fields: `_schema`, `slice`, `reviewed_by`, `verdict` (`clean|
 `dimensions_checked[]` (each: `dimension`, `result` — every dimension gets an entry, even `"none: <reason>"`),
 `triage` (null until Step 4.5 ratification).
 
+## Step 3.5 — meta-Critic dual review (DR-1) — runs BEFORE triage
+
+The meta-Critic runs BEFORE the TRI-1 gate so its findings feed your triage (BB-28). Invoke
+`/critique-review` via the **Skill** tool (mandatory in Standard/Heavy for methodology surfaces —
+`skills/**`/`agents/**`/`scripts/**` — advisory otherwise; skip only on a low-tier slice with no mandatory
+triggers). It reads `critique.json`, spawns the meta-Critic agent, and writes
+`<vault>/slices/slice-NNN-<name>/critique-review.json` (verdict `accept|adjust|extend` with
+`confirmed[]` / `suspicious[]` / `missed[]` / `severity_adjustments[]`).
+
+Merge its output into the finding set you triage in Step 4.5:
+- **missed[]** (`extend`) → add each to `critique.json` `findings[]` as a new finding (id `M-add-N`) with a Builder draft disposition.
+- **severity_adjustments[]** → apply the corrected severity to the named finding.
+- **suspicious[]** → flag the named finding as "meta-Critic: likely over-reach" so the user can drop it at triage.
+
+On `/critique-review` error or skip: proceed with the first Critic's findings only; note it to the user.
+
 ## Step 4 — Builder draft dispositions
 
-For each finding (blocker → major → minor), propose a draft disposition:
+For each finding — the first Critic's PLUS any `missed[]` (`M-add-N`) the meta-Critic surfaced in Step 3.5, blocker → major → minor — propose a draft disposition:
 
 | Disposition       | Meaning                                                          |
 |-------------------|------------------------------------------------------------------|
@@ -153,7 +169,7 @@ Set `"disposition": <draft>` on each finding in `critique.json`. `"triage"` stay
 
 ## Step 4.5 — TRI-1 user-owned triage (HALT gate)
 
-**PCA-1: always halt here.** The Builder cannot self-ratify. Present via `AskUserQuestion`:
+**PCA-1: always halt here.** The Builder cannot self-ratify. Present BOTH the first Critic's findings AND the meta-Critic's `missed[]` / severity adjustments (from Step 3.5) via `AskUserQuestion`:
 
 ```
 Critic findings for slice-NNN <name>:
@@ -191,7 +207,7 @@ Update `critique.json` — write the `"triage"` object:
 
 Run triage audit:
 ```bash
-$PY ${CLAUDE_SKILL_DIR}/scripts/triage_audit.py <active-slice-folder>
+$PY "${CLAUDE_SKILL_DIR}/scripts/triage_audit.py" <active-slice-folder>
 ```
 
 Audit refusal codes: `no-section`, `missing-field`, `invalid-verdict`, `missing-row`,
@@ -222,9 +238,10 @@ parallel writers are possible (standard Edit is safe for the orchestrator's own 
 
 ## Step 5b — auto-advance
 
-On CLEAN or NEEDS-FIXES: invoke `/critique-review` via the Skill tool (mandatory in Standard/Heavy for
-methodology surfaces; advisory otherwise). After `/critique-review` returns, advance to `/build-slice`.
+`/critique-review` already ran IN-LOOP at Step 3.5 (its findings were triaged in Step 4.5), so there is
+NO post-triage meta-review step.
 
+On CLEAN or NEEDS-FIXES: advance to `/build-slice`.
 On BLOCKED: do NOT invoke any successor — HALT and surface instructions to the user.
 
 ## Critical rules
@@ -239,9 +256,9 @@ On BLOCKED: do NOT invoke any successor — HALT and surface instructions to the
 ## Pipeline position
 
 - predecessor: `/design-slice`
-- successor: `/critique-review` (then `/build-slice`)
+- successor: `/build-slice` (the `/critique-review` meta-review runs IN-LOOP at Step 3.5, before triage)
 - auto-advance: true (CLEAN/NEEDS-FIXES only)
 - user-input gates (halt auto-advance):
-  - **Step 4.5 TRI-1** — always; user is final triage authority; Builder cannot self-ratify.
+  - **Step 4.5 TRI-1** — always; user is final triage authority over BOTH Critic passes; Builder cannot self-ratify.
   - **Verdict BLOCKED** — halt; redesign via `/design-slice` then re-run `/critique`.
-- on-clean-completion: invoke `/critique-review` via Skill, then `/build-slice`.
+- on-clean-completion: `/build-slice`.

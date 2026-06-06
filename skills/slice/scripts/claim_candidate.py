@@ -117,18 +117,23 @@ def _make_mutate(path: Path, candidate_id: str, slice_short: str,
         rec["slice"] = slice_short
         rec["claimed_by"] = {"git_user": name, "git_email": email}
         rec["started_at"] = ts
-        hist = rec.setdefault("history", [])
-        if isinstance(hist, list):
-            hist.append({"event": "picked", "by": "slice", "at": ts, "ref": slice_short})
+        # BB-20: a present-but-non-list history/pick_log (prior corruption / hand-edit) must
+        # NOT silently drop the audit entry (a "silent partial claim") — reset to a fresh list
+        # so the picked/pick_log record is always written.
+        hist = rec.get("history")
+        if not isinstance(hist, list):
+            hist = rec["history"] = []
+        hist.append({"event": "picked", "by": "slice", "at": ts, "ref": slice_short})
 
-        plog = data.setdefault("pick_log", [])
-        if isinstance(plog, list):
-            plog.append({
-                "candidate": candidate_id,
-                "slice": slice_short,
-                "picked_by": f"{name} {email}",
-                "at": ts,
-            })
+        plog = data.get("pick_log")
+        if not isinstance(plog, list):
+            plog = data["pick_log"] = []
+        plog.append({
+            "candidate": candidate_id,
+            "slice": slice_short,
+            "picked_by": f"{name} {email}",
+            "at": ts,
+        })
         data["updated"] = ts
         return json.dumps(data, **_JSON_DUMP) + "\n"
 

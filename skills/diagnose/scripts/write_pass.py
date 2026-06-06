@@ -128,9 +128,21 @@ def write_pass(pass_name: str, out_dir: Path, raw_text: str) -> int:
         elif isinstance(parsed, list):
             findings = parsed
         elif isinstance(parsed, dict) and "findings" in parsed:
-            # tolerate {findings: [...]} top-level wrapper
+            # tolerate {findings: [...]} top-level wrapper, and a single finding
+            # wrongly mapped under `findings:` without the `-` list dash. BB-07:
+            # must NOT fail open to [] — that silently drops a real finding (exit 0).
             wrapped = parsed["findings"]
-            findings = wrapped if isinstance(wrapped, list) else []
+            if isinstance(wrapped, list):
+                findings = wrapped
+            elif isinstance(wrapped, dict):
+                findings = [wrapped]
+            else:
+                return _err(
+                    f"[{pass_name}] `findings:` wrapper is not a list "
+                    f"(got {type(wrapped).__name__}); did the subagent forget the "
+                    f"list `-` dash?",
+                    2,
+                )
         else:
             return _err(
                 f"[{pass_name}] findings block must be a YAML list (or `[]`); "
@@ -196,6 +208,14 @@ def write_pass(pass_name: str, out_dir: Path, raw_text: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # BB-12: cp1252 consoles raise UnicodeEncodeError on non-ASCII prints (YAML-error
+    # snippets, vault paths). Reconfigure both streams to UTF-8 so the fail-visible
+    # diagnostics survive. (Self-contained: this script intentionally avoids scripts.lib.)
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     parser = argparse.ArgumentParser(
         description=(
             "Write /diagnose pass output files from a subagent's raw response. "

@@ -19,7 +19,7 @@ scaffold the vault, write `./CLAUDE.md`, hand off.
 
 Existing triage (re-triage detection):
 ```!
-$AI_SDLC_VAULT_ROOT/triage.json 2>/dev/null || echo "NOT_FOUND"
+cat "$AI_SDLC_VAULT_ROOT/triage.json" 2>/dev/null || echo "NOT_FOUND"
 ```
 
 Project-root CLAUDE.md (append vs fresh-create):
@@ -109,10 +109,10 @@ For each HIGH-band risk, decide whether a `/risk-spike` is warranted; note it in
 
 After writing, validate with:
 ```bash
-# TODO: v2 port owed — scripts/lib/risk_register_audit.py does not exist yet (README confirms).
-# When available: $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py" "$AI_SDLC_VAULT_ROOT/risk-register.json"
-# Until ported, validation is skipped — the call will produce a visible ModuleNotFoundError if attempted.
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py" "$AI_SDLC_VAULT_ROOT/risk-register.json"
 ```
+Exit 0 = scores/bands/statuses are valid. Non-zero = fix the flagged entries and re-run before continuing
+(score must equal likelihood×impact; band must match; status/id/required-fields must be well-formed).
 
 ## Step 5 — Write vault skeleton
 

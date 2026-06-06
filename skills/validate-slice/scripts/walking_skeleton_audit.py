@@ -221,8 +221,8 @@ def audit_brief_file(
         verification = str(entry.get("verification", "")).strip()
         status_raw = str(entry.get("status", "")).strip()
 
-        if _cell_is_empty(index_cell) and _cell_is_empty(layer):
-            continue  # blank entry — skip silently
+        if not any(str(v).strip() for v in entry.values()):  # BB-26: skip a WHOLLY-empty entry (index_cell is a synthetic counter, never empty)
+            continue
 
         if _cell_is_empty(verification):
             result.violations.append(WSViolation(

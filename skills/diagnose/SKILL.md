@@ -206,7 +206,7 @@ Spawn one `Agent` with `subagent_type: general-purpose`, `model: opus`. The 04-a
 read both prior YAML files from `$OUT/findings/`. Embed `passes/04-ai-bloat.md` content + paths +
 the canonical "do NOT call Write / return three fenced blocks" contract.
 
-After it returns, run `write_pass.py --pass 04-ai-bloat --raw-file $OUT/.tmp/04-ai-bloat.raw` with the
+After it returns, run `write_pass.py --pass 04-ai-bloat --out "$OUT" --raw-file $OUT/.tmp/04-ai-bloat.raw` with the
 same 3-attempt cap. Verify all three `04-ai-bloat.{md,yaml,md}` files exist before continuing.
 
 ## Step 6.5 — Narrative synthesis: diagnose-narrator

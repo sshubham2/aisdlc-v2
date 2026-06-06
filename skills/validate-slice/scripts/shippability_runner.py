@@ -152,7 +152,8 @@ def run_catalog(catalog_path: Path, repo_root: Path | None = None,
             try:
                 proc = subprocess.run(
                     argv, cwd=str(repo_root),
-                    capture_output=True, text=True, timeout=timeout,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",  # BB-25: avoid cp1252 reader-thread UnicodeDecodeError
+                    timeout=timeout,
                 )
             except subprocess.TimeoutExpired:
                 row_ok = False

@@ -90,6 +90,21 @@ def _diagnosis_html(diagnose_out: Path) -> Path:
     return p
 
 
+def _diagnosis_html_for_read(diagnose_out: Path) -> Path:
+    """Findings/annotations SOURCE for the READ paths (--obo-extract resume + the batch
+    build). BB-15: prefer the obo-annotated copy when present so obo decisions (incl.
+    terminal `defer`) are actually visible — cmd_obo_write bakes them into
+    `diagnosis.annotated.html` and leaves `diagnosis.html` byte-unchanged, so reading
+    only `diagnosis.html` made resume re-offer everything AND a post-obo build see zero
+    confirmed. Falls back to the pristine `diagnosis.html` (the main flow, where the
+    owner annotates `diagnosis.html` in-browser). NOTE: cmd_obo_write still reads the
+    pristine file via `_diagnosis_html` for its byte-unchanged assertion."""
+    annotated = diagnose_out / "diagnosis.annotated.html"
+    if annotated.exists():
+        return annotated
+    return _diagnosis_html(diagnose_out)
+
+
 def _extract_data_block(html_text: str) -> dict | None:
     """Parse the embedded `<script id="diagnose-data">…</script>` JSON, or None if absent."""
     m = _DATA_BLOCK_RE.search(html_text)
@@ -107,7 +122,7 @@ def _extract_data_block(html_text: str) -> dict | None:
 def _load_findings(diagnose_out: Path) -> tuple[list[dict], dict, str]:
     """Return (findings, annotations, source). Primary: the embedded JSON.
     Fallback: findings/*.yaml (no annotations there → empty)."""
-    html = _diagnosis_html(diagnose_out)
+    html = _diagnosis_html_for_read(diagnose_out)  # BB-15: prefer the obo-annotated copy
     data = _extract_data_block(html.read_text(encoding="utf-8"))
     if data is not None and data.get("findings"):
         findings = data.get("findings") or []
@@ -230,7 +245,12 @@ def _coerce_blast_files(payload) -> set[str]:
         for key in ("impacted_files", "files", "nodes", "blast_radius", "affected"):
             v = payload.get(key)
             if isinstance(v, list):
-                return {_relnorm(x.get("path") if isinstance(x, dict) else x) for x in v}
+                out = set()
+                for x in v:
+                    p = x.get("path") if isinstance(x, dict) else x
+                    if p:  # BB-34: skip dict entries with no 'path' (would yield the literal 'None')
+                        out.add(_relnorm(p))
+                return out
     return set()
 
 
@@ -447,7 +467,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         safe_mutate_text(path, mutate)
     except _Err as exc:
         _err(str(exc)); return 1
-    except (OSError, TimeoutError) as exc:
+    except (OSError, TimeoutError, UnicodeDecodeError) as exc:  # BB-33: non-UTF-8 candidates.json → fail-visible, not a raw traceback
         _err(f"write to {path} failed (fail-visible per R-7): {exc}"); return 1
 
     summary = {

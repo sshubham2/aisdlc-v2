@@ -17,7 +17,7 @@ risks / diagnose findings / reflections / concept scope) — you do NOT re-run a
 
 Top live candidates (ranked; blocked-on-spike flagged):
 ```!
-$PY ${CLAUDE_SKILL_DIR}/scripts/candidates_top.py --vault "$AI_SDLC_VAULT_ROOT" --top 5
+$PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --vault "$AI_SDLC_VAULT_ROOT" --top 5
 ```
 
 Stranded-slice consult (R-26 — never define a slice on top of genuinely-stranded prior work):
@@ -70,7 +70,7 @@ Once the candidate is settled AND scope passes, in order:
    Failure → STOP, roll back the worktree (`git -C <main> worktree remove <wt_path>`).
 4. **Claim the candidate** (fail-visible on unset git identity):
    ```bash
-   $PY ${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py --vault "$AI_SDLC_VAULT_ROOT" \
+   $PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --vault "$AI_SDLC_VAULT_ROOT" \
        --candidate <SC-NNN> --slice slice-NNN-<name>
    ```
    This routes through `vault_edit` (SVW-1): sets the candidate `status: spiking`, `progress: spike`,

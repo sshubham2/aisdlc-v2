@@ -20,7 +20,7 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" --vault "$AI_SDLC_VAUL
 ```
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py" --vault "$AI_SDLC_VAULT_ROOT" --summary
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py" "$AI_SDLC_VAULT_ROOT/risk-register.json" --json --filter-band high
 ```
 
 Spike outcomes (retire evidence for assumptions proven by `/risk-spike`):

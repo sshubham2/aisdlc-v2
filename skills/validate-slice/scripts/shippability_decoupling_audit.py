@@ -68,7 +68,7 @@ from shippability_path_audit import _find_repo_root  # noqa: F401 (re-exported f
 _INTERP = r"(?:<interp>|python3?|[^\s;]*python(?:3)?(?:\.exe)?)"
 _SEGMENT_RE = re.compile(
     rf"^(?:{_INTERP}(?:\s+-W\s+\S+)?\s+-m\s+)?pytest\s+"
-    r"(?:tests/\S+?\.py(?:::\S+)?|tests/\S+)"  # >=1 tests/-rooted target
+    r"(?:tests/\S+?\.py(?:::\S+)?|tests/\S*)"  # BB-27: \S* (not \S+) also accepts a bare directory target `pytest tests/`
     r"(?:\s+\S+)*$"
 )
 

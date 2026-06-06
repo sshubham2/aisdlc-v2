@@ -61,13 +61,13 @@ def _git_branch(repo_root: str | Path) -> str | None:
     try:
         cp = subprocess.run(
             ["git", "-C", str(repo_root), "symbolic-ref", "--short", "HEAD"],
-            capture_output=True, text=True, encoding="utf-8",
-        )
-    except (OSError, subprocess.SubprocessError):
+            capture_output=True,  # BB-19: capture BYTES + decode in the MAIN thread —
+        )                          # text=True+encoding= would raise an UNCAUGHT UnicodeDecodeError
+    except (OSError, subprocess.SubprocessError):  # in the subprocess reader thread on a non-UTF-8 ref name
         return None
     if cp.returncode != 0:
         return None
-    return cp.stdout.strip() or None
+    return cp.stdout.decode("utf-8", "replace").strip() or None
 
 
 def _read_milestone(folder: Path) -> dict:
@@ -141,6 +141,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                    help="worktree/repo root for git-branch resolution (default: cwd)")
     p.add_argument("--json", action="store_true",
                    help="emit the info dict as JSON (default: one-line text)")
+    p.add_argument("--path-only", action="store_true",
+                   help="print ONLY the resolved slice folder path (empty if none) — for shell capture")
     return p
 
 
@@ -148,6 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     args = _build_arg_parser().parse_args(argv)
     info = resolve_active_slice(_root(args.vault), args.repo_root)
+    if args.path_only:  # BB-10: single-value capture for SKILL.md sub-shells (consistent with --json)
+        print(info["path"] if info else "")
+        return 0
     if args.json:
         print(json.dumps(info if info else {"slice": None, "source": "none", "exists": False},
                          ensure_ascii=False))

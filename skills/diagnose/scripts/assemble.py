@@ -235,6 +235,12 @@ def normalize_finding(raw: dict, pass_name: str) -> dict | None:
     # Set pass field if missing
     finding.setdefault("pass", pass_name)
 
+    # BB-23: YAML 1.1 parses bare `no`/`yes` → bool, but the schema mandates the
+    # string `yes|no|maybe`. Coerce back so the persisted YAML + embedded JSON stay
+    # strings (the /slice-candidates contract does string equality on this field).
+    if isinstance(finding.get("slice_candidate"), bool):
+        finding["slice_candidate"] = "yes" if finding["slice_candidate"] else "no"
+
     return finding
 
 
@@ -283,6 +289,11 @@ def load_findings(findings_dir: Path) -> list[dict]:
         if not isinstance(data, list):
             raise SystemExit(f"{path}: top level must be a YAML list")
         for entry in data:
+            if not isinstance(entry, dict):  # BB-21: clear exit-1 error, not an AttributeError on entry.get
+                raise SystemExit(
+                    f"{path}: every finding must be a YAML mapping, got "
+                    f"{type(entry).__name__}"
+                )
             missing = [f for f in REQUIRED_FIELDS if f not in entry]
             if missing:
                 raise SystemExit(
@@ -325,6 +336,12 @@ def read_optional(path: Path) -> str:
 # Markdown → HTML (constrained subset)
 # ---------------------------------------------------------------------------
 
+# BB-22: a URL is safe in an href only if it carries no scheme other than
+# http(s)/mailto (or is a fragment/relative path). Anything with a `:` that isn't
+# one of those (javascript:, data:, vbscript:) is rejected — the report opens in
+# the owner's browser and the markdown is produced from untrusted target code.
+_SAFE_URL_RE = re.compile(r"^(?:https?:|mailto:|#|/|\.{1,2}/|[^:]*$)", re.IGNORECASE)
+
 
 def md_to_html(text: str) -> str:
     if not text or not text.strip():
@@ -343,7 +360,12 @@ def md_to_html(text: str) -> str:
         s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
         s = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
         s = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", s)
-        s = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', s)
+        def _safe_link(mm: "re.Match[str]") -> str:
+            label, url = mm.group(1), mm.group(2)
+            if _SAFE_URL_RE.match(url):  # BB-22: reject javascript:/data: schemes
+                return f'<a href="{url}">{label}</a>'
+            return label  # unsafe scheme → render the link text only
+        s = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _safe_link, s)
         return s
 
     def flush_para() -> None:
@@ -1968,7 +1990,8 @@ def render_sidebar(findings: list[dict], findings_by_pass: dict, has_resolved: b
     parts.append(
         '<li><a href="#exec-summary"><span>Executive summary</span></a></li>'
     )
-    for p in PASS_ORDER:
+    extra_passes = [p for p in sorted(findings_by_pass) if p not in PASS_ORDER]
+    for p in PASS_ORDER + extra_passes:  # BB-06: include off-PASS_ORDER passes in the TOC
         items = findings_by_pass.get(p, [])
         n = len(items)
         label = PASS_LABELS.get(p, p)
@@ -2077,7 +2100,10 @@ def assemble(out_dir: Path) -> None:
 
     # ----- Per-pass sections, each wrapped with id="pass-XXX" for TOC anchors -----
     sections_html_parts: list[str] = []
-    for p in PASS_ORDER:
+    # BB-06: also render passes NOT in PASS_ORDER (a subagent typo in `pass:` must not
+    # silently drop a finding that IS still counted in the hero/verdict + embedded JSON).
+    extra_passes = [p for p in sorted(findings_by_pass) if p not in PASS_ORDER]
+    for p in PASS_ORDER + extra_passes:
         section_md = read_optional(sections_dir / f"{p}.md")
         items = findings_by_pass.get(p, [])
         if not section_md.strip() and not items:
@@ -2190,6 +2216,13 @@ def assemble(out_dir: Path) -> None:
 
 
 def main() -> None:
+    # BB-12: UTF-8 stdout/stderr so non-ASCII YAML-error snippets + vault paths don't
+    # raise UnicodeEncodeError on a cp1252 console. (Self-contained — no scripts.lib.)
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description="Assemble diagnose-out/diagnosis.html")
     ap.add_argument("--out", required=True, help="Path to diagnose-out directory")
     args = ap.parse_args()

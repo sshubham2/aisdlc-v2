@@ -73,7 +73,10 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if needle not in text.lower():
                 continue
-            lines = [ln.strip() for ln in text.splitlines() if needle in ln.lower()]
+            # BB-16: cap each line's LENGTH (not just the count) — a minified JSON or a
+            # long single-line prose value would otherwise blow past the prompt bound.
+            lines = [(s[:200] + "..." if len(s) > 200 else s)
+                     for s in (ln.strip() for ln in text.splitlines()) if needle in s.lower()]
             try:
                 rel = path.relative_to(vault).as_posix()
             except ValueError:

@@ -184,21 +184,36 @@ _REWRITE_ROUTE_TOKENS: tuple[str, ...] = (
     "vault_edit rewrite", "vault_edit update", "safe_rewrite_text", "safe_mutate_text",
 )
 
+# BB-01 FIX — match the v2 PATH route form. The safe channel is invoked as
+# `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append ...`, so the text
+# between `vault_edit` and its subcommand is `.py" ` (path suffix + closing quote +
+# space) — NOT a bare space. The old token substrings ("vault_edit append") matched
+# NOTHING in the real corpus, false-failing every correctly-routed site. Match
+# `vault_edit`, an optional `.py`, a quote/whitespace run, then the subcommand;
+# `safe_*_text` is the library-call form. (Still matches the bare `vault_edit append`
+# and `-m scripts.lib.vault_edit append` prose forms.)
+_RT_SEP = "[\"'\\s]+"
+_APPEND_ROUTE_SRC = "vault_edit(?:\\.py)?" + _RT_SEP + "append\\b|safe_append_text"
+_REWRITE_ROUTE_SRC = (
+    "vault_edit(?:\\.py)?" + _RT_SEP + "(?:rewrite|update)\\b"
+    "|safe_rewrite_text|safe_mutate_text"
+)
 
-def _codespan_re(tokens: tuple[str, ...]) -> "re.Pattern[str]":
-    alt = "|".join(re.escape(t) for t in tokens)
-    return re.compile(r"`[^`\n]*(?:" + alt + r")[^`\n]*`")
+
+def _codespan_re(src: str) -> "re.Pattern[str]":
+    return re.compile(r"`[^`\n]*(?:" + src + r")[^`\n]*`")
 
 
-def _marker_re(tokens: tuple[str, ...]) -> "re.Pattern[str]":
-    alt = "|".join(re.escape(t) for t in tokens)
-    return re.compile(r"<!--\s*route:[^>]*(?:" + alt + r")[^>]*-->")
+def _marker_re(src: str) -> "re.Pattern[str]":
+    return re.compile(r"<!--\s*route:[^>]*(?:" + src + r")[^>]*-->")
 
 
-_APPEND_CODESPAN_RE = _codespan_re(_APPEND_ROUTE_TOKENS)
-_APPEND_MARKER_RE = _marker_re(_APPEND_ROUTE_TOKENS)
-_REWRITE_CODESPAN_RE = _codespan_re(_REWRITE_ROUTE_TOKENS)
-_REWRITE_MARKER_RE = _marker_re(_REWRITE_ROUTE_TOKENS)
+_APPEND_CODESPAN_RE = _codespan_re(_APPEND_ROUTE_SRC)
+_APPEND_MARKER_RE = _marker_re(_APPEND_ROUTE_SRC)
+_REWRITE_CODESPAN_RE = _codespan_re(_REWRITE_ROUTE_SRC)
+_REWRITE_MARKER_RE = _marker_re(_REWRITE_ROUTE_SRC)
+_APPEND_ROUTE_BLOCK_RE = re.compile(_APPEND_ROUTE_SRC)
+_REWRITE_ROUTE_BLOCK_RE = re.compile(_REWRITE_ROUTE_SRC)
 # Unambiguous read-modify-write directive verbs (a subset of _DIRECTIVE_VERBS). A
 # site governed by one of these REQUIRES a REWRITE-class route — an append route
 # is a channel-mismatch VIOLATION. Ambiguous verbs (`update`/`write`/`edit`) are
@@ -386,12 +401,10 @@ def _route_class_in_block(block_lines: list[str]) -> str | None:
     one (rewrite is safe for both classes). A bare-`vault_edit` line with no named
     subcommand is NOT a route (must name its subcommand to be op-classable)."""
     blob = "\n".join(block_lines)
-    for tok in _REWRITE_ROUTE_TOKENS:
-        if tok in blob:
-            return "rewrite"
-    for tok in _APPEND_ROUTE_TOKENS:
-        if tok in blob:
-            return "append"
+    if _REWRITE_ROUTE_BLOCK_RE.search(blob):  # BB-01: regex matches the `.py" <subcmd>` path form
+        return "rewrite"
+    if _APPEND_ROUTE_BLOCK_RE.search(blob):
+        return "append"
     return None
 
 
@@ -446,10 +459,12 @@ def _verdict(line: str) -> tuple[str, str | None]:
 
 
 def _iter_source_files(root: Path) -> list[Path]:
-    """The v2 methodology surface: skills/**/SKILL.md + agents/** + scripts/**.
+    """The v2 PROSE directive surface: skills/**/SKILL.md + agents/**.
 
-    (v1 scanned only skills/*/SKILL.md.) Returns a sorted, de-duplicated list of
-    text files; binaries and __pycache__ are skipped.
+    (v1 scanned only skills/*/SKILL.md; v2 briefly also scanned scripts/** but that
+    only false-flagged self-describing docstrings — BB-05 — so code files, whose
+    write ops are the VWS-1 AST audit's domain, are no longer prose-scanned here.)
+    Returns a sorted, de-duplicated list of text files; binaries + __pycache__ skipped.
     """
     seen: set[Path] = set()
     out: list[Path] = []
@@ -457,7 +472,10 @@ def _iter_source_files(root: Path) -> list[Path]:
     skills_dir = root / "skills"
     if skills_dir.exists():
         candidates.extend(sorted(skills_dir.glob("**/SKILL.md")))
-    for sub in ("agents", "scripts"):
+    # BB-05: scan only the PROSE directive surface (SKILL.md + agents/). scripts/** was
+    # dropped — Python/code files hold the safe_*_text IMPLEMENTATIONS (the VWS-1 AST
+    # audit's domain), not directives, so scanning them only false-flagged docstrings.
+    for sub in ("agents",):
         d = root / sub
         if d.exists():
             candidates.extend(sorted(d.glob("**/*")))

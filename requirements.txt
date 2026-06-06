@@ -17,4 +17,4 @@ PyYAML>=6.0
 # coupling and reports "crg":"absent" — so this is intentionally left commented.
 # Install it into the same interpreter $PY resolves to if you want CRG coupling:
 #   $PY -m pip install "code-review-graph>=2.3"
-# code-review-graph>=2.3
+code-review-graph>=2.3

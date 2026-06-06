@@ -232,7 +232,7 @@ def audit_brief_file(
         status_raw = str(entry.get("status", "")).strip()
         findings = str(entry.get("findings", "")).strip()
 
-        if _cell_is_empty(index_cell) and _cell_is_empty(mission):
+        if not any(str(v).strip() for v in entry.values()):  # BB-26: skip a WHOLLY-empty entry (index_cell is a synthetic counter, never empty)
             continue
 
         if _cell_is_empty(mission):

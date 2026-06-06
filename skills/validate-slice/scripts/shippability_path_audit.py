@@ -142,13 +142,22 @@ def _find_repo_root(start: Path) -> Path:
     catalog dir keep the legacy catalog-parent fallback (their catalog is not
     under the external VAULT_ROOT).
     """
-    from_catalog = _walk_for_repo_sentinel(start)
-    if from_catalog is not None:
-        return from_catalog
+    # BB-09: when the catalog lives in the EXTERNAL vault (the normal case), the repo is
+    # the invocation CWD — NOT an ancestor of ~/.aisdlc. Walking up from the catalog FIRST
+    # wrongly matched a $HOME/.git (dotfiles) or a VERSION above ~/.aisdlc, so resolve from
+    # CWD first in that case; only tmp_path fixtures (catalog NOT under VAULT_ROOT) keep the
+    # catalog-anchored walk.
     if _catalog_under_external_vault(start):
         from_cwd = _walk_for_repo_sentinel(Path.cwd())
         if from_cwd is not None:
             return from_cwd
+        from_catalog = _walk_for_repo_sentinel(start)
+        if from_catalog is not None:
+            return from_catalog
+        return Path.cwd().resolve()
+    from_catalog = _walk_for_repo_sentinel(start)
+    if from_catalog is not None:
+        return from_catalog
     return start.resolve().parent
 
 

@@ -113,7 +113,7 @@ No git operations are executed.
 
 **Pre-flight (run BEFORE any state change):**
 
-1. **Stale-branch check** (parallel-aware, ADR-081): run `$PY ${CLAUDE_SKILL_DIR}/scripts/stale_branch_classifier.py --repo-root . --json` from the slice worktree (cwd BEFORE any `cd`; self-exclusion requires HEAD == slice branch).
+1. **Stale-branch check** (parallel-aware, ADR-081): run `$PY "${CLAUDE_SKILL_DIR}/scripts/stale_branch_classifier.py" --repo-root . --json` from the slice worktree (cwd BEFORE any `cd`; self-exclusion requires HEAD == slice branch).
    - `verdict: refuse` (≥1 orphan_branches — worktree-less) → STOP: "Stale slice branches detected (no live worktree): `<orphan_branches>`. For post-PR-merge stragglers run `/commit-slice --sync-after-pr`; for other artefacts resolve manually (`git branch -d` each after verifying merged) before retrying."
    - `verdict: allow` + non-empty `parallel_slices` → one-line note "N parallel slice(s) in flight (worktree-backed): `<list>`"; PROCEED.
    - `verdict: allow` + empty `parallel_slices` → proceed silently.
@@ -135,7 +135,7 @@ No git operations are executed.
    - **Fast-forward no-op** or **clean replay**: proceed to sub-step 3.
    - **Conflict**: STOP — do NOT proceed to sub-step 3. Print conflicting U-files + `git rebase --abort` hint. Then:
 
-     **PCR dispatch**: run `$PY ${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py --resolve-soft --json`.
+     **PCR dispatch**: run `$PY "${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py" --resolve-soft --json`.
      - `exit 0` + `action: APPLIED` (SOFT/VAULT_CLAIM auto-resolved): append PCR breadcrumb to `build-log.json` Events (`<ts> PCR auto-resolved — see <vault>/parallel-conflict-resolution-log.json`); proceed to sub-step 3.
      - `exit 0` + `action: STOP` + `conflict_class` ∈ {`HARD`,`MIXED`}: enter **PCR-2b gate** (below).
      - `exit 0` + `action: STOP` + other class: fall through to SOAD-1 block.
@@ -145,17 +145,17 @@ No git operations are executed.
      1. Bootstrap guard: if resolver unavailable → fall through to SOAD-1 (no weaker than pre-PCR-2b).
      2. Print `--diagnose --json` output. For `_index.json`-sole HARD: print hint "resolve by re-running `/archive` to regenerate, then `git add`".
      3. User (or Claude at user's instruction) resolves conflict markers + `git add`s each U-file.
-     4. Run `$PY ${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py --verify-resolution --json`.
+     4. Run `$PY "${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py" --verify-resolution --json`.
         - `exit 1` (`git-state-unreadable`): fall through to SOAD-1 abort path; do NOT loop to step 3.
         - `exit 0` + `action: STOP` (`paths-still-unmerged` or `unresolved-markers-present` — keyed on `<<<<<<<`/`>>>>>>>` openers, NOT `=======`): print reason; return to step 3 (or offer Abort).
         - `exit 0` + `action: CLEAN`: proceed to step 5.
-     5. Spawn `code-review` agent via Agent tool with the resolved diff (`git diff --cached` of U-file set), `--diagnose --json` context, and both rebase stages (`git show :2:<path>` / `git show :3:<path>`). Task: review for lost-hunk, dropped-side, both-sides-intent, semantic correctness, stray markers, vault/ADR contradiction. Capture verdict + findings INLINE (do NOT write `code-review.json`; do NOT run triage/critique audits; do NOT call `$PY ${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py --verify-resolution --json` a second time). Any blocker → verdict BLOCKED.
+     5. Spawn `code-review` agent via Agent tool with the resolved diff (`git diff --cached` of U-file set), `--diagnose --json` context, and both rebase stages (`git show :2:<path>` / `git show :3:<path>`). Task: review for lost-hunk, dropped-side, both-sides-intent, semantic correctness, stray markers, vault/ADR contradiction. Capture verdict + findings INLINE (do NOT write `code-review.json`; do NOT run triage/critique audits; do NOT call `$PY "${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py" --verify-resolution --json` a second time). Any blocker → verdict BLOCKED.
      6. **TRI-RESOLVE-1 gate** (AskUserQuestion — 3 options):
         - **Apply resolution (continue rebase)** — offered ONLY when code-review verdict has no blocker.
         - **Re-resolve (edit again)** — return to step 3.
         - **Abort rebase** — fall through to SOAD-1 (a) abort path.
         Fail-closed: every non-Apply option and any interrupt → STOP-no-continue. NEVER call `git rebase --continue` except on explicit Apply with non-blocking verdict.
-     7. On Apply: run `$PY ${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py --record-hard-resolution --verdict "<verdict>" --disposition apply --json` (best-effort audit — failure logs to stderr, does NOT block), THEN `git rebase --continue`, THEN append PCR-2b breadcrumb to `build-log.json` Events (`<ts> PCR-2b HARD resolved + applied — see <vault>/parallel-conflict-resolution-log.json`). Order load-bearing: record BEFORE `--continue`.
+     7. On Apply: run `$PY "${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py" --record-hard-resolution --verdict "<verdict>" --disposition apply --json` (best-effort audit — failure logs to stderr, does NOT block), THEN `git rebase --continue`, THEN append PCR-2b breadcrumb to `build-log.json` Events (`<ts> PCR-2b HARD resolved + applied — see <vault>/parallel-conflict-resolution-log.json`). Order load-bearing: record BEFORE `--continue`.
 
      **SOAD-1 block** (3-option structured ask via AskUserQuestion):
      - (a) Abort rebase + investigate: print `git rebase --abort` recovery hint.

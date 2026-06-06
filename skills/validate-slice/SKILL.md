@@ -18,7 +18,7 @@ user, real data. Both phases must pass before the slice is considered validated.
 ## Active slice + inputs — injected
 
 ```!
-$PY ${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py --vault "$AI_SDLC_VAULT_ROOT" --json
+$PY "${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py" --vault "$AI_SDLC_VAULT_ROOT" --json
 ```
 
 Read from the active slice folder:
@@ -78,7 +78,7 @@ slice changed (get from `build-log.json` or `git diff --name-only <base>...HEAD`
 ### Layer A + B audit (VAL-1)
 
 ```bash
-$PY ${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py \
+$PY "${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py" \
   --slice <vault>/slices/slice-NNN-<name> \
   --changed-files <list> \
   --imports-allowlist tests
@@ -96,10 +96,10 @@ $PY ${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py \
 
 ### Walking-skeleton audit (WS-1)
 
-Only when `mission-brief.json` sets `walking_skeleton: true`:
+Only when `mission-brief.json` sets `variants.walking_skeleton: true`:
 
 ```bash
-$PY ${CLAUDE_SKILL_DIR}/scripts/walking_skeleton_audit.py <vault>/slices/slice-NNN-<name> --strict-pre-finish
+$PY "${CLAUDE_SKILL_DIR}/scripts/walking_skeleton_audit.py" <vault>/slices/slice-NNN-<name> --strict-pre-finish
 ```
 
 Every architectural layer in the `architectural_layers` table must have `status: exercised`. Any
@@ -107,10 +107,10 @@ Every architectural layer in the `architectural_layers` table must have `status:
 
 ### Exploratory-charter audit (ETC-1)
 
-Only when `mission-brief.json` sets `exploratory_charter: true`:
+Only when `mission-brief.json` sets `variants.exploratory_charter: true`:
 
 ```bash
-$PY ${CLAUDE_SKILL_DIR}/scripts/exploratory_charter_audit.py <vault>/slices/slice-NNN-<name> --strict-pre-finish
+$PY "${CLAUDE_SKILL_DIR}/scripts/exploratory_charter_audit.py" <vault>/slices/slice-NNN-<name> --strict-pre-finish
 ```
 
 Every charter must be `COMPLETED` (with findings) or `DEFERRED` (with rationale). Any `non-final-pre-finish`
@@ -126,13 +126,13 @@ Skip if `<vault>/shippability.json` does not exist (first slice — /reflect wil
 
 **SCMD-1** — verifies every row has a prose-free Machine-cmd column:
 ```bash
-$PY ${CLAUDE_SKILL_DIR}/scripts/shippability_decoupling_audit.py <vault>/shippability.json
+$PY "${CLAUDE_SKILL_DIR}/scripts/shippability_decoupling_audit.py" <vault>/shippability.json
 ```
 Non-zero → STOP: fix the row before running the catalog.
 
 **PTFCD-1** — verifies every `tests/<...>.py` token in Machine-cmd cells resolves to a file on disk:
 ```bash
-$PY ${CLAUDE_SKILL_DIR}/scripts/shippability_path_audit.py <vault>/shippability.json
+$PY "${CLAUDE_SKILL_DIR}/scripts/shippability_path_audit.py" <vault>/shippability.json
 ```
 Non-zero → STOP: report the phantom test-file citation and fix the catalog row path.
 
@@ -146,7 +146,7 @@ Non-zero → STOP: route the directive through `vault_edit append` or add a sanc
 
 Do NOT hand-roll the execution loop:
 ```bash
-$PY ${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py <vault>/shippability.json
+$PY "${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py" <vault>/shippability.json
 ```
 
 The runner reads each row's Machine-cmd, splits on ` ; `, strips backticks per segment (reuses SCMD-1

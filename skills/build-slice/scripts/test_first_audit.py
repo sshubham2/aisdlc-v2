@@ -391,6 +391,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     target: Path = args.target
+    if not target.exists():  # BB-24: a mistyped path / wrong slice folder is a usage error (exit 2), not a clean pass
+        sys.stderr.write(f"test_first_audit: target does not exist: {target}\n")
+        return 2
     brief_path = target / "mission-brief.json" if target.is_dir() else target
 
     result = audit_brief_file(

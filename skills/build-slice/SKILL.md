@@ -37,7 +37,7 @@ cat "${AI_SDLC_VAULT_ROOT}/slices/$(ls -1t "${AI_SDLC_VAULT_ROOT}/slices/" | gre
 4. **TPHD-1 pre-flight**: scan the `mission-brief.json` TF-1 plan table; verify each Test path will exist at the right path and the Test function name matches what will be built. Flag any drift for user fix BEFORE entering plan mode.
 5. **CRP-1** (critique-review prerequisite):
    ```bash
-   $PY ${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py <vault>/slices/slice-NNN-<name>
+   $PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py" <vault>/slices/slice-NNN-<name>
    ```
    On `mandatory-critique-review-absent` exit 1: STOP and tell the user verbatim: **"STOP: this slice has a mandatory /critique-review (DR-1) that has not been run. Run /critique-review for this slice before /build-slice. If the skip is deliberate, document it by adding `critique-review-skip: \"skip — rationale: <text>\"` to milestone.json."** Do not enter plan mode until exit 0.
 
@@ -131,42 +131,42 @@ Run audit gates in this order:
 
 ```bash
 # DCE-1 — drift-check enforcement (run /drift-check full mode FIRST, then audit)
-$PY ${CLAUDE_SKILL_DIR}/scripts/drift_check_audit.py <vault>/slices/slice-NNN-<name>
+$PY "${CLAUDE_SKILL_DIR}/scripts/drift_check_audit.py" <vault>/slices/slice-NNN-<name>
 
 # LINT-MOCK — mock-budget lint (pass changed test files; add --seam-allowlist if present; --strict in Heavy)
-$PY ${CLAUDE_SKILL_DIR}/scripts/mock_budget_lint.py <changed-test-files> [--seam-allowlist <vault>/.cross-chunk-seams]
+$PY "${CLAUDE_SKILL_DIR}/scripts/mock_budget_lint.py" <changed-test-files> [--seam-allowlist <vault>/.cross-chunk-seams]
 
 # WIRE-1 — wiring matrix audit
-$PY ${CLAUDE_SKILL_DIR}/scripts/wiring_matrix_audit.py <vault>/slices/slice-NNN-<name>
+$PY "${CLAUDE_SKILL_DIR}/scripts/wiring_matrix_audit.py" <vault>/slices/slice-NNN-<name>
 
 # BC-1 — build-checks audit (enumerate Critical rules, address each, then re-run with --strict --ack-critical)
-$PY ${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py --slice <vault>/slices/slice-NNN-<name> --changed-files <list> --json
-$PY ${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py --slice <vault>/slices/slice-NNN-<name> --changed-files <list> \
+$PY "${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py" --slice <vault>/slices/slice-NNN-<name> --changed-files <list> --json
+$PY "${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py" --slice <vault>/slices/slice-NNN-<name> --changed-files <list> \
     --strict --ack-critical <addressed-ids>
 
 # TF-1 — test-first audit (only when mission-brief.json test_first == true)
-$PY ${CLAUDE_SKILL_DIR}/scripts/test_first_audit.py <vault>/slices/slice-NNN-<name> --strict-pre-finish
+$PY "${CLAUDE_SKILL_DIR}/scripts/test_first_audit.py" <vault>/slices/slice-NNN-<name> --strict-pre-finish
 
 # BRANCH-1 — branch workflow audit
-$PY ${CLAUDE_SKILL_DIR}/scripts/branch_workflow_audit.py <vault>/slices/slice-NNN-<name>
+$PY "${CLAUDE_SKILL_DIR}/scripts/branch_workflow_audit.py" <vault>/slices/slice-NNN-<name>
 
 # UTF8-STDOUT-1 — utf-8 stdout audit
-$PY ${CLAUDE_SKILL_DIR}/scripts/utf8_stdout_audit.py
+$PY "${CLAUDE_SKILL_DIR}/scripts/utf8_stdout_audit.py"
 
 # CRP-1 — critique-review prerequisite audit (defense-in-depth re-run)
-$PY ${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py <vault>/slices/slice-NNN-<name>
+$PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py" <vault>/slices/slice-NNN-<name>
 
 # PCA-1 — pipeline-chain audit
-$PY ${CLAUDE_SKILL_DIR}/scripts/pipeline_chain_audit.py
+$PY "${CLAUDE_SKILL_DIR}/scripts/pipeline_chain_audit.py"
 
 # BCI-1 — build-checks integrity audit
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/build_checks_integrity.py"
 
 # STP-1 — state-transition stale-pin audit
-$PY ${CLAUDE_SKILL_DIR}/scripts/state_transition_pin_audit.py
+$PY "${CLAUDE_SKILL_DIR}/scripts/state_transition_pin_audit.py"
 
 # NAW-1 — new-agent warning audit
-$PY ${CLAUDE_SKILL_DIR}/scripts/new_agent_warning_audit.py
+$PY "${CLAUDE_SKILL_DIR}/scripts/new_agent_warning_audit.py"
 
 # SVW-1 — skill-vault-write-safety audit
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/skill_vault_write_safety_audit.py"

@@ -187,14 +187,25 @@ def _matches_glob(path: str, pattern: str) -> bool:
     norm_pattern = pattern.replace("\\", "/")
     if norm_path == norm_pattern:
         return True
-    # Tokenize on `**` first so we can map ** -> .* (segment-greedy).
-    # Then within each token map * -> [^/]* (single-segment).
-    parts = norm_pattern.split("**")
-    regex_parts: list[str] = []
-    for part in parts:
-        escaped = re.escape(part).replace(r"\*", "[^/]*")
-        regex_parts.append(escaped)
-    regex = ".*".join(regex_parts)
+    # BB-08: tokenize left-to-right so a `**/` segment becomes `(?:.*/)?` (zero-or-more
+    # leading dirs — so `**/*.py` ALSO matches a repo-root file like `setup.py`). The old
+    # split('**') turned `**/*.py` into `.*` + a literal `/`, which REQUIRED a slash and
+    # so silently skipped root files. `**` (not before `/`) → `.*`; `*` → single segment.
+    regex = ""
+    i, n = 0, len(norm_pattern)
+    while i < n:
+        if norm_pattern.startswith("**/", i):
+            regex += "(?:.*/)?"
+            i += 3
+        elif norm_pattern.startswith("**", i):
+            regex += ".*"
+            i += 2
+        elif norm_pattern[i] == "*":
+            regex += "[^/]*"
+            i += 1
+        else:
+            regex += re.escape(norm_pattern[i])
+            i += 1
     return re.fullmatch(regex, norm_path) is not None
 
 

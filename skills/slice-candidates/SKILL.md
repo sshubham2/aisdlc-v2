@@ -36,9 +36,12 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" count --vault "$AI_SDL
 ## Step 0 — Resolve paths
 
 ```bash
-DIAGNOSE_OUT="${1:-./diagnose-out}"
-SKILL_DIR="${CLAUDE_SKILL_DIR}"
+DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"
 ```
+
+> Shell vars do NOT persist across separate ```bash blocks, and skill args are 0-based Claude Code
+> substitutions (`${ARGUMENTS[0]}` = the first arg; `$1` is the *second*). So each block below re-derives
+> `DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"`, and bundled scripts use `${CLAUDE_SKILL_DIR}` directly.
 
 Verify:
 - `$DIAGNOSE_OUT/diagnosis.html` exists and contains an embedded `<script type="application/json" id="diagnose-data">` block
@@ -53,7 +56,8 @@ If `--obo` is in the arguments, skip to [--obo interactive review mode](#--obo-i
 ## Step 1 — Run the backlog builder
 
 ```bash
-$PY "${SKILL_DIR}/scripts/build_backlog.py" --in "$DIAGNOSE_OUT" \
+DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"
+$PY "${CLAUDE_SKILL_DIR}/scripts/build_backlog.py" --in "$DIAGNOSE_OUT" \
     --vault "$AI_SDLC_VAULT_ROOT" --crg-graph "$DIAGNOSE_OUT/.code-review-graph/"
 ```
 
@@ -98,7 +102,8 @@ then optionally runs Step 1 on the annotated copy.
 ### obo-1 — Extract findings
 
 ```bash
-$PY "${SKILL_DIR}/scripts/build_backlog.py" --in "$DIAGNOSE_OUT" --obo-extract
+DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"
+$PY "${CLAUDE_SKILL_DIR}/scripts/build_backlog.py" --in "$DIAGNOSE_OUT" --obo-extract
 ```
 
 Returns JSON `{total, reviewed, findings:[…]}`. Each finding carries: `reviewed` (true if already in
@@ -117,7 +122,8 @@ Options:
 - **Approve** → record `{confirmed:"yes", notes:""}` (or owner's note if given).
 - **Validate then approve** → run:
   ```bash
-  $PY "${SKILL_DIR}/scripts/build_backlog.py" --in "$DIAGNOSE_OUT" \
+  DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"
+  $PY "${CLAUDE_SKILL_DIR}/scripts/build_backlog.py" --in "$DIAGNOSE_OUT" \
       --obo-peek --finding <id> --file <path>
   ```
   for the finding's cited evidence path(s) ONLY (refuses out-of-set paths with non-zero exit + logged refusal).
@@ -137,11 +143,12 @@ Collect decisions into `{finding_id: {confirmed, notes}}` (omit never-reached fi
 empty entries). Serialize via Bash here-doc into a temp file, then run:
 
 ```bash
+DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"
 TMPFILE="$(mktemp /tmp/obo-decisions-XXXXXX.json)"
 cat > "$TMPFILE" << 'DECISIONS_EOF'
 <decisions-json>
 DECISIONS_EOF
-$PY "${SKILL_DIR}/scripts/build_backlog.py" --in "$DIAGNOSE_OUT" \
+$PY "${CLAUDE_SKILL_DIR}/scripts/build_backlog.py" --in "$DIAGNOSE_OUT" \
     --obo-write --decisions "$TMPFILE"
 rm -f "$TMPFILE"
 ```

@@ -32,7 +32,7 @@ If `critique.json` does not exist: write `critique-review.json` with
 ## Project frame — injected
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$AI_SDLC_VAULT_ROOT/slices/$(ls "$AI_SDLC_VAULT_ROOT/slices" | grep -v archive | tail -1)" 2>/dev/null || echo "(project-frame unavailable)"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --path-only 2>/dev/null)" 2>/dev/null || echo "(project-frame unavailable)"
 ```
 
 Use the project frame to re-check whether the first Critic missed a direction-fit concern or flagged one that
@@ -45,7 +45,7 @@ contradicts a deliberate strategic choice. On empty/error: pass `(project-frame 
 Read `critique.json`. If it does not exist: write `critique-review.json` with
 `"result":"PREREQUISITE-MISSING","message":"critique.json not found — run /critique first"` and stop.
 
-If `critique.json` verdict is `accept` AND the slice `risk_tier` is `low` with no mandatory triggers
+If `critique.json` verdict is `clean` AND the slice `risk_tier` is `low` with no mandatory triggers
 (auth/authz, API contracts, data model, security paths, methodology surface `skills/**`/`agents/**`/`scripts/**`):
 note this to the user and proceed — the DR-1 pass still runs.
 
@@ -86,7 +86,7 @@ Await the subagent's return value. On error: surface it and stop.
 ### Step 3 — Run the structural audit
 
 ```bash
-$PY ${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py "$AI_SDLC_VAULT_ROOT/slices/$(ls "$AI_SDLC_VAULT_ROOT/slices" | grep -v archive | tail -1)"
+$PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py" "$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --path-only 2>/dev/null)"
 ```
 
 The audit validates: required sections present, verdict in `{accept, adjust, extend}`, `reviewed_by` and
