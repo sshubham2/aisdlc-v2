@@ -153,6 +153,20 @@
         "purpose": "Most-recent-10 slice table for pattern recognition context"
       },
       {
+        "path": "<vault>/critic-calibration-log.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read active_checks[] ONLY — this project's calibrated Critic checks (the project overlay layered on the base agents/critique.md), injected as extra dimensions; never reads runs[]"
+      },
+      {
         "path": "<vault>/slices/archive/slice-NNN-<name>/reflection.json",
         "kind": "content-file",
         "access": "read",
@@ -476,8 +490,8 @@
     "name": "critic-calibrate",
     "user_invokable": true,
     "requires_full_context": false,
-    "runs_in": "main-agent",
-    "context_rationale": "The skill itself orchestrates from the main agent but all heavy analysis is delegated to a fresh-context 'critic-calibrate' subagent; the skill only collects and presents inputs and logs results, which does not depend on the main thread's current slice state.",
+    "runs_in": "delegable-to-subagent",
+    "context_rationale": "Analytical maintenance pass — all inputs are on disk (archived reflections, agents/critique.md, the calibration log) and the heavy analysis runs in a fresh-context 'critic-calibrate' subagent; nothing depends on the main thread's current slice state (requires_full_context: false). Classified delegable like its interactive peers (commit-slice, drift-check, supersede-slice, slice-candidates); it STAYS INLINE at runtime only because of the per-proposal AskUserQuestion review gates (Step 3) — a forked subagent cannot run AskUserQuestion (the fork caveat), so it gets no context:fork.",
     "summary": "Cross-slice meta-skill that mines 'Missed by Critic' and 'Critic calibration' entries from the last N (default 15) archived reflections to identify blind-spot patterns in the Critic prompt. Spawns a 'critic-calibrate' subagent that classifies patterns, applies a >=3-distinct-slices threshold, and produces 0-3 evidence-backed proposals. Proposals are presented one-at-a-time to the user for accept/modify/reject; this skill never auto-applies edits to the Critic agent prompt. Logs every run to critic-calibration-log.json for longitudinal effectiveness tracking.",
     "agents": [
       {
@@ -557,6 +571,20 @@
       {
         "path": "<vault>/critic-calibration-log.json",
         "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read active_checks[] (dedup new proposals against the live overlay) and runs[] (effectiveness pass) before proposing"
+      },
+      {
+        "path": "<vault>/critic-calibration-log.json",
+        "kind": "content-file",
         "access": "append",
         "mechanism": "vault_edit-append",
         "safety_marker": null,
@@ -566,7 +594,7 @@
           "heavy"
         ],
         "format": "json",
-        "purpose": "Audit trail of calibration runs: pattern summary, proposals, user decisions, effectiveness checks"
+        "purpose": "Append the run to runs[] (audit history, never overwritten) and upsert accepted proposals into active_checks[] (the deduped project overlay /critique reads). NEVER edits the plugin's agents/critique.md."
       }
     ],
     "hands_off_to": [],

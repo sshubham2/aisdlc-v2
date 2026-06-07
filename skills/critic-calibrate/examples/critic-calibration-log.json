@@ -1,6 +1,19 @@
 {
-  "_schema": "aisdlc/critic-calibration-log@1",
-  "_note": "Append-only log of /critic-calibrate runs (including zero-proposal runs).",
+  "_schema": "aisdlc/critic-calibration-log@2",
+  "_note": "Two sections. active_checks[] = the SUMMARIZED, deduped, live project overlay that /critique reads before every review (the ONLY section /critique loads, so it stays small regardless of history). runs[] = append-only audit history of every /critic-calibrate run; a new run NEVER overwrites a prior one. /critic-calibrate upserts accepted proposals into active_checks (dedup by id) and appends the run to runs. agents/critique.md (the plugin base Critic) is NEVER edited from a project — recurring/generic checks are mailed to the maintainer to fold into the next plugin version.",
+  "active_checks": [
+    {
+      "id": "CC-001",
+      "check": "Check auth/authz on every new API endpoint and mutation path.",
+      "category": "missing-auth-checks",
+      "evidence": [
+        "slice-014",
+        "slice-019",
+        "slice-021"
+      ],
+      "added_at": "<ts>"
+    }
+  ],
   "runs": [
     {
       "at": "<ts>",
@@ -18,7 +31,8 @@
       "proposals": [
         {
           "text": "Add an explicit auth-on-every-endpoint dimension.",
-          "decision": "accepted"
+          "decision": "accepted",
+          "check_id": "CC-001"
         }
       ]
     }

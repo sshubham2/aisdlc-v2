@@ -49,6 +49,12 @@
       "purpose": "Most-recent-10 slice table for pattern recognition context"
     },
     {
+      "path": "<vault>/critic-calibration-log.json",
+      "kind": "content-file",
+      "produced_by": [],
+      "purpose": "Read active_checks[] ONLY — this project's calibrated Critic checks (the project overlay layered on the base agents/critique.md), injected as extra dimensions; never reads runs[]"
+    },
+    {
       "path": "<vault>/slices/slice-NNN/reflection.json",
       "kind": "content-file",
       "produced_by": [

@@ -3,12 +3,12 @@
   "note": "Forward edges from each skill manifest; file inverse-edges (created_by/edited_by/read_by) computed globally. update access = read-modify-write (counts as both read and edit).",
   "stats": {
     "skills": 27,
-    "skills_main_agent": 19,
-    "skills_delegable": 8,
+    "skills_main_agent": 18,
+    "skills_delegable": 9,
     "named_agents_used": 6,
     "tools": 49,
     "file_nodes": 81,
-    "edges": 522,
+    "edges": 524,
     "md_to_json_targets": 46
   },
   "nodes": {
@@ -106,7 +106,7 @@
       },
       {
         "id": "critic-calibrate",
-        "runs_in": "main-agent",
+        "runs_in": "delegable-to-subagent",
         "requires_full_context": false,
         "user_invokable": true,
         "spawns_generic_subagent": false
@@ -676,6 +676,8 @@
           "critic-calibrate"
         ],
         "read_by": [
+          "critic-calibrate",
+          "critique",
           "pulse"
         ],
         "validated_by": []
@@ -2717,6 +2719,11 @@
     },
     {
       "from": "critique",
+      "to": "<vault>/critic-calibration-log.json",
+      "type": "reads"
+    },
+    {
+      "from": "critique",
       "to": "<vault>/slices/slice-NNN/reflection.json",
       "type": "reads"
     },
@@ -2923,6 +2930,11 @@
     {
       "from": "critic-calibrate",
       "to": "<vault>/slices/_index.json",
+      "type": "reads"
+    },
+    {
+      "from": "critic-calibrate",
+      "to": "<vault>/critic-calibration-log.json",
       "type": "reads"
     },
     {

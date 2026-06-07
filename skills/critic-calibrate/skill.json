@@ -2,8 +2,8 @@
   "name": "critic-calibrate",
   "user_invokable": true,
   "requires_full_context": false,
-  "runs_in": "main-agent",
-  "context_rationale": "The skill itself orchestrates from the main agent but all heavy analysis is delegated to a fresh-context 'critic-calibrate' subagent; the skill only collects and presents inputs and logs results, which does not depend on the main thread's current slice state.",
+  "runs_in": "delegable-to-subagent",
+  "context_rationale": "Analytical maintenance pass — all inputs are on disk (archived reflections, agents/critique.md, the calibration log) and the heavy analysis runs in a fresh-context 'critic-calibrate' subagent; nothing depends on the main thread's current slice state (requires_full_context: false). Classified delegable like its interactive peers (commit-slice, drift-check, supersede-slice, slice-candidates); it STAYS INLINE at runtime only because of the per-proposal AskUserQuestion review gates (Step 3) — a forked subagent cannot run AskUserQuestion (the fork caveat), so it gets no context:fork.",
   "summary": "Cross-slice meta-skill that mines 'Missed by Critic' and 'Critic calibration' entries from the last N (default 15) archived reflections to identify blind-spot patterns in the Critic prompt. Spawns a 'critic-calibrate' subagent that classifies patterns, applies a >=3-distinct-slices threshold, and produces 0-3 evidence-backed proposals. Proposals are presented one-at-a-time to the user for accept/modify/reject; this skill never auto-applies edits to the Critic agent prompt. Logs every run to critic-calibration-log.json for longitudinal effectiveness tracking.",
   "reads": [
     {
@@ -27,6 +27,12 @@
         "archive"
       ],
       "purpose": "Optional quick navigation to archived slices"
+    },
+    {
+      "path": "<vault>/critic-calibration-log.json",
+      "kind": "content-file",
+      "produced_by": [],
+      "purpose": "Read active_checks[] (dedup new proposals against the live overlay) and runs[] (effectiveness pass) before proposing"
     }
   ],
   "outputs": [
@@ -47,11 +53,13 @@
         "critic-calibrate"
       ],
       "read_by": [
+        "critic-calibrate",
+        "critique",
         "pulse"
       ],
       "validated_by": [],
-      "purpose": "Audit trail of calibration runs: pattern summary, proposals, user decisions, effectiveness checks",
-      "example_schema": "aisdlc/critic-calibration-log@1",
+      "purpose": "Append the run to runs[] (audit history, never overwritten) and upsert accepted proposals into active_checks[] (the deduped project overlay /critique reads). NEVER edits the plugin's agents/critique.md.",
+      "example_schema": "aisdlc/critic-calibration-log@2",
       "example": "examples/critic-calibration-log.json"
     }
   ],

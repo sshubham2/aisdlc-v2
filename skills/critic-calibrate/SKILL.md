@@ -1,6 +1,6 @@
 ---
 name: critic-calibrate
-description: "Meta-skill that mines 'Missed by Critic' + 'Critic calibration' entries from the last N archived reflections, classifies blind-spot patterns (>=3-distinct-slices threshold), and produces 0-3 evidence-backed proposals to update agents/critique.md. Proposals are reviewed one-at-a-time — never auto-applied. Logs every run to critic-calibration-log.json. Spawns a 'critic-calibrate' subagent for the analysis; the main thread handles user review gates and log writes."
+description: "Meta-skill that mines 'Missed by Critic' + 'Critic calibration' entries from the last N archived reflections, classifies blind-spot patterns (>=3-distinct-slices threshold), and produces 0-3 evidence-backed Critic checks reviewed one-at-a-time. Accepted checks are persisted to the project's vault overlay (active_checks[] in critic-calibration-log.json), which /critique reads before every review — it NEVER edits the plugin's agents/critique.md (that base is the maintainer's, shipped per plugin version; a project edit would be lost on upgrade and dirty the repo). Every run is appended to runs[] (audit history, never overwritten); the user is prompted to mail the log to the maintainer to fold recurring checks into the next plugin version. Spawns a 'critic-calibrate' subagent for the analysis."
 when_to_use: "Trigger phrases: /critic-calibrate, 'calibrate the Critic', 'improve Critic prompt based on misses', 'analyze Critic blind spots'. Run every 10-20 slices as a routine calibration pass, after repeated misses in the same Critic category, or after a serious post-ship bug. Runs in all pipeline modes (minimal/standard/heavy). No predecessor or successor — standalone maintenance skill."
 argument-hint: "[--window N]  (default: 15 reflections)"
 allowed-tools: Read, Bash, Agent, AskUserQuestion
@@ -41,13 +41,20 @@ ls -t "${AI_SDLC_VAULT_ROOT}/slices/archive/" | head -N
 
 For each folder, read `<vault>/slices/archive/<folder>/reflection.json`. Extract the `critic_calibration` and `missed_by_critic` fields. Concatenate into one block tagged by slice id.
 
-**1b. Current Critic prompt**
+**1b. Base Critic prompt**
 
-Read the plugin's Critic prompt at `${CLAUDE_SKILL_DIR}/../../agents/critique.md` in full. Under the v2 plugin model this `agents/critique.md` IS the canonical runtime copy and single source of truth — there is no separate `~/.claude/` forward-synced copy (the plugin is the install). Resolves correctly for both a plugin-cache install and a dev checkout.
+Read the plugin's base Critic prompt at `${CLAUDE_SKILL_DIR}/../../agents/critique.md` in full — for **context only**,
+so the agent proposes checks NET-NEW to it (the base already covers many dimensions). This file is the plugin's base,
+shipped per version; this skill **never writes it** — project-specific checks layer on top via the vault overlay
+(Step 4). Resolves for both a plugin-cache install and a dev checkout.
 
-**1c. Past calibration log**
+**1c. Past calibration log + active overlay**
 
-Read `<vault>/critic-calibration-log.json` if it exists. Missing or empty runs array → pass `"no prior runs"`. Schema reference: `examples/critic-calibration-log.json`.
+Read `<vault>/critic-calibration-log.json` if it exists (schema: `examples/critic-calibration-log.json`):
+- `active_checks[]` — the checks ALREADY live in this project's overlay. Pass them so the agent proposes only
+  NET-NEW checks (never a duplicate of an active check or of the base `agents/critique.md`). Note the highest
+  existing `CC-NNN` id (Step 4a assigns the next one).
+- `runs[]` — past runs for the effectiveness pass. Missing file or empty `runs` → pass `"no prior runs"`.
 
 **1d. Effectiveness data**
 
@@ -67,14 +74,17 @@ Slice range: slice-<first> through slice-<last>
 # Current Critic prompt (from the plugin's agents/critique.md)
 <full file contents>
 
-# Past calibration log
-<contents of critic-calibration-log.json, or "no prior runs">
+# Active project checks (already in this project's overlay — propose only NET-NEW; never duplicate these or the base prompt)
+<contents of active_checks[], or "none">
+
+# Past calibration log (runs)
+<runs[] of critic-calibration-log.json, or "no prior runs">
 
 # Effectiveness data
 <for each prior accepted proposal: category, run date, miss count before, miss count after>
 ```
 
-The subagent returns: pattern summary, effectiveness section, 0-3 proposals, "watching but not proposing" list.
+The subagent returns: pattern summary, effectiveness section, 0-3 proposals (each a specific, imperative Critic check), "watching but not proposing" list.
 
 **Zero-proposal is a valid result.** If the agent returns no proposals, skip to Step 4 (log the run). Do not push the agent to find something.
 
@@ -90,58 +100,73 @@ Present each proposal as a separate `AskUserQuestion` gate — do NOT bundle. Fo
 
 Capture the user's decision (including any modification text) for the log.
 
-## Step 4 — NEVER auto-apply
+## Step 4 — persist accepted checks to the vault overlay
 
-This skill produces proposals. It does NOT edit `agents/critique.md` (the plugin's single source of truth — there is no `~/.claude/` copy).
+This skill **NEVER edits `agents/critique.md`** (the plugin's base Critic — owned by the maintainer and shipped per
+plugin version). A project-side edit would be **lost on the next plugin upgrade** AND would dirty the code repo on
+`master`, breaking the slice-worktree contract (the main tree must stay clean). Accepted checks instead live in the
+**EXTERNAL vault**, where `/critique` reads them before every review and they survive plugin upgrades.
 
-For each **accepted** proposal, emit the apply instructions:
+Two writes to `<vault>/critic-calibration-log.json` (both SVW-1 via `vault_edit`; neither overwrites prior data):
 
+**4a. Upsert each accepted/modified proposal into `active_checks[]`** — the small, deduped overlay `/critique` reads.
+Assign a stable `id` = next `CC-NNN` after the highest existing (you read `active_checks` in Step 1c). Append **only**
+checks whose `id`/text is not already present (dedup using that Step-1c read) so a re-run never duplicates or clobbers
+an existing check:
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" \
+    --file critic-calibration-log.json --array active_checks --json '{
+      "id": "CC-NNN", "check": "<imperative, specific check>",
+      "category": "<pattern name>", "evidence": ["slice-NNN", ...], "added_at": "<ISO-8601>"
+    }'
 ```
-Accepted. To apply:
-  1. Edit agents/critique.md (in-repo canonical source) — add the following text
-     under the relevant section (see proposal target above):
 
-     <exact proposed text>
+A **rejected** proposal that names an already-active check → retire it (remove that one element). A plain new
+rejection adds nothing. Retire is the ONLY case that mutates an existing element; everything else is append-only.
 
-  (v2: agents/critique.md is the plugin's single source of truth — no installed-copy
-   forward-sync. Editing it IS the change.)
-```
-
-The user applies manually. If they ask Claude to apply it in a follow-up turn, that is a separate explicit action — not this skill.
-
-## Step 5 — append calibration log
-
-Append a new run entry to `<vault>/critic-calibration-log.json` using `vault_edit`:
+**4b. Append the full run to `runs[]`** — the append-only audit history (every run, even zero-proposal):
 
 ```bash
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" \
     --file critic-calibration-log.json --array runs --json '{
-      "at": "<ISO-8601 timestamp>",
-      "window": <N>,
-      "patterns": [
-        { "category": "<name>", "slices": ["slice-NNN", ...] }
-      ],
-      "proposals": [
-        { "text": "<proposed text>", "decision": "accepted|modified|rejected" }
-      ]
+      "at": "<ISO-8601 timestamp>", "window": <N>,
+      "patterns": [ { "category": "<name>", "slices": ["slice-NNN", ...] } ],
+      "proposals": [ { "text": "<proposed check>", "decision": "accepted|modified|rejected", "check_id": "CC-NNN|null" } ]
     }'
 ```
 
-Schema by example: `examples/critic-calibration-log.json`. Always log the run — even zero-proposal runs (empty `proposals` array, patterns array populated with what was observed).
+Schema by example: `examples/critic-calibration-log.json`. Always append the run — even zero-proposal runs (empty
+`proposals`, `patterns` populated with what was observed). `active_checks[]` stays small (it is all `/critique`
+loads); `runs[]` grows but `/critique` never reads it.
+
+## Step 5 — suggest mailing the log to the maintainer
+
+Accepted checks are now live for THIS project via the overlay. To improve the **base Critic for every project** in the
+next plugin version, the maintainer needs the log. Print the suggestion + the absolute path to attach:
+
+```bash
+echo "Mail your calibration log to the maintainer (s2.shubh2@gmail.com) so recurring checks can be folded into the"
+echo "base agents/critique.md in the next plugin version. Attach:"
+echo "${AI_SDLC_VAULT_ROOT}/critic-calibration-log.json"
+```
+
+This is a **suggestion, not a gate** — the project already benefits now via the vault overlay; mailing the log is only
+how generic checks reach the shipped `agents/critique.md`. Never send mail automatically; the user decides.
 
 ## Critical rules
 
 - USE the Agent tool with `subagent_type: "critic-calibrate"`. Do not re-implement the classification rubric here.
-- NEVER auto-apply prompt edits. Even after user accepts: instruct, don't write.
+- NEVER edit `agents/critique.md` from a project. Accepted checks go to the vault overlay (`active_checks`, Step 4a); generic ones reach the base ONLY via the maintainer-mailed log (Step 5).
 - ONE proposal at a time. Never bundle all three into one `AskUserQuestion`.
 - TRUST the agent's zero-proposal outcome. Don't re-prompt.
 - EVIDENCE-BASED only. Every proposal cites miss counts and slice numbers, never hypothetical.
-- ALWAYS log the run (Step 5), including zero-proposal runs.
+- ALWAYS append the run to `runs[]` (Step 4b), including zero-proposal runs. Never overwrite a prior run.
 
 ## Anti-patterns
 
 - **Bundled proposals**: present them separately; users accept/reject each independently.
-- **Auto-edit**: skip Step 4 or write to critique.md directly — this will corrupt the calibration audit trail.
+- **Editing the plugin base from a project**: writing to `agents/critique.md` — the edit is lost on the next plugin upgrade AND dirties the code repo on `master` (breaks the slice-worktree contract). Accepted checks belong in `active_checks` (vault overlay); generic ones travel to the maintainer by mailed log.
 - **Generic additions**: "pay more attention to edge cases" is useless; "Check HEIC EXIF orientation for iPhone upload paths (missed in slice-019, -021, -025)" is useful.
 - **Over-calibrating**: if nothing accepted 3 runs in a row, widen the window (25-30 slices) or skip until more data accumulates.
 

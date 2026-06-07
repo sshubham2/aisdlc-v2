@@ -40,6 +40,12 @@ Slice index (most-recent-10):
 $PY -c "import json,os; v=os.environ.get('AI_SDLC_VAULT_ROOT','architecture'); f=f'{v}/slices/_index.json'; print(open(f).read() if os.path.exists(f) else '{}')" 2>/dev/null || echo "{}"
 ```
 
+Project-calibrated checks — `active_checks` ONLY (learned from THIS project's past Critic misses via `/critic-calibrate`;
+this is the project overlay layered on the base `agents/critique.md`). Loads only this small section, never `runs[]`:
+```!
+$PY -c "import json,os; v=os.environ.get('AI_SDLC_VAULT_ROOT','architecture'); f=f'{v}/critic-calibration-log.json'; d=json.load(open(f)) if os.path.exists(f) else {}; print(json.dumps(d.get('active_checks',[]),indent=2))" 2>/dev/null || echo "[]"
+```
+
 ## Mode/tier gating
 
 Read `risk_tier` and `critic_required` from `mission-brief.json` and `milestone.json`.
@@ -79,6 +85,9 @@ Read (all from the active slice folder):
 Pattern-recognition inputs (query JSON vault directly; use code-review-graph / CRG for code-graph queries):
 - `<vault>/slices/action-points.json` — curated cross-slice action-points register
 - `<vault>/slices/_index.json` — most-recent-10 slice table
+- `<vault>/critic-calibration-log.json` → **`active_checks[]` ONLY** — this project's calibrated Critic checks (injected
+  above). Hand them to the Critic in Step 2 as extra dimensions. NEVER read `runs[]` (it grows unboundedly; the overlay
+  is the small `active_checks` section). Absent file/key → no extra checks (silent no-op).
 - Open individual `reflection.json` files **only** when action-points or _index point to a specific match.
 
 Project-frame (PFS-1): run via Bash and capture stdout:
@@ -112,6 +121,9 @@ Forced: <true | false>
 
 # Cross-slice action points
 <contents of action-points.json, or "none">
+
+# Project-calibrated checks (apply IN ADDITION to your 9 fixed dimensions — learned from THIS project's past Critic misses)
+<active_checks[] from critic-calibration-log.json, or "none">
 
 # Specific archived reflections (only if directly relevant)
 <contents, or "none">
