@@ -34,9 +34,11 @@
       "purpose": "Read for CSP-1 audit (REQ-NN status fields and implementation references)"
     },
     {
-      "path": "<vault>/nfrs.json",
+      "path": "<vault>/non-functional.json",
       "kind": "content-file",
-      "produced_by": [],
+      "produced_by": [
+        "heavy-architect"
+      ],
       "purpose": "Read for CSP-1 audit (NFR-NN status fields and verification references)"
     },
     {

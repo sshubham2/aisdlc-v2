@@ -195,6 +195,11 @@
         "name": "parallel_conflict_resolver",
         "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py\" --record-hard-resolution --json",
         "purpose": "Audit-append record of HARD resolution outcome to parallel-conflict-resolution-log.json"
+      },
+      {
+        "name": "write_changelog",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/write_changelog.py\" --vault \"$AI_SDLC_VAULT_ROOT\" --slice slice-NNN-<name> --mode <none|merge|push> --json",
+        "purpose": "Write the per-slice changelog.json into the archived slice folder from the Step 2 record + Step 4 subject (Step 4.5)"
       }
     ],
     "external_tools": [],
@@ -350,6 +355,20 @@
         ],
         "format": "json",
         "purpose": "Audit log of PCR auto-resolutions and HARD resolution records"
+      },
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/changelog.json",
+        "kind": "content-file",
+        "access": "create",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Per-slice audit record of what the slice changed (JSON twin of the commit message); written in no-flag/--merge/--push via write_changelog.py (Step 4.5). Never written to the code repo root."
       }
     ],
     "hands_off_to": [
@@ -393,7 +412,7 @@
     "harness_tools": [
       {
         "name": "Read",
-        "purpose": "Read vault files: triage.json, concept.json, risk-register.json, slices/_index.json, action-points.json, active slice milestone.json, build-log.json tail, shippability.json, critic-calibration-log.json, lessons-learned.json, drift-log.json, changelog.json"
+        "purpose": "Read vault files: triage.json, concept.json, risk-register.json, slices/_index.json, action-points.json, active slice milestone.json, build-log.json tail, shippability.json, critic-calibration-log.json, lessons-learned.json, drift-log.json"
       },
       {
         "name": "Bash",
@@ -558,20 +577,6 @@
         ],
         "format": "json",
         "purpose": "Unresolved drift count for Drift and bypass section"
-      },
-      {
-        "path": "<vault>/changelog.json",
-        "kind": "content-file",
-        "access": "read",
-        "mechanism": "read",
-        "safety_marker": null,
-        "modes": [
-          "minimal",
-          "standard",
-          "heavy"
-        ],
-        "format": "json",
-        "purpose": "Pipeline-bypass count for Drift and bypass section"
       },
       {
         "path": "<vault>/candidates.json",

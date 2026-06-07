@@ -108,7 +108,7 @@ Skip if `--regen-only`.
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/cross_spec_parity_audit.py" --root .
 ```
 
-Validates every item in `threat-model.json`, `requirements.json`, `nfrs.json`:
+Validates every item in `threat-model.json`, `requirements.json`, `non-functional.json`:
 - `Status` field present and in allowed vocabulary (TM: mitigated/accepted/open; REQ: implemented/pending/deferred; NFR: met/unmet/unverified).
 - For statuses that imply real implementation (mitigated/implemented/met): `Implementation` or `Verification`
   field references a path that exists on disk.

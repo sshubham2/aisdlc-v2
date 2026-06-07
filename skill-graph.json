@@ -6,10 +6,10 @@
     "skills_main_agent": 19,
     "skills_delegable": 8,
     "named_agents_used": 6,
-    "tools": 48,
-    "file_nodes": 84,
-    "edges": 521,
-    "md_to_json_targets": 49
+    "tools": 49,
+    "file_nodes": 81,
+    "edges": 522,
+    "md_to_json_targets": 46
   },
   "nodes": {
     "skills": [
@@ -455,6 +455,11 @@
         "found": true
       },
       {
+        "id": "write_changelog",
+        "type": "methodology-tool",
+        "found": true
+      },
+      {
         "id": "write_pass",
         "type": "methodology-tool",
         "found": true
@@ -587,17 +592,6 @@
           "reflect",
           "risk-spike",
           "slice"
-        ],
-        "validated_by": []
-      },
-      {
-        "id": "<vault>/changelog.json",
-        "kind": "content-file",
-        "v2_format": "json",
-        "created_by": [],
-        "edited_by": [],
-        "read_by": [
-          "pulse"
         ],
         "validated_by": []
       },
@@ -758,17 +752,6 @@
         ]
       },
       {
-        "id": "<vault>/nfrs.json",
-        "kind": "content-file",
-        "v2_format": "json",
-        "created_by": [],
-        "edited_by": [],
-        "read_by": [
-          "sync"
-        ],
-        "validated_by": []
-      },
-      {
         "id": "<vault>/non-functional.json",
         "kind": "content-file",
         "v2_format": "json",
@@ -776,7 +759,9 @@
           "heavy-architect"
         ],
         "edited_by": [],
-        "read_by": [],
+        "read_by": [
+          "sync"
+        ],
         "validated_by": []
       },
       {
@@ -889,28 +874,6 @@
         "validated_by": []
       },
       {
-        "id": "<vault>/slices/*/design.json",
-        "kind": "content-file",
-        "v2_format": "json",
-        "created_by": [],
-        "edited_by": [],
-        "read_by": [
-          "drift-check"
-        ],
-        "validated_by": []
-      },
-      {
-        "id": "<vault>/slices/*/mission-brief.json",
-        "kind": "content-file",
-        "v2_format": "json",
-        "created_by": [],
-        "edited_by": [],
-        "read_by": [
-          "drift-check"
-        ],
-        "validated_by": []
-      },
-      {
         "id": "<vault>/slices/_index.json",
         "kind": "content-file",
         "v2_format": "json",
@@ -1019,6 +982,17 @@
         "validated_by": []
       },
       {
+        "id": "<vault>/slices/slice-NNN/changelog.json",
+        "kind": "content-file",
+        "v2_format": "json",
+        "created_by": [
+          "commit-slice"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
         "id": "<vault>/slices/slice-NNN/code-review.json",
         "kind": "content-file",
         "v2_format": "json",
@@ -1073,6 +1047,7 @@
           "code-review",
           "critique",
           "critique-review",
+          "drift-check",
           "reflect"
         ],
         "validated_by": []
@@ -1121,6 +1096,7 @@
           "critique",
           "critique-review",
           "design-slice",
+          "drift-check",
           "reflect",
           "supersede-slice",
           "validate-slice"
@@ -3266,12 +3242,12 @@
     },
     {
       "from": "drift-check",
-      "to": "<vault>/slices/*/design.json",
+      "to": "<vault>/slices/slice-NNN/design.json",
       "type": "reads"
     },
     {
       "from": "drift-check",
-      "to": "<vault>/slices/*/mission-brief.json",
+      "to": "<vault>/slices/slice-NNN/mission-brief.json",
       "type": "reads"
     },
     {
@@ -3736,7 +3712,7 @@
     },
     {
       "from": "sync",
-      "to": "<vault>/nfrs.json",
+      "to": "<vault>/non-functional.json",
       "type": "reads"
     },
     {
@@ -4036,6 +4012,11 @@
     },
     {
       "from": "commit-slice",
+      "to": "write_changelog",
+      "type": "uses_tool"
+    },
+    {
+      "from": "commit-slice",
       "to": "Read",
       "type": "uses_harness"
     },
@@ -4108,6 +4089,11 @@
       "from": "commit-slice",
       "to": "<vault>/parallel-conflict-resolution-log.json",
       "type": "appends"
+    },
+    {
+      "from": "commit-slice",
+      "to": "<vault>/slices/slice-NNN/changelog.json",
+      "type": "creates"
     },
     {
       "from": "commit-slice",
@@ -4207,11 +4193,6 @@
     {
       "from": "pulse",
       "to": "<vault>/drift-log.json",
-      "type": "reads"
-    },
-    {
-      "from": "pulse",
-      "to": "<vault>/changelog.json",
       "type": "reads"
     },
     {

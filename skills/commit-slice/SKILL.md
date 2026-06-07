@@ -1,6 +1,6 @@
 ---
 name: commit-slice
-description: "Generate an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, ADRs, shippability.json). Dispatches message rendering to a Haiku subagent (COST-1). Supports three mutually exclusive modes: --merge (solo-dev local merge + safe-delete), --push (push slice branch + display PR hint), --sync-after-pr (post-PR local cleanup). No-flag default: generate and show only."
+description: "Generate an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, ADRs, shippability.json). Dispatches message rendering to a Haiku subagent (COST-1). Supports three mutually exclusive modes: --merge (solo-dev local merge + safe-delete), --push (push slice branch + display PR hint), --sync-after-pr (post-PR local cleanup). No-flag default: generate and show only. Also writes a per-slice changelog.json audit record into the archived slice folder (Step 4.5); never writes to the code repo root."
 when_to_use: "Trigger phrases: /commit-slice, 'generate commit message', 'audit commit', 'slice commit message', '/commit-slice --merge', '/commit-slice --push', '/commit-slice --sync-after-pr'. Run after /reflect (which archives the slice). User-invoked only — never auto-advanced into."
 argument-hint: "[--merge | --push | --sync-after-pr]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, AskUserQuestion
@@ -96,6 +96,32 @@ Reviewer sign-offs: <from critique.json + validation.json>
 
 Example output → `examples/build-log.json` (the build-log schema also shows the Events append shape used in Steps 5b/5c below).
 PCR audit log → `examples/parallel-conflict-resolution-log.json` — the `{"entries": [...]}` shape written to `<vault>/parallel-conflict-resolution-log.json`, appended (SVW-1 locked) ONLY on a HARD resolution via the PCR-2b `--record-hard-resolution` call (Step 5b sub-step 7). v2 has no auto-resolution entries (the vault is external, so every rebase conflict is CODE/HARD).
+
+## Step 4.5 — write the per-slice changelog.json
+
+Record what this slice changed as the JSON twin of the commit message, beside the slice's other artifacts.
+`/reflect` already archived the slice, so the folder exists at `<vault>/slices/archive/slice-NNN-<name>/`.
+
+Runs in **no-flag / `--merge` / `--push`** (any mode that ran Steps 1–4). `--sync-after-pr` skips this — it
+generates no message (Steps 1–4 skipped); the changelog.json was already written when `--push` ran. The write is
+idempotent (single-shot overwrite), so re-invoking `/commit-slice` on the same slice is safe.
+
+Pass the Step 2 record + the Step 4 rendered subject as JSON on stdin (`--mode` = `none` for no-flag):
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/scripts/write_changelog.py" \
+    --vault "$AI_SDLC_VAULT_ROOT" --slice slice-NNN-<name> --mode <none|merge|push> --json <<'EOF'
+{"type":"<type>","scope":"<scope>","subject":"<full subject line from Step 4>",
+ "intent_one_line":"<intent>","body_2_3_sentences":"<body>",
+ "ac_pass":<X>,"ac_total":<Y>,"critic_blockers":"<list or none>",
+ "adrs":[<"ADR-NNN", …> or empty],"shippability_entry_n":<N>,"shippability_entry_text":"<one-line>",
+ "deferrals":<"…" or null>,"regressions":<"…" or null>}
+EOF
+```
+
+Output schema by example → `examples/changelog.json`. The script writes `<slice-dir>/changelog.json` and prints the
+path. On exit 2 (slice folder not found): surface the message but do **NOT** block the flow — the changelog.json is
+an audit artifact, never a gate. This skill writes nothing to the code repo root.
 
 ## Step 5 — present or execute
 

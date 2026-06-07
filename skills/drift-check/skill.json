@@ -28,15 +28,19 @@
       "purpose": "Read risks claimed retired to verify retirement is real"
     },
     {
-      "path": "<vault>/slices/*/design.json",
+      "path": "<vault>/slices/slice-NNN/design.json",
       "kind": "content-file",
-      "produced_by": [],
+      "produced_by": [
+        "design-slice"
+      ],
       "purpose": "Active slices only: verify design file references against actual code"
     },
     {
-      "path": "<vault>/slices/*/mission-brief.json",
+      "path": "<vault>/slices/slice-NNN/mission-brief.json",
       "kind": "content-file",
-      "produced_by": [],
+      "produced_by": [
+        "slice"
+      ],
       "purpose": "Active slices only: check must-not-defer items are implemented"
     },
     {

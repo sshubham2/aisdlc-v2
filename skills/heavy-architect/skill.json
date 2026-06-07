@@ -159,7 +159,9 @@
         "heavy-architect"
       ],
       "edited_by": [],
-      "read_by": [],
+      "read_by": [
+        "sync"
+      ],
       "validated_by": [],
       "purpose": "NFRs and compliance constraints — latency, uptime, HIPAA/PCI/SOC2/GDPR mapping (Step 8)",
       "example_schema": "aisdlc/non-functional@1",

@@ -19,7 +19,7 @@ You scan the AI SDLC vault and produce a compact structured summary.
 
 - `/pulse` — balanced summary (~60 lines)
 - `/pulse --brief` — one-screen (~20 lines) for quick orientation
-- `/pulse --full` — comprehensive view (~150 lines); includes all deferred items, calibration history, full bypass detail
+- `/pulse --full` — comprehensive view (~150 lines); includes all deferred items, calibration history, full stranded-branch detail
 
 ## Prerequisite check
 
@@ -52,7 +52,7 @@ Entries with `halt: true` (`klass` in `stranded-complete`, `orphaned`, `indeterm
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_snapshot.py" --vault "$AI_SDLC_VAULT_ROOT" \
     --files triage.json concept.json slices/_index.json candidates.json \
             shippability.json critic-calibration-log.json lessons-learned.json \
-            drift-log.json changelog.json 2>/dev/null
+            drift-log.json 2>/dev/null
 ```
 
 Active slice milestone (injected):
@@ -89,7 +89,6 @@ Read the following JSON files if not fully covered by the injections above (skip
 | `<vault>/critic-calibration-log.json` | last calibration date, slices since |
 | `<vault>/lessons-learned.json` | last 3-5 lessons |
 | `<vault>/drift-log.json` | unresolved drift count |
-| `<vault>/changelog.json` | pipeline-bypass count |
 | `<vault>/threat-model.json` · `requirements.json` · `non-functional.json` · `cost-estimation.json` · `diagrams.json` · `actors/` | **Heavy-mode upfront architecture** — presence-probed above (existence + counts, not full-read). Their existence = `/heavy-architect` has run; their absence in Heavy mode = it has not. |
 
 **Active slice:** Read `<vault>/slices/slice-NNN-<name>/milestone.json` first (primary source: `stage`, `next_action`, progress checkboxes, `on_resume`). If `stage` is `build` or later and `build-log.json` exists, read the last ~15 lines of its `events` array — the events trace is the durable record; compare its latest timestamp to `milestone.json.updated_at`. If events are newer, milestone is stale — flag it.
@@ -221,7 +220,6 @@ The Haiku agent fills the template and returns the summary text. Main thread pri
 
 ## Drift & bypass
 - Unresolved drift: <N>
-- Pipeline bypasses: <N>
 [Stranded branches: WARN per entry with halt: true]
 
 ## Top lessons (last 5)
@@ -255,7 +253,7 @@ Balanced view plus:
 - All cross-slice action-points from `action-points.json`
 - Full shippability catalog listing
 - Critic calibration history (all past runs)
-- Bypass events in detail
+- Stranded slice branches in detail (every `halt: true` entry with its class)
 
 ## Critical rules
 

@@ -119,6 +119,28 @@
       "purpose": "Audit log of PCR auto-resolutions and HARD resolution records",
       "example_schema": "aisdlc/parallel-conflict-resolution-log@1",
       "example": "examples/parallel-conflict-resolution-log.json"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/changelog.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "commit-slice"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Per-slice audit record of what the slice changed (JSON twin of the commit message); written in no-flag/--merge/--push via write_changelog.py (Step 4.5). Never written to the code repo root.",
+      "example_schema": "aisdlc/changelog@1",
+      "example": "examples/changelog.json"
     }
   ],
   "agents": [
@@ -144,6 +166,14 @@
       "purpose": "Attempt auto-resolution of SOFT/VAULT_CLAIM rebase conflicts during PSQ-3 rebase in --merge flow",
       "found": true,
       "path": "skills/commit-slice/scripts/parallel_conflict_resolver.py"
+    },
+    {
+      "name": "write_changelog",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/write_changelog.py\" --vault \"$AI_SDLC_VAULT_ROOT\" --slice slice-NNN-<name> --mode <none|merge|push> --json",
+      "purpose": "Write the per-slice changelog.json into the archived slice folder from the Step 2 record + Step 4 subject (Step 4.5)",
+      "found": true,
+      "path": "skills/commit-slice/scripts/write_changelog.py"
     }
   ],
   "harness_tools": [

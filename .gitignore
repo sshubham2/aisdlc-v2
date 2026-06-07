@@ -21,6 +21,9 @@ diagnose-out/
 .code-review-graph/
 graphify-out/
 
+# ── Local graph visualisation (regenerate: $PY .build/render_graph_html.py) ──
+/skill-graph.html
+
 # ── Python project envs (the shared Claude venv lives outside the repo) ──
 .venv/
 venv/

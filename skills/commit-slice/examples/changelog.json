@@ -1,0 +1,28 @@
+{
+  "_schema": "aisdlc/changelog@1",
+  "_note": "Per-slice audit record of what the slice changed, written by /commit-slice (Step 4.5) into the archived slice folder <vault>/slices/archive/slice-NNN-<name>/changelog.json. Single-shot raw-write, never to the code repo root.",
+  "slice": "slice-023-add-receipt-ocr",
+  "at": "<ts>",
+  "type": "feat",
+  "scope": "receipt",
+  "subject": "feat(receipt): slice-023 — add receipt OCR",
+  "intent": "Extract line items from uploaded receipts via OCR.",
+  "body": "Wired the OCR pipeline behind a confidence threshold; low-confidence fields fall back to manual entry.",
+  "acceptance": {
+    "pass": 5,
+    "total": 5
+  },
+  "critic_blockers": "none",
+  "adrs": [
+    "ADR-023"
+  ],
+  "shippability_entry": {
+    "n": 12,
+    "text": "OCR confidence below threshold must not auto-submit."
+  },
+  "deferrals": null,
+  "regressions": null,
+  "mode": "merge",
+  "committed": true,
+  "merged": true
+}

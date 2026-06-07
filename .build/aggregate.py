@@ -64,6 +64,9 @@ def canon(p):
     p = re.sub(r'slice-NNN-<[^>]*>', 'slice-NNN', p)
     p = re.sub(r'slices/<active>', 'slices/slice-NNN', p)
     p = re.sub(r'slices/slice-NNN-[^/<]+', 'slices/slice-NNN', p)
+    # the literal '*' wildcard form (drift-check reads slices/*/design.json across all
+    # active slices) names the SAME per-slice artifact type -> fold onto the slice-NNN node
+    p = re.sub(r'slices/\*/', 'slices/slice-NNN/', p)
     # merge archived per-slice artifacts back onto their active path (they move on archival)
     p = p.replace('slices/archive/slice-NNN/', 'slices/slice-NNN/')
     # ADR collection -> single node (decisions/ dir, decisions files, or any ADR-* file incl. slice-folder drafts)

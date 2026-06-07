@@ -90,12 +90,6 @@
       "purpose": "Unresolved drift count for Drift and bypass section"
     },
     {
-      "path": "<vault>/changelog.json",
-      "kind": "content-file",
-      "produced_by": [],
-      "purpose": "Pipeline-bypass count for Drift and bypass section"
-    },
-    {
       "path": "<vault>/candidates.json",
       "kind": "content-file",
       "produced_by": [
@@ -137,7 +131,7 @@
   "harness_tools": [
     {
       "name": "Read",
-      "purpose": "Read vault files: triage.json, concept.json, risk-register.json, slices/_index.json, action-points.json, active slice milestone.json, build-log.json tail, shippability.json, critic-calibration-log.json, lessons-learned.json, drift-log.json, changelog.json"
+      "purpose": "Read vault files: triage.json, concept.json, risk-register.json, slices/_index.json, action-points.json, active slice milestone.json, build-log.json tail, shippability.json, critic-calibration-log.json, lessons-learned.json, drift-log.json"
     },
     {
       "name": "Bash",
