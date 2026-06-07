@@ -35,7 +35,10 @@ PERSISTENT = {
 # A fenced block we care about: ```bash ... ``` or ```! ... ```  (also ```sh).
 # Allow leading whitespace: fenced blocks nested under list items are indented,
 # and a column-0-only match silently skips them (e.g. diagnose's write_pass block).
-FENCE_RE = re.compile(r"^\s*```(\s*)(bash|sh|!)\b", re.I)
+# NOTE: `!`-injection fences (```!) end in a non-word char, so a trailing \b never
+# matches (no word boundary between `!` and the newline) — use a negative lookahead so
+# bash/sh/! are all detected without swallowing `bashfoo`-style infostrings.
+FENCE_RE = re.compile(r"^\s*```(\s*)(bash|sh|!)(?![A-Za-z0-9_])", re.I)
 FENCE_END_RE = re.compile(r"^\s*```\s*$")
 
 # assignment forms that introduce a var name within a block

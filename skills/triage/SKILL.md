@@ -29,13 +29,17 @@ test -f ./CLAUDE.md && echo "EXISTS" || echo "NOT_FOUND"
 
 ## Step 0 — Preflight (prerequisites)
 
-Run the prerequisite check:
+Run the prerequisite check. The `agents` / `skills` prerequisites are bundled in **this** plugin, so resolve
+them relative to `${CLAUDE_SKILL_DIR}` (the plugin's own `skills/<name>` dir), **not** the legacy
+`~/.claude/agents/` · `~/.claude/skills/` install paths — under a plugin-cache install (e.g.
+`.../plugins/cache/ai-sdlc/<ver>/`) the files live in the cache, so a `~/.claude/` probe falsely reports
+MISSING. `${CLAUDE_SKILL_DIR}`-relative resolution works for both a plugin-cache install and a dev checkout:
 
 ```bash
-test -n "$PY" && test -f "$PY"                                        && echo "venv: OK"          || echo "venv: MISSING"
-code-review-graph --version >/dev/null 2>&1                           && echo "crg: OK"           || echo "crg: MISSING (optional)"
-test -f "$HOME/.claude/agents/critique.md"                            && echo "agents: OK"        || echo "agents: MISSING"
-test -f "$HOME/.claude/skills/slice/SKILL.md"                         && echo "skills: OK"        || echo "skills: MISSING"
+test -n "$PY" && test -f "$PY"                          && echo "venv: OK"   || echo "venv: MISSING"
+code-review-graph --version >/dev/null 2>&1             && echo "crg: OK"    || echo "crg: MISSING (optional)"
+test -f "${CLAUDE_SKILL_DIR}/../../agents/critique.md"  && echo "agents: OK" || echo "agents: MISSING"
+test -f "${CLAUDE_SKILL_DIR}/../slice/SKILL.md"         && echo "skills: OK" || echo "skills: MISSING"
 ```
 
 If `venv`, `agents`, or `skills` are MISSING — **STOP**. Tell the user the prerequisite is missing and point
@@ -109,7 +113,7 @@ For each HIGH-band risk, decide whether a `/risk-spike` is warranted; note it in
 
 After writing, validate with:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py" "$AI_SDLC_VAULT_ROOT/risk-register.json"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py"
 ```
 Exit 0 = scores/bands/statuses are valid. Non-zero = fix the flagged entries and re-run before continuing
 (score must equal likelihood×impact; band must match; status/id/required-fields must be well-formed).

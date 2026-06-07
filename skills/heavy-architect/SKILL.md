@@ -1,7 +1,7 @@
 ---
 name: heavy-architect
 description: "Heavy-mode-only skill that produces the comprehensive upfront architecture vault. Writes only the human-authored irreducible files (threat-model.json, cost-estimation.json, requirements.json, non-functional.json, diagrams.json, actors/) rather than derived component/contract/schema files (left to /sync). For brownfield, seeds the component inventory from code-review-graph code-graph analysis. Trigger phrases: '/heavy-architect', 'create the architecture upfront', 'compliance architecture', 'regulated project architecture'."
-when_to_use: "Run AFTER /discover (all HIGH risks retired) and BEFORE /user-test and /slice. Heavy mode ONLY — abort if triage.json shows Standard or Minimal. Do NOT use per-slice; that is /design-slice. Use for compliance, regulated, or audit-grade projects that require comprehensive contracts and threat models before implementation begins."
+when_to_use: "Run AFTER /discover and BEFORE /user-test and /slice (HIGH risks remain OPEN — they are retired in-loop by /risk-spike, downstream inside /slice). Heavy mode ONLY — abort if triage.json shows Standard or Minimal. Do NOT use per-slice; that is /design-slice. Use for compliance, regulated, or audit-grade projects that require comprehensive contracts and threat models before implementation begins."
 allowed-tools: Read, Write, Bash, AskUserQuestion
 ---
 
@@ -20,7 +20,7 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" --vault "$AI_SDLC_VAUL
 ```
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py" "$AI_SDLC_VAULT_ROOT/risk-register.json" --json --filter-band high
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py" --json --filter-band high
 ```
 
 Spike outcomes (retire evidence for assumptions proven by `/risk-spike`):
@@ -30,7 +30,12 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" --vault "$AI_SDLC_VAUL
 
 **ABORT if** `triage.json` `mode` is not `"heavy"` — suggest `/triage --re-triage`. Tell the user clearly.
 
-**ABORT if** any risk in `risk-register.json` has `band: "HIGH"` and `status != "retired"` — list them and block.
+**Do NOT abort on open HIGH risks.** Open HIGH-band risks (lowercase `band: "high"` in the register) are
+**expected** here: in v2, `/risk-spike` is an in-loop gate that runs **inside `/slice`, downstream of this
+skill**, so HIGH risks cannot be retired yet — aborting on them would deadlock Heavy mode (the retiring step
+lives after this one). Instead, treat each open HIGH risk from the injection above as an **architecture driver**:
+it must be visibly addressed by the threat model (Step 4) and the component decomposition (Step 2), so the
+downstream spikes have a frame to prove. List them to the user as the risks this architecture must de-risk.
 
 Spike results loaded above inform architecture decisions: proven assumptions strengthen design choices; failed assumptions (with fallback decisions) must be reflected in the component decomposition and threat model.
 
@@ -163,7 +168,7 @@ After all files are written, present:
 
 ## Pipeline position
 
-- **Predecessor**: `/discover` (all HIGH risks retired) — Heavy mode only
+- **Predecessor**: `/discover` — Heavy mode only (HIGH risks remain OPEN; retired in-loop by `/risk-spike` downstream of this skill)
 - **Successor**: `/user-test` (if B2C) OR `/slice` (otherwise)
 - **Auto-advance**: NO — user confirms next step after the completion summary
 - **User-input gates**: Step 1 scope confirmation (mandatory before any writes)

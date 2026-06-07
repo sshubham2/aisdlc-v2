@@ -492,7 +492,7 @@
     "harness_tools": [
       {
         "name": "Read",
-        "purpose": "Read archived reflection.json files (Critic calibration sections), ~/.claude/agents/critique.json, critic-calibration-log.json"
+        "purpose": "Read archived reflection.json files (Critic calibration sections), the plugin's agents/critique.md, critic-calibration-log.json"
       },
       {
         "name": "Write",

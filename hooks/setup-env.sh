@@ -39,6 +39,24 @@ fi
 
 printf 'export PY=%q\n' "$chosen" >> "$CLAUDE_ENV_FILE"
 
+# Resolve + persist $AI_SDLC_VAULT_ROOT so skill bash blocks can reference the vault directly
+# (cat/ls/test/--file and positional script paths — not only the `--vault` empty-fallback form).
+# _vault_paths.py applies the SAME 3-tier resolution used everywhere: the AI_SDLC_VAULT_ROOT env
+# override, else the <git-common-dir>/aisdlc/vault-root pin, else the computed default
+# <base>/<slug>-<hash> (base from ~/.claude/ai-sdlc-vault-base, else ~/.aisdlc). So setting the
+# base file IS honored here, and a user-set AI_SDLC_VAULT_ROOT is echoed back unchanged
+# (idempotent). Fail-soft: a resolution failure warns and skills fall back per call.
+plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)}"
+if vault_root="$("$chosen" "$plugin_root/scripts/lib/_vault_paths.py" --path 2>/dev/null)" \
+     && [ -n "$vault_root" ]; then
+  # Backslash -> forward slash: a Windows "C:\..." path emitted by pathlib becomes "C:/...",
+  # the one form BOTH git-bash (cat/ls/test) AND Python (--vault/positional) accept. No-op on POSIX.
+  vault_root="${vault_root//\\//}"
+  printf 'export AI_SDLC_VAULT_ROOT=%q\n' "$vault_root" >> "$CLAUDE_ENV_FILE"
+else
+  echo "ai-sdlc: note — could not resolve \$AI_SDLC_VAULT_ROOT; skills fall back to the computed default per call." >&2
+fi
+
 if ! "$chosen" -c 'import yaml' >/dev/null 2>&1; then
   echo "ai-sdlc: note — \$PY='$chosen' lacks PyYAML; /diagnose needs it (pip install pyyaml)." >&2
 fi

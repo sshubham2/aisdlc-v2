@@ -43,7 +43,7 @@ For each folder, read `<vault>/slices/archive/<folder>/reflection.json`. Extract
 
 **1b. Current Critic prompt**
 
-Read `~/.claude/agents/critique.md` in full. This is the canonical runtime copy. The in-repo copy is `agents/critique.md`; read both if drift is suspected, but the installed copy is what the agent actually uses.
+Read the plugin's Critic prompt at `${CLAUDE_SKILL_DIR}/../../agents/critique.md` in full. Under the v2 plugin model this `agents/critique.md` IS the canonical runtime copy and single source of truth — there is no separate `~/.claude/` forward-synced copy (the plugin is the install). Resolves correctly for both a plugin-cache install and a dev checkout.
 
 **1c. Past calibration log**
 
@@ -64,7 +64,7 @@ Slice range: slice-<first> through slice-<last>
 # Reflections in window
 <extracted critic_calibration + missed_by_critic fields, tagged by slice>
 
-# Current Critic prompt (from ~/.claude/agents/critique.md)
+# Current Critic prompt (from the plugin's agents/critique.md)
 <full file contents>
 
 # Past calibration log
@@ -92,7 +92,7 @@ Capture the user's decision (including any modification text) for the log.
 
 ## Step 4 — NEVER auto-apply
 
-This skill produces proposals. It does NOT edit `~/.claude/agents/critique.md` or `agents/critique.md`.
+This skill produces proposals. It does NOT edit `agents/critique.md` (the plugin's single source of truth — there is no `~/.claude/` copy).
 
 For each **accepted** proposal, emit the apply instructions:
 

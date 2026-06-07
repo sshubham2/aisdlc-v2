@@ -207,4 +207,4 @@ python3 .build/cross_block_audit.py skills/*/SKILL.md
 
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.0.0
+Shubhendu Shubham · plugin `ai-sdlc` v2.0.1
