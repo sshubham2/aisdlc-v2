@@ -182,6 +182,14 @@
   "agents": [],
   "tools": [
     {
+      "name": "wt_root_audit",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py\" --worktree \"$wt\"",
+      "purpose": "WT-ROOT-1 pre-catalog gate: asserts the slice's code (fix + repro test) is in the worktree $wt and the main tree is clean before running the shippability catalog from $wt. Shared with /build-slice.",
+      "found": true,
+      "path": "scripts/lib/wt_root_audit.py"
+    },
+    {
       "name": "validate_slice_layers",
       "type": "methodology-tool",
       "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py\" --slice <vault>/slices/slice-NNN-<name> --changed-files <list>",

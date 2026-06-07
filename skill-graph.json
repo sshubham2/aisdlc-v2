@@ -6,9 +6,9 @@
     "skills_main_agent": 19,
     "skills_delegable": 8,
     "named_agents_used": 6,
-    "tools": 47,
+    "tools": 48,
     "file_nodes": 84,
-    "edges": 519,
+    "edges": 521,
     "md_to_json_targets": 49
   },
   "nodes": {
@@ -456,6 +456,11 @@
       },
       {
         "id": "write_pass",
+        "type": "methodology-tool",
+        "found": true
+      },
+      {
+        "id": "wt_root_audit",
         "type": "methodology-tool",
         "found": true
       }
@@ -2366,6 +2371,11 @@
     },
     {
       "from": "build-slice",
+      "to": "wt_root_audit",
+      "type": "uses_tool"
+    },
+    {
+      "from": "build-slice",
       "to": "critique_review_prerequisite_audit",
       "type": "uses_tool"
     },
@@ -2543,6 +2553,11 @@
       "from": "build-slice",
       "to": "code-review",
       "type": "hands_off_to"
+    },
+    {
+      "from": "validate-slice",
+      "to": "wt_root_audit",
+      "type": "uses_tool"
     },
     {
       "from": "validate-slice",

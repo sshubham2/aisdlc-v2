@@ -11,6 +11,10 @@
 # Prefers an interpreter that can `import yaml` (only /diagnose needs PyYAML); falls back to
 # the first that merely exists, emitting a warning. Never blocks the session.
 #
+# After resolving $PY it best-effort-installs requirements.txt (PyYAML + code-review-graph) into
+# that interpreter — but ONLY when a dep is actually missing, and never blocking the session.
+# Opt out with AI_SDLC_NO_AUTO_INSTALL=1 (e.g. if you manage deps in a venv yourself).
+#
 # Dev tip: point $PY at a venv with the deps by exporting AI_SDLC_PY before launching Claude
 # Code, e.g.  export AI_SDLC_PY="C:/Users/you/.claude/.venv/Scripts/python.exe"
 
@@ -39,6 +43,28 @@ fi
 
 printf 'export PY=%q\n' "$chosen" >> "$CLAUDE_ENV_FILE"
 
+# Resolve the plugin root once (reused by the dep-install block + the vault-root block below).
+plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)}"
+
+# --- best-effort dependency auto-install (PyYAML + code-review-graph) ------------------------
+# Installs requirements.txt into the SAME interpreter $PY resolves to, but ONLY when a dep is
+# actually missing (a find_spec probe — no heavy import, so ~zero cost on every later session).
+# Best-effort + non-fatal: a failure (offline / externally-managed env / no pip) only warns; the
+# session still proceeds and skills fail-visibly if a dep is truly absent. Opt out with
+# AI_SDLC_NO_AUTO_INSTALL=1. First run may take a minute (code-review-graph pulls tree-sitter).
+req="$plugin_root/requirements.txt"
+dep_probe='import importlib.util as u,sys; sys.exit(0 if u.find_spec("yaml") and u.find_spec("code_review_graph") else 1)'
+if [ "${AI_SDLC_NO_AUTO_INSTALL:-0}" != 1 ] && [ -f "$req" ] && ! "$chosen" -c "$dep_probe" >/dev/null 2>&1; then
+  echo "ai-sdlc: installing Python deps from requirements.txt into '$chosen' (one-time; first run may take a minute)..." >&2
+  if "$chosen" -m pip install -r "$req" >/dev/null 2>&1 \
+       || "$chosen" -m pip install --user -r "$req" >/dev/null 2>&1; then
+    echo "ai-sdlc: dependency install OK." >&2
+  else
+    echo "ai-sdlc: note — auto pip install failed (offline / externally-managed env / no pip). Run '\$PY -m pip install -r requirements.txt' yourself, or set AI_SDLC_NO_AUTO_INSTALL=1 to silence." >&2
+  fi
+fi
+# --------------------------------------------------------------------------------------------
+
 # Resolve + persist $AI_SDLC_VAULT_ROOT so skill bash blocks can reference the vault directly
 # (cat/ls/test/--file and positional script paths — not only the `--vault` empty-fallback form).
 # _vault_paths.py applies the SAME 3-tier resolution used everywhere: the AI_SDLC_VAULT_ROOT env
@@ -46,7 +72,6 @@ printf 'export PY=%q\n' "$chosen" >> "$CLAUDE_ENV_FILE"
 # <base>/<slug>-<hash> (base from ~/.claude/ai-sdlc-vault-base, else ~/.aisdlc). So setting the
 # base file IS honored here, and a user-set AI_SDLC_VAULT_ROOT is echoed back unchanged
 # (idempotent). Fail-soft: a resolution failure warns and skills fall back per call.
-plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)}"
 if vault_root="$("$chosen" "$plugin_root/scripts/lib/_vault_paths.py" --path 2>/dev/null)" \
      && [ -n "$vault_root" ]; then
   # Backslash -> forward slash: a Windows "C:\..." path emitted by pathlib becomes "C:/...",

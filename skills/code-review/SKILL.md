@@ -26,12 +26,26 @@ must match — drift from them is Dimension 7):
 
 ## Slice diff (in-scope only) — injected
 
+**WT-ROOT-1:** the diff and any targeted Reads come from the slice WORKTREE `$wt` (HEAD = the slice branch),
+NOT the main tree (HEAD = default there → an empty diff). The build leaves changes UNCOMMITTED in `$wt`
+(commit happens at `/commit-slice`), so diff the working tree against the branch base, not `base...HEAD`.
+
 ```!
-base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || echo main)"
-git diff "$base...HEAD" -- 'src/**' 'skills/**' 'agents/**' 'scripts/**' 'tests/**' 2>/dev/null | head -1200
+repo_root="$(git rev-parse --show-toplevel)"
+slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+paths='src/** skills/** agents/** scripts/** tests/**'
+base="$(git -C "$wt" merge-base HEAD origin/HEAD 2>/dev/null)"   # fork point (real repos w/ origin/HEAD)
+if [ -n "$base" ]; then
+  git -C "$wt" diff "$base" -- $paths 2>/dev/null | head -1200    # committed + uncommitted since fork
+else
+  git -C "$wt" diff HEAD -- $paths 2>/dev/null | head -1200       # no remote: work is uncommitted (WT-ROOT-1 contract)
+fi
+git -C "$wt" ls-files --others --exclude-standard -- $paths 2>/dev/null | sed 's/^/NEW-UNTRACKED: /'
 ```
 
-If the injected diff is empty → write `code-review.json` with `"result":"NO-CODE-CHANGES"` and stop.
+If the diff AND the untracked list are both empty → write `code-review.json` with `"result":"NO-CODE-CHANGES"` and
+stop. Read any `NEW-UNTRACKED:` files from `"$wt/<path>"` for review (new files aren't in `git diff`).
 
 ## Task
 1. Read the slice artifacts above.

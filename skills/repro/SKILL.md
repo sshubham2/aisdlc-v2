@@ -147,6 +147,9 @@ The fix slice's mission-brief must include:
 - ONE bug per /repro. Never bundle multiple bugs into one test.
 - DOCUMENT the bug in the test docstring (expected / actual behavior).
 - SVW-1: shippability.json appends route through `vault_edit` — never raw Write/Edit.
+- WT-ROOT-1: you run BEFORE the slice worktree exists, so write the test to the MAIN tree's `tests/bugs/` and
+  confirm it fails there (against the unfixed code). Do NOT commit it to the main tree — `/slice` Step 5 relocates
+  it (untracked) into the slice worktree on the slice branch, where the fix is built and `/validate-slice` runs it.
 
 ## Pipeline position
 

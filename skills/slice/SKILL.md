@@ -40,11 +40,20 @@ says "you pick" / autonomous → take #1.
 "you pick".
 
 ## Step 2 — bug-fix prelude (BFRD-1)
-If the chosen candidate is a bug fix (name `fix-*`/`*-fix`/`hotfix-*`/`harden-*-bug`, OR `source.type` is a defect /
-the description identifies a defect): a **failing repro test must exist first**. Check `<vault>/shippability.json` for
-a row whose `machine_cmd` targets `tests/bugs/*`. If absent → distill a one-line repro description, confirm it via an
-`AskUserQuestion` (Confirm / Modify / Not-a-bug-cancel). On Confirm/Modify → invoke `/repro <desc>` once via Skill,
-re-check; on "Not a bug" → fail-closed (re-scope). One AC must assert "the failing repro test passes at slice end".
+If the chosen candidate is a bug fix, a **failing repro test must exist first**. Treat it as a bug fix when ANY of:
+- name matches `fix-*` / `*-fix` / `hotfix-*` / `harden-*-bug`; OR
+- **`source.type` is `bug-hunt-finding`** — ALWAYS a defect (these come from /bug-hunt's correctness/security sweep,
+  so the repro gate is mandatory); OR
+- `source.type`/category otherwise identifies a defect — e.g. a `diagnose-finding` of category `correctness-bug` or
+  `security` (a `diagnose-finding` of `dead-code`/`duplicate`/etc. is cleanup, NOT a bug — do not force repro); OR
+- the description identifies a defect.
+
+Check `<vault>/shippability.json` for a row whose `machine_cmd` targets `tests/bugs/*` (one that `/repro` — or
+`/bug-hunt`'s own `/repro→/slice` handoff — may already have written; if so, BFRD-1 is satisfied, proceed). If absent
+→ distill a one-line repro description, confirm it via an `AskUserQuestion` (Confirm / Modify / Not-a-bug-cancel). On
+Confirm/Modify → invoke `/repro <desc>` once via Skill, re-check; on "Not a bug" → fail-closed (re-scope). One AC must
+assert "the failing repro test passes at slice end". (`/repro` runs here before the worktree exists, so it writes the
+failing test to the MAIN tree; **Step 5 relocates it into `$wt`** on the slice branch — WT-ROOT-1.)
 
 ## Step 3 — define the slice
 - **Name**: verb-object (`add-receipt-upload`, `fix-thumbnail-orientation`). Never `phase-N` / vague nouns.
@@ -75,6 +84,18 @@ Once the candidate is settled AND scope passes, in order:
    ```
    This routes through `vault_edit` (SVW-1): sets the candidate `status: spiking`, `progress: spike`,
    `claimed_by {git_user, git_email}`, `started_at`, and appends the `pick_log` entry.
+5. **Relocate any pre-worktree repro test into `$wt` (WT-ROOT-1 / repro fix)** — a `/repro` run before the worktree
+   existed (BFRD-1 Step 2, or standalone) wrote the failing test to the MAIN tree. Move any untracked `tests/bugs/*`
+   into the worktree and stage it on the slice branch, so the repro test + the coming fix co-locate (and the main
+   tree stays clean — the WT-ROOT-1 audit will check this at build/validate):
+   ```bash
+   repo_root="$(git rev-parse --show-toplevel)"
+   wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder slice-NNN-<name> --repo-root "$repo_root" | head -1)"
+   for f in $(git -C "$repo_root" ls-files --others --exclude-standard -- 'tests/bugs/*' 2>/dev/null); do
+     mkdir -p "$wt/$(dirname "$f")"; mv "$repo_root/$f" "$wt/$f"; git -C "$wt" add "$f"
+   done
+   ```
+   (No bug-fix repro → the loop is a no-op. The fix slice will make this test pass; `/validate-slice` runs it from `$wt`.)
 
 ## Critical rules
 - ASK before deciding the slice (unless explicit intent / "you pick"). ENFORCE scope (>1 day → split).

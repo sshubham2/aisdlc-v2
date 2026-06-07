@@ -1,20 +1,18 @@
 # ai-sdlc plugin — runtime Python dependencies.
 #
-# Only /diagnose (skills/diagnose/scripts/write_pass.py + assemble.py) and the YAML fallback
-# in skills/slice-candidates/scripts/build_backlog.py need a third-party package; every other
-# bundled script is Python-3 stdlib only. Install into the interpreter $PY resolves to:
+# PyYAML — needed by /diagnose + /bug-hunt (scripts/lib/write_pass.py + assemble.py) and the YAML
+# fallback in skills/slice-candidates/scripts/build_backlog.py; every other bundled script is
+# Python-3 stdlib only. Install into the interpreter $PY resolves to:
 #
 #   $PY -m pip install -r requirements.txt
 #
-# (The SessionStart hook hooks/setup-env.sh prefers a $PY that already has PyYAML and warns
-#  on stderr when none does.)
+# (The SessionStart hook hooks/setup-env.sh resolves $PY and best-effort-installs THIS file into
+#  it whenever a dep is missing — opt out with AI_SDLC_NO_AUTO_INSTALL=1.)
 PyYAML>=6.0
 
-# ── OPTIONAL ─────────────────────────────────────────────────────────────────
-# code-review-graph (CRG) powers the best-effort blast-radius coupling in
-# /slice-candidates (build_backlog.py -> _crg_impact.py -> get_impact_radius).
-# It is NOT required: when absent, /slice-candidates degrades to shared-evidence
-# coupling and reports "crg":"absent" — so this is intentionally left commented.
-# Install it into the same interpreter $PY resolves to if you want CRG coupling:
-#   $PY -m pip install "code-review-graph>=2.3"
+# ── code-review-graph (CRG) ──────────────────────────────────────────────────
+# Active dependency (the hook installs it). Powers /bug-hunt's code graph + the best-effort
+# blast-radius coupling in /slice-candidates (build_backlog.py -> _crg_impact.py ->
+# get_impact_radius). /slice-candidates still degrades gracefully to shared-evidence coupling
+# and reports "crg":"absent" if it is ever missing.
 code-review-graph>=2.3

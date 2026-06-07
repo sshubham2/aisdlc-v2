@@ -41,6 +41,28 @@ cat "${AI_SDLC_VAULT_ROOT}/slices/$(ls -1t "${AI_SDLC_VAULT_ROOT}/slices/" | gre
    ```
    On `mandatory-critique-review-absent` exit 1: STOP and tell the user verbatim: **"STOP: this slice has a mandatory /critique-review (DR-1) that has not been run. Run /critique-review for this slice before /build-slice. If the skip is deliberate, document it by adding `critique-review-skip: \"skip — rationale: <text>\"` to milestone.json."** Do not enter plan mode until exit 0.
 
+### WT-ROOT-1 — the slice WORKTREE is the build surface (READ FIRST)
+
+**Every code Read/Edit/Write and every code-touching bash command in this skill (and in `/code-review`,
+`/validate-slice`) targets the slice WORKTREE `$wt`, NEVER the main tree.** Two harness facts make a single
+`cd` insufficient, so you must root EVERY operation explicitly:
+- `Edit`/`Write`/`Read` take ABSOLUTE paths — a bash `cd` does NOT redirect them.
+- Each ```bash block is a FRESH shell — a `cd` does NOT persist to the next block.
+
+Therefore:
+- **Resolve `$wt` and re-derive it in every code bash block** (it does not carry over):
+  ```bash
+  repo_root="$(git rev-parse --show-toplevel)"
+  slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+  wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+  cd "$wt"                       # fresh shell each block — re-derive + re-cd every time
+  ```
+- **Code I/O uses `"$wt/<relpath>"` ABSOLUTE paths** — plan-mode Reads, task Edits/Writes, the smoke gate, and
+  code-scanning audits. NEVER edit `<repo_root>/<relpath>` (the main tree). When in doubt, `git -C "$wt"`.
+- **Vault I/O is unaffected** — `$AI_SDLC_VAULT_ROOT` is the EXTERNAL store (already absolute); mission-brief /
+  build-log / milestone writes there are correct as-is and have nothing to do with `$wt`.
+- The main tree MUST stay clean of slice code — the **WT-ROOT-1 audit** (Step 6) fails the slice if code leaked there.
+
 ### Branch / worktree state (BRANCH-2 / BRANCH-3)
 
 Resolve the repo paths. **Shell vars do NOT persist across separate code blocks** (each ```bash block is a
@@ -54,7 +76,7 @@ default=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/r
 ```
 
 Then:
-1. **Worktree exists** at `<wt_base>/slice-NNN-<name>` (BRANCH-3 normal case): `cd` into it, verify `git branch --show-current` matches `slice/NNN-<name>`.
+1. **Worktree exists** at `<wt_base>/slice-NNN-<name>` (BRANCH-3 normal case): resolve `$wt` (WT-ROOT-1), `cd "$wt"`, verify `git branch --show-current` matches `slice/NNN-<name>`. All subsequent code I/O is `$wt`-rooted.
 2. **No worktree** (legacy / `WORKTREE=skip`): create it via the shared helper (re-derives `repo_root`/`default` —
    they do not carry over from the block above):
    ```bash
@@ -81,6 +103,9 @@ Update `milestone.json`: `stage: "build"`, `current_focus: "plan mode"`, `next_a
 
 ## Step 2: Plan mode — explore actual code
 
+**WT-ROOT-1:** explore the WORKTREE — `Read`/`Grep`/`Glob` files under `"$wt/"`, not the main tree. The task
+sequence's file paths must be `$wt`-rooted, so the edits in Step 4 land on the slice branch.
+
 Use code-review-graph MCP tools for structural understanding before Reads:
 - `impact-radius` on the module(s) this slice touches — what it reaches transitively
 - `search` for symbols and integration points
@@ -102,6 +127,9 @@ If user requests changes: revise and re-present.
 If the plan reveals the design is wrong: STOP. Surface to user: "Design says X. Code reality requires Y. Revise design, or proceed with a deviation?"
 
 ## Step 4: Execute task-by-task
+
+**WT-ROOT-1:** every `Edit`/`Write` targets a `"$wt/<relpath>"` absolute path; every code-touching bash block
+re-derives `$wt` and `cd "$wt"` first (fresh shell each block). The main tree is never written.
 
 For each task:
 1. Implement the task.
@@ -135,6 +163,13 @@ All of the following must pass before declaring done:
 Run audit gates in this order:
 
 ```bash
+# WT-ROOT-1 — worktree-root enforcement: the main tree must be clean of slice code (it all lives in $wt).
+# A non-empty main tree means edits leaked out of the worktree — STOP and move them into $wt.
+repo_root="$(git rev-parse --show-toplevel)"
+slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py" --worktree "$wt"
+
 # DCE-1 — drift-check enforcement (run /drift-check full mode FIRST, then audit)
 $PY "${CLAUDE_SKILL_DIR}/scripts/drift_check_audit.py" <vault>/slices/slice-NNN-<name>
 

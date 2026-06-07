@@ -72,12 +72,24 @@ Single-instance passing is NOT proof.
 
 ## Step 5 — layered audits (VAL-1, WS-1, ETC-1)
 
-Run all three audits before the shippability catalog. Pass `--changed-files` as the list of files this
-slice changed (get from `build-log.json` or `git diff --name-only <base>...HEAD`).
+**WT-ROOT-1:** Steps 5–6 inspect and run CODE, so they operate from the slice WORKTREE `$wt` (where the fix +
+the repro test live), NOT the main tree. Each code ```bash block below is a fresh shell, so it must re-resolve
+`$wt` and `cd "$wt"` first:
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+cd "$wt"
+```
+Run all three audits before the shippability catalog. Pass `--changed-files` as the list of files this slice
+changed — from `build-log.json`, or (from `$wt`) `git -C "$wt" diff --name-only "$(git -C "$wt" merge-base HEAD origin/HEAD 2>/dev/null || echo HEAD)"` ∪ `git -C "$wt" ls-files --others --exclude-standard`.
 
 ### Layer A + B audit (VAL-1)
 
 ```bash
+repo_root="$(git rev-parse --show-toplevel)"
+slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"   # WT-ROOT-1: scan worktree code
 $PY "${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py" \
   --slice <vault>/slices/slice-NNN-<name> \
   --changed-files <list> \
@@ -122,7 +134,16 @@ Both WS-1 and ETC-1 pass silently if the respective flag is absent or false.
 
 Skip if `<vault>/shippability.json` does not exist (first slice — /reflect will create it).
 
-### Pre-catalog gates (run ALL three before Step 5.5)
+### Pre-catalog gates (run ALL four before the catalog)
+
+**WT-ROOT-1** — the slice's code (fix + repro test) is in the WORKTREE; the main tree must be clean:
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py" --worktree "$wt"
+```
+Non-zero → STOP: slice code leaked into the main tree — move it into `$wt` before validating.
 
 **SCMD-1** — verifies every row has a prose-free Machine-cmd column:
 ```bash
@@ -130,11 +151,14 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_decoupling_audit.py" <vault>/shipp
 ```
 Non-zero → STOP: fix the row before running the catalog.
 
-**PTFCD-1** — verifies every `tests/<...>.py` token in Machine-cmd cells resolves to a file on disk:
+**PTFCD-1** — verifies every `tests/<...>.py` token in Machine-cmd cells resolves to a file on disk (in `$wt`):
 ```bash
+repo_root="$(git rev-parse --show-toplevel)"
+slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"
 $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_path_audit.py" <vault>/shippability.json
 ```
-Non-zero → STOP: report the phantom test-file citation and fix the catalog row path.
+Non-zero → STOP: report the phantom test-file citation (the repro test must live in `$wt/tests/bugs/`) and fix it.
 
 **SVW-1** — verifies no SKILL.md prescribes an unrouted mutation of a shared-aggregate vault file:
 ```bash
@@ -144,13 +168,18 @@ Non-zero → STOP: route the directive through `vault_edit append` or add a sanc
 
 ### Run the catalog (SRSC-1)
 
-Do NOT hand-roll the execution loop:
+Do NOT hand-roll the execution loop. **WT-ROOT-1: run it from `$wt`** so each `machine_cmd` executes against the
+worktree, where this slice's fix AND its repro test both live (running from the main tree would test code without
+the fix → false regression):
 ```bash
+repo_root="$(git rev-parse --show-toplevel)"
+slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"
 $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py" <vault>/shippability.json
 ```
 
 The runner reads each row's Machine-cmd, splits on ` ; `, strips backticks per segment (reuses SCMD-1
-`_segments()`), executes each interpreter-anchored segment from project root, reports PASS/FAIL per row.
+`_segments()`), executes each interpreter-anchored segment from the worktree root (`$wt`), reports PASS/FAIL per row.
 
 If any row FAILS: the current slice broke something a past slice established. This blocks /reflect. Either
 fix the regression or get explicit user approval to defer (with rationale logged in validation.json).

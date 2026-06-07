@@ -9,6 +9,11 @@
     "agents": [],
     "methodology_tools": [
       {
+        "name": "wt_root_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py\" --worktree \"$wt\"",
+        "purpose": "WT-ROOT-1 enforcement (Step 6 pre-finish): asserts slice code lives in the worktree $wt and the main tree is clean (no edits leaked out of $wt). Shared with /validate-slice."
+      },
+      {
         "name": "critique_review_prerequisite_audit",
         "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py\" <vault>/slices/slice-NNN-<name>",
         "purpose": "CRP-1 gate: verifies critique-review.md is present before build entry and again at pre-finish."
@@ -325,6 +330,11 @@
     "summary": "Validates the current slice against real environments — real device, real user, real data — going beyond test-suite passing. For each acceptance criterion it executes real-world checks, captures evidence, and classifies results as PASS/FAIL/PARTIAL with failure cause. It runs a shippability catalog regression check via shippability_runner, preceded by SCMD-1, PTFCD-1, and SVW-1 pre-catalog gates plus VAL-1, WS-1, ETC-1 layered audits before handing off to /reflect.",
     "agents": [],
     "methodology_tools": [
+      {
+        "name": "wt_root_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py\" --worktree \"$wt\"",
+        "purpose": "WT-ROOT-1 pre-catalog gate: asserts the slice's code (fix + repro test) is in the worktree $wt and the main tree is clean before running the shippability catalog from $wt. Shared with /build-slice."
+      },
       {
         "name": "validate_slice_layers",
         "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py\" --slice <vault>/slices/slice-NNN-<name> --changed-files <list>",

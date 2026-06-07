@@ -135,7 +135,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     wt = canonical_worktree_path(args.slice_folder, args.repo_root.resolve())
-    print(str(wt))
+    # Emit forward slashes (as_posix): a Windows "C:\..." path breaks `cd`/`git -C` in git-bash
+    # (backslash = escape) and is inconsistent with the hook's forward-slash $AI_SDLC_VAULT_ROOT.
+    # Forward slashes are accepted by both git-bash AND git on Windows. (CLI-only; the imported
+    # canonical_worktree_path() Path API is unchanged, so branch_workflow_audit is unaffected.)
+    print(wt.as_posix())
     print(branch)
     return 0
 

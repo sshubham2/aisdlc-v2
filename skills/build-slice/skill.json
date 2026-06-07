@@ -192,6 +192,14 @@
   "agents": [],
   "tools": [
     {
+      "name": "wt_root_audit",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py\" --worktree \"$wt\"",
+      "purpose": "WT-ROOT-1 enforcement (Step 6 pre-finish): asserts slice code lives in the worktree $wt and the main tree is clean (no edits leaked out of $wt). Shared with /validate-slice.",
+      "found": true,
+      "path": "scripts/lib/wt_root_audit.py"
+    },
+    {
       "name": "critique_review_prerequisite_audit",
       "type": "methodology-tool",
       "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py\" <vault>/slices/slice-NNN-<name>",
