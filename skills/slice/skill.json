@@ -182,6 +182,7 @@
         "slice-candidates"
       ],
       "edited_by": [
+        "bug-hunt",
         "reflect",
         "risk-spike",
         "slice",
@@ -253,7 +254,7 @@
   "harness_tools": [
     {
       "name": "Read",
-      "purpose": "Read vault state files: triage.json, risk-register.json, slices/_index.json, action-points.json, concept.json, archived reflection.json files, diagnose-out/backlog.md."
+      "purpose": "Read vault state files: triage.json, risk-register.json, slices/_index.json, action-points.json, concept.json, archived reflection.json files, candidates.json (the unified backlog; NOT diagnose output — slice is decoupled from /diagnose)."
     },
     {
       "name": "Bash",

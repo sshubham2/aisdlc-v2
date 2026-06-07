@@ -254,6 +254,22 @@
   ],
   "tools": [
     {
+      "name": "write_pass",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/write_pass.py\" --pass <pass-name> --out \"$OUT\" --raw-file \"$OUT/.tmp/<pass-name>.raw\"",
+      "purpose": "Orchestrator-side writer: parse each subagent's 4-backtick fenced section/findings/summary blocks, normalize + validate findings, write the three per-pass files. SHARED in scripts/lib/ (used by /bug-hunt too).",
+      "found": true,
+      "path": "scripts/lib/write_pass.py"
+    },
+    {
+      "name": "assemble",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/assemble.py\" --out \"$OUT\"",
+      "purpose": "Compose diagnose-out/diagnosis.html from per-pass artifacts; runs the shared finding_dedup after load + carries over prior annotations. SHARED in scripts/lib/ (used by /bug-hunt too).",
+      "found": true,
+      "path": "scripts/lib/assemble.py"
+    },
+    {
       "name": "code-review-graph",
       "type": "external-package",
       "invocation": "code-review-graph build|update | CRG MCP tools (impact-radius, review-context, search)",

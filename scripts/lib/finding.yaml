@@ -30,6 +30,8 @@
 #     dead-config
 #     test-gap
 #     ai-bloat
+#     correctness-bug   (defect/logic bug — primarily from /bug-hunt; deviation from intended behavior)
+#     security          (injection, authz gap, secret exposure, unsafe deserialization — primarily from /bug-hunt)
 
 # severity
 #   string, REQUIRED

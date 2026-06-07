@@ -1,15 +1,15 @@
 {
-  "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills)",
+  "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills) + skills/bug-hunt/SKILL.md (v2-native, 27 total)",
   "note": "Forward edges from each skill manifest; file inverse-edges (created_by/edited_by/read_by) computed globally. update access = read-modify-write (counts as both read and edit).",
   "stats": {
-    "skills": 26,
-    "skills_main_agent": 18,
+    "skills": 27,
+    "skills_main_agent": 19,
     "skills_delegable": 8,
     "named_agents_used": 6,
-    "tools": 43,
-    "file_nodes": 71,
-    "edges": 486,
-    "md_to_json_targets": 45
+    "tools": 47,
+    "file_nodes": 84,
+    "edges": 519,
+    "md_to_json_targets": 49
   },
   "nodes": {
     "skills": [
@@ -168,6 +168,13 @@
         "spawns_generic_subagent": false
       },
       {
+        "id": "bug-hunt",
+        "runs_in": "main-agent",
+        "requires_full_context": true,
+        "user_invokable": true,
+        "spawns_generic_subagent": true
+      },
+      {
         "id": "risk-spike",
         "runs_in": "main-agent",
         "requires_full_context": true,
@@ -258,12 +265,22 @@
         "found": false
       },
       {
+        "id": "WebSearch",
+        "type": "harness",
+        "found": false
+      },
+      {
         "id": "Write",
         "type": "harness",
         "found": false
       },
       {
         "id": "_worktree_paths",
+        "type": "methodology-tool",
+        "found": true
+      },
+      {
+        "id": "assemble",
         "type": "methodology-tool",
         "found": true
       },
@@ -319,6 +336,11 @@
       },
       {
         "id": "exploratory_charter_audit",
+        "type": "methodology-tool",
+        "found": true
+      },
+      {
+        "id": "finding_dedup",
         "type": "methodology-tool",
         "found": true
       },
@@ -429,6 +451,11 @@
       },
       {
         "id": "wiring_matrix_audit",
+        "type": "methodology-tool",
+        "found": true
+      },
+      {
+        "id": "write_pass",
         "type": "methodology-tool",
         "found": true
       }
@@ -544,6 +571,7 @@
           "slice-candidates"
         ],
         "edited_by": [
+          "bug-hunt",
           "reflect",
           "risk-spike",
           "slice",
@@ -1270,6 +1298,151 @@
         "read_by": [
           "build-slice"
         ],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/",
+        "kind": "directory",
+        "v2_format": "directory",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/.code-review-graph/",
+        "kind": "side-effect",
+        "v2_format": "n/a",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/.tmp/",
+        "kind": "directory",
+        "v2_format": "directory",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/.tmp/<bucket>.raw",
+        "kind": "content-file",
+        "v2_format": "other",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/.tmp/worklist.json",
+        "kind": "content-file",
+        "v2_format": "json",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/diagnosis.html",
+        "kind": "content-file",
+        "v2_format": "html",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [
+          "bug-hunt"
+        ],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/findings.json",
+        "kind": "content-file",
+        "v2_format": "json",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/findings/",
+        "kind": "directory",
+        "v2_format": "directory",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/findings/*.yaml",
+        "kind": "content-file",
+        "v2_format": "other",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/sections/",
+        "kind": "directory",
+        "v2_format": "directory",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/sections/*.md",
+        "kind": "content-file",
+        "v2_format": "json",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/summary/",
+        "kind": "directory",
+        "v2_format": "directory",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "bug-hunt-out/summary/*.md",
+        "kind": "content-file",
+        "v2_format": "json",
+        "created_by": [
+          "bug-hunt"
+        ],
+        "edited_by": [],
+        "read_by": [],
         "validated_by": []
       },
       {
@@ -3263,6 +3436,16 @@
     },
     {
       "from": "diagnose",
+      "to": "write_pass",
+      "type": "uses_tool"
+    },
+    {
+      "from": "diagnose",
+      "to": "assemble",
+      "type": "uses_tool"
+    },
+    {
+      "from": "diagnose",
       "to": "code-review-graph",
       "type": "uses_tool"
     },
@@ -3569,6 +3752,161 @@
     {
       "from": "sync",
       "to": "reduce",
+      "type": "hands_off_to"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "code-review",
+      "type": "spawns"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "finding_dedup",
+      "type": "uses_tool"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "write_pass",
+      "type": "uses_tool"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "assemble",
+      "type": "uses_tool"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "vault_edit",
+      "type": "uses_tool"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "code-review-graph",
+      "type": "uses_tool"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "Bash",
+      "type": "uses_harness"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "Read",
+      "type": "uses_harness"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "Glob",
+      "type": "uses_harness"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "Grep",
+      "type": "uses_harness"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "Write",
+      "type": "uses_harness"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "Agent",
+      "type": "uses_harness"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "WebSearch",
+      "type": "uses_harness"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/sections/",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/findings/",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/summary/",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/.tmp/",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/.code-review-graph/",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/.tmp/worklist.json",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/.tmp/<bucket>.raw",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/sections/*.md",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/findings/*.yaml",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/summary/*.md",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/findings.json",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/diagnosis.html",
+      "type": "creates"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "bug-hunt-out/diagnosis.html",
+      "type": "reads"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "<vault>/candidates.json",
+      "type": "appends"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "repro",
+      "type": "hands_off_to"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "slice",
+      "type": "hands_off_to"
+    },
+    {
+      "from": "bug-hunt",
+      "to": "slice-candidates",
       "type": "hands_off_to"
     },
     {

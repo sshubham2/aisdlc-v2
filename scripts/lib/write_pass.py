@@ -31,11 +31,13 @@ from pathlib import Path
 
 import yaml
 
-# Import normalize_finding + REQUIRED_FIELDS from the sibling assemble.py.
-# When invoked as a script (`python skills/diagnose/write_pass.py ...`),
-# the script's own directory is on sys.path so this resolves.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from assemble import REQUIRED_FIELDS, normalize_finding  # noqa: E402
+# --- plugin-root import bootstrap (shared lib invoked by ABSOLUTE PATH from SKILL.md) ---
+# Invoked as `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/write_pass.py"`, so add the plugin
+# root (parents[2]) to resolve the sibling `from scripts.lib.assemble import ...` package import.
+_PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+if str(_PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_ROOT))
+from scripts.lib.assemble import REQUIRED_FIELDS, normalize_finding  # noqa: E402
 
 
 _FENCE_OPEN = re.compile(r"^(`{4,})(section|findings|summary)\s*$")

@@ -31,6 +31,17 @@ from typing import Callable
 
 import yaml
 
+# --- plugin-root import bootstrap (shared lib invoked by ABSOLUTE PATH from SKILL.md) ---
+# Invoked as `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/assemble.py"`, so sys.path[0] is this
+# scripts/lib/ dir, not the plugin root. Add the plugin root (parents[2]) so the sibling
+# `from scripts.lib.finding_dedup import ...` resolves. No-op if already present.
+# (Also covers the write_pass.py -> `from scripts.lib.assemble import ...` path, which runs this.)
+_PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+if str(_PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_ROOT))
+
+from scripts.lib.finding_dedup import dedupe_findings  # noqa: E402
+
 log = logging.getLogger(__name__)
 
 PASS_ORDER = [
@@ -148,6 +159,8 @@ def _category_short(category: str) -> str:
         "dead-config": "CONFIG",
         "test-gap": "TEST",
         "ai-bloat": "BLOAT",
+        "correctness-bug": "BUG",
+        "security": "SEC",
     }
     return mapping.get(category, category.upper().replace("-", "")[:6] or "OTHER")
 
@@ -2048,6 +2061,12 @@ def assemble(out_dir: Path) -> None:
             raise SystemExit(f"Required directory missing: {d}")
 
     findings = load_findings(findings_dir)
+    # Cross-pass de-duplication (shared finding_dedup): collapse findings that point at
+    # the same code location, independent of pass/category — the per-pass content-ID
+    # recipe can't, because `category` is in the hash. Singletons pass through unchanged
+    # (same id, no new fields); clusters become one F-MRG-* finding carrying merged_ids.
+    findings, merge_report = dedupe_findings(findings)
+
     prior_state = parse_prior_state(diagnosis_path)
     prior_anno: dict[str, dict] = prior_state.get("annotations", {}) or {}
     prior_finding_ids: set[str] = set()
@@ -2057,12 +2076,32 @@ def assemble(out_dir: Path) -> None:
     for fid in prior_state.get("resolved_finding_ids", []) or []:
         prior_finding_ids.add(fid)
 
-    current_ids = {f["id"] for f in findings}
+    # A prior finding is RESOLVED only if neither its id NOR (post-merge) any id it was
+    # folded into is present now — so "current" includes every merged constituent id.
+    current_ids: set[str] = set()
+    for f in findings:
+        current_ids.add(f["id"])
+        current_ids.update(f.get("merged_ids", []) or [])
     resolved_ids = sorted(prior_finding_ids - current_ids)
 
     findings_by_pass: dict[str, list[dict]] = {p: [] for p in PASS_ORDER}
     for f in findings:
         findings_by_pass.setdefault(f["pass"], []).append(f)
+
+    # Owner-annotation carryover. Prefer an exact id match; fall back to any constituent
+    # id a merged finding was folded from. This is the one-time migration when cross-pass
+    # dedup is first introduced: a merged finding's new F-MRG id isn't in the prior run,
+    # but its merged_ids are — so the owner's Confirmed/Notes survive the first merged run,
+    # re-keyed under the stable F-MRG id for all subsequent runs.
+    carried_anno: dict[str, dict] = {}
+    for f in findings:
+        if f["id"] in prior_anno:
+            carried_anno[f["id"]] = prior_anno[f["id"]]
+            continue
+        for mid in f.get("merged_ids", []) or []:
+            if mid in prior_anno:
+                carried_anno[f["id"]] = prior_anno[mid]
+                break
 
     # ----- Executive summary -----
     overview_md = read_optional(sections_dir / f"{OVERVIEW_PASS}.md")
@@ -2086,8 +2125,8 @@ def assemble(out_dir: Path) -> None:
 
     # ----- Stats / verdict -----
     sev_counts = Counter(f["severity"] for f in findings)
-    new_count = sum(1 for f in findings if f["id"] not in prior_anno)
-    persisting_count = len(findings) - new_count
+    persisting_count = len(carried_anno)
+    new_count = len(findings) - persisting_count
     verdict_line = (
         f"{len(findings)} findings — "
         f"{sev_counts.get('critical', 0)} critical, "
@@ -2118,8 +2157,8 @@ def assemble(out_dir: Path) -> None:
         else:
             sections_html_parts.append(f"<h2>{esc(label)}</h2>")
         for f in items:
-            anno = prior_anno.get(f["id"], {})
-            status = "PERSISTING" if f["id"] in prior_anno else "NEW"
+            anno = carried_anno.get(f["id"], {})
+            status = "PERSISTING" if f["id"] in carried_anno else "NEW"
             sections_html_parts.append(render_finding_card(f, anno, status))
         sections_html_parts.append("</section>")
     sections_html = "\n".join(sections_html_parts)
@@ -2133,11 +2172,7 @@ def assemble(out_dir: Path) -> None:
         "version": 2,
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "findings": findings,
-        "annotations": {
-            f["id"]: prior_anno[f["id"]]
-            for f in findings
-            if f["id"] in prior_anno
-        },
+        "annotations": carried_anno,
         "resolved_finding_ids": resolved_ids,
     }
     json_state = json.dumps(state, indent=2, default=str)
@@ -2210,6 +2245,12 @@ def assemble(out_dir: Path) -> None:
     diagnosis_path.write_text(html, encoding="utf-8")
 
     print(verdict_line)
+    if merge_report:
+        collapsed = sum(len(r["merged_ids"]) for r in merge_report) - len(merge_report)
+        print(
+            f"De-duplicated {collapsed} finding(s) into {len(merge_report)} merged "
+            f"cluster(s) across passes."
+        )
     print(f"Wrote: {diagnosis_path}")
     if prev_path.exists():
         print(f"Rotated prior to: {prev_path}")

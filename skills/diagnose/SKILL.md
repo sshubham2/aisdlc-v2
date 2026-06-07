@@ -14,7 +14,9 @@ copy. They send it back; `/slice-candidates` reads the embedded JSON to build th
 
 This skill is a **diagnostic deliverable**. It never modifies source files in the target repo.
 
-> Paths: `${CLAUDE_SKILL_DIR}/scripts/` holds `write_pass.py`, `assemble.py`, `passes/`, `schema/`.
+> Paths: `${CLAUDE_SKILL_DIR}/scripts/` holds `passes/` (diagnose-only). `write_pass.py`, `assemble.py`, and the
+> finding schema `finding.yaml` are **shared** (used by `/bug-hunt` too) — they live in `scripts/lib/`, invoked
+> `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/<x>.py"`.
 > Shared vault tooling: `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py"`. `$PY` is the shared venv interpreter (env var set by the harness).
 >
 > **Format note:** `sections/*.md`, `summary/*.md`, and `sections/00-overview.md` are intermediate pipeline
@@ -111,7 +113,7 @@ on the following from `${CLAUDE_SKILL_DIR}/scripts/passes/`:
 03f-layering.md  03g-dead-config.md  03h-test-coverage.md
 ```
 
-(Pass templates each embed a 5-line finding-schema crib sheet — do NOT embed the full `schema/finding.yaml`
+(Pass templates each embed a 5-line finding-schema crib sheet — do NOT embed the full `scripts/lib/finding.yaml`
 separately; that would add ~30 KB of redundant context per run.)
 
 ## Step 4 — Detect prior run state
@@ -180,7 +182,7 @@ For each completed pass (immediately in sequential mode; as they finish in paral
    TARGET="$PWD"
    for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
    OUT="$TARGET/diagnose-out"
-   $PY "${CLAUDE_SKILL_DIR}/scripts/write_pass.py" \
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/write_pass.py" \
        --pass <pass-name> \
        --out "$OUT" \
        --raw-file "$OUT/.tmp/<pass-name>.raw"
@@ -225,7 +227,7 @@ After it returns, run (re-deriving `OUT` — shell state does not persist across
 TARGET="$PWD"
 for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
 OUT="$TARGET/diagnose-out"
-$PY "${CLAUDE_SKILL_DIR}/scripts/write_pass.py" --pass 04-ai-bloat --out "$OUT" --raw-file "$OUT/.tmp/04-ai-bloat.raw"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/write_pass.py" --pass 04-ai-bloat --out "$OUT" --raw-file "$OUT/.tmp/04-ai-bloat.raw"
 ```
 
 with the same 3-attempt cap. Verify all three `04-ai-bloat.{md,yaml,md}` files exist before continuing.
@@ -265,13 +267,19 @@ continue — `assemble.py` falls back to per-pass summary stitching (degraded bu
 TARGET="$PWD"
 for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
 OUT="$TARGET/diagnose-out"
-$PY "${CLAUDE_SKILL_DIR}/scripts/assemble.py" --out "$OUT"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/assemble.py" --out "$OUT"
 ```
 
 `assemble.py`:
 1. Reads section/finding/summary files in manifest order.
+1b. **De-duplicates across passes** via the shared `scripts/lib/finding_dedup.py`: findings that point
+   at the same code location (path + line span) collapse into one `F-MRG-*` finding carrying
+   `merged_ids` / `seen_by_passes` / `categories` (independent of pass/category — the per-pass content-ID
+   recipe can't dedup because `category` is in its hash). Singletons pass through unchanged.
 2. Reads prior `diagnosis.html` (if exists), extracts embedded Confirmed/Notes.
-3. Applies carryover: marks findings NEW / PERSISTING / RESOLVED.
+3. Applies carryover: marks findings NEW / PERSISTING / RESOLVED. A merged finding carries an owner
+   annotation made on any of its pre-merge constituent ids (one-time migration), then is keyed by the
+   stable `F-MRG-*` id thereafter; a constituent id folded into a merge is never falsely RESOLVED.
 4. Renders one new self-contained `diagnosis.html` with: inline CSS+JS, executive summary, ordered prose
    sections, per-finding detail blocks, interactive findings index (Confirmed dropdown + Notes textarea
    per row), a resolved-since-last-run table, and an embedded JSON state block.

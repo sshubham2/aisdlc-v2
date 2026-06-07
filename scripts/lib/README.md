@@ -36,6 +36,14 @@ absolute-path idea: `$PY "${CLAUDE_SKILL_DIR}/scripts/<x>.py"` + a `parents[3]` 
 | `skill_vault_write_safety_audit` | build-slice, validate-slice | SVW-1 enforcement |
 | `vault_flip_prose_inventory` | build-slice, validate-slice | vault op-gate |
 | forward-sync gates (`methodology_changelog_forward_sync`, `ai_sdlc_version_forward_sync`, `ai_sdlc_tools_version_forward_sync`) | build-slice, reflect | installed==repo parity |
+| `finding_dedup` | diagnose, bug-hunt | cross-pass / cross-finder finding de-dup — merge same-location findings into one `F-MRG-*` (category-independent). The single dedup seam for both forensic skills. |
+| `write_pass` | diagnose, bug-hunt | parse a subagent's 4-backtick fenced section/findings/summary blocks → normalize/validate → per-pass files. Imports `assemble`. |
+| `assemble` | diagnose, bug-hunt | compose `diagnosis.html` from per-pass artifacts; runs `finding_dedup` after load + carries over prior annotations. Imports `finding_dedup`. |
+
+> **Note — `finding.yaml` (data, not a tool).** The shared finding schema lives at `scripts/lib/finding.yaml` next to
+> its enforcer (`assemble.REQUIRED_FIELDS`). It is a contract doc, never imported/executed, so the `*.py` tool-glob in
+> `aggregate.py` does not pick it up. Both `/diagnose` and `/bug-hunt` findings conform to it (categories incl.
+> `correctness-bug` + `security`).
 
 ## Shared helpers (imported by nearly every tool)
 
@@ -66,6 +74,10 @@ absolute-path idea: `$PY "${CLAUDE_SKILL_DIR}/scripts/<x>.py"` + a `parents[3]` 
   subcommands `read` / `get` / `query` / `append` / `update` / `rewrite` / `move` / `list` / `count`, global `--vault`.
   JSON-native `append`/`update` are SVW-1 **locked read-modify-write** (lock serializes concurrent writers). Built on a new
   `_vault_write.safe_mutate_text` locked-RMW primitive. Call-sites get normalized to this one interface.
+- **Diagnose/bug-hunt shared trio PROMOTED** ✅ — `write_pass`, `assemble`, `finding_dedup` (.py) + the `finding.yaml`
+  schema moved from `skills/diagnose/scripts/` → `scripts/lib/` when `/bug-hunt` became a second consumer (no more
+  cross-skill `../diagnose/scripts/` reach). Import chain: `write_pass` → `assemble` → `finding_dedup`, all via the
+  `parents[2]` plugin-root bootstrap. `passes/*.md` stay diagnose-only in `skills/diagnose/scripts/`.
 
 ## Owed v2 code changes (when porting from temp/tools)
 - `vault_edit`: gain a candidates-archive **move** (live `candidates.json` → `archive/candidates.json` on ship).
