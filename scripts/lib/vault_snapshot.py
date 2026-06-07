@@ -4,13 +4,18 @@ Shared library + CLI. Replaces /pulse's 5-6 separate file reads with ONE bounded
 text digest, injected into the pulse prompt (`` !`$PY .../vault_snapshot.py …` ``).
 Read-only — never writes the vault.
 
-Two mutually-exclusive modes, each taking a LIST of file names (`nargs="+"`):
-  - `--files A.json B.json …`: read each VAULT-RELATIVE file.
+Three mutually-exclusive modes, each taking a LIST of names (`nargs="+"`):
+  - `--files A.json B.json …`: read each VAULT-RELATIVE file (full content, array-capped).
   - `--active-slice A.json B.json …`: for each file, read it from the ACTIVE SLICE
     folder when it exists there, else fall back to vault-relative. The active slice
     is resolved via `scripts.lib.active_slice.resolve_active_slice(vault, ".")`; when
     that returns None, every file falls back to vault-relative and the digest notes
     `(no active slice)`.
+  - `--presence A.json actors …`: report EXISTENCE + a lightweight count per name, with
+    NO content injected — `<name>: present (N items|files)` / `absent`. Handles both files
+    (count = longest root array) and directories (count = file count). Used by /pulse to
+    detect the Heavy-mode architecture phase (threat-model/requirements/actors/…) without
+    bloating the prompt with full upfront-architecture documents.
 
 Output is a TEXT digest: per requested file a section
     === <name> ===
@@ -83,6 +88,38 @@ def _section(name: str, path: Path) -> str:
     return f"{header}\n{body}"
 
 
+def _primary_count(doc) -> int | None:
+    """Length of a root list, else the longest array-valued field of a root dict (the
+    common <vault> shape, e.g. threat-model `{threats:[…]}`, requirements `{items:[…]}`).
+    None when there is no array to count."""
+    if isinstance(doc, list):
+        return len(doc)
+    if isinstance(doc, dict):
+        lens = [len(v) for v in doc.values() if isinstance(v, list)]
+        return max(lens) if lens else None
+    return None
+
+
+def _presence(name: str, path: Path) -> str:
+    """One `<name>: present (N …)` / `absent` line — existence + a lightweight count, with
+    NO content injected (bounds the prompt; safe for large Heavy-mode artifacts). Directory →
+    count of contained files; JSON file → longest root array; unparseable/other → bare present."""
+    if path.is_dir():
+        try:
+            n = sum(1 for c in path.iterdir() if c.is_file())
+        except OSError:
+            return f"{name}: present"
+        return f"{name}: present ({n} file{'' if n == 1 else 's'})"
+    if path.is_file():
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return f"{name}: present"
+        n = _primary_count(doc)
+        return f"{name}: present" + (f" ({n} item{'' if n == 1 else 's'})" if n is not None else "")
+    return f"{name}: absent"
+
+
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     p = argparse.ArgumentParser(
@@ -96,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="vault-relative JSON files to digest")
     g.add_argument("--active-slice", dest="active_slice", nargs="+", default=None,
                    help="JSON files to read from the active slice folder (else vault-relative)")
+    g.add_argument("--presence", nargs="+", default=None,
+                   help="report existence + a lightweight count per file/dir; no content injected")
     args = p.parse_args(argv)
 
     vault = _root(args.vault)
@@ -104,6 +143,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.files is not None:
         for name in args.files:
             sections.append(_section(name, vault / name))
+    elif args.presence is not None:
+        for name in args.presence:
+            sections.append(_presence(name, vault / name))
     else:
         info = resolve_active_slice(vault, ".")
         slice_dir = Path(info["path"]) if info else None

@@ -62,6 +62,17 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_snapshot.py" --vault "$AI_SDLC_
     --active-slice milestone.json risk-register.json slices/action-points.json 2>/dev/null
 ```
 
+**Heavy-mode architecture phase — presence probe** (existence + counts only, NOT full content; these are the
+`/heavy-architect` outputs, which the per-slice scan above does not cover — without this probe a Heavy project
+sitting between `/heavy-architect` and the first `/slice` would look "pre-architecture" and falsely recommend
+re-running `/heavy-architect`):
+
+```!
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_snapshot.py" --vault "$AI_SDLC_VAULT_ROOT" \
+    --presence threat-model.json requirements.json non-functional.json \
+               cost-estimation.json diagrams.json actors 2>/dev/null
+```
+
 The above injections pre-load vault JSON into the prompt context. If a file is absent the snapshot script omits it — state "not yet created" for any missing key.
 
 Read the following JSON files if not fully covered by the injections above (skip gracefully if absent):
@@ -79,6 +90,7 @@ Read the following JSON files if not fully covered by the injections above (skip
 | `<vault>/lessons-learned.json` | last 3-5 lessons |
 | `<vault>/drift-log.json` | unresolved drift count |
 | `<vault>/changelog.json` | pipeline-bypass count |
+| `<vault>/threat-model.json` · `requirements.json` · `non-functional.json` · `cost-estimation.json` · `diagrams.json` · `actors/` | **Heavy-mode upfront architecture** — presence-probed above (existence + counts, not full-read). Their existence = `/heavy-architect` has run; their absence in Heavy mode = it has not. |
 
 **Active slice:** Read `<vault>/slices/slice-NNN-<name>/milestone.json` first (primary source: `stage`, `next_action`, progress checkboxes, `on_resume`). If `stage` is `build` or later and `build-log.json` exists, read the last ~15 lines of its `events` array — the events trace is the durable record; compare its latest timestamp to `milestone.json.updated_at`. If events are newer, milestone is stale — flag it.
 
@@ -121,7 +133,10 @@ Do NOT read individual slice design/mission files (active slice excepted). Do NO
 | Any worktree `MERGED` (worktree still exists post-merge) | WARN: CLEANUP-CANDIDATE — `git worktree remove <wt-path>` (merged branch leaked; run regardless of CAL-1 state) |
 | Any worktree `UNKNOWN` (classification indeterminate) | WARN: unknown worktree state on `<branch>` — inspect manually before continuing; surface the sub-reason (no milestone found / divergent commit history / missing branch) |
 | No BRANCH-2 override + CAL-1 overdue (>20 slices) | `/critic-calibrate` |
-| Otherwise | Active-slice `milestone.json` `next_action` field |
+| **No active slice** (no worktree, `slices/_index.json` absent/no active entry, no `slices/slice-NNN/milestone.json`) + Heavy mode + architecture **present** (`threat-model.json` exists per the probe) | `/user-test` (if the concept is B2C) or `/slice` — **architecture is DONE; never recommend re-running `/heavy-architect`** |
+| **No active slice** + Heavy mode + architecture **absent** (`threat-model.json` absent per the probe) | `/heavy-architect` |
+| **No active slice** + Standard / Minimal mode | `/slice` (or `/discover` if `candidates.json` is empty/absent) |
+| Otherwise (an active slice exists) | Active-slice `milestone.json` `next_action` field |
 
 ## Step 3 — Render via Haiku dispatch
 
@@ -163,6 +178,13 @@ The Haiku agent fills the template and returns the summary text. Main thread pri
 
 ### Recently shipped (last 3)
 - <slice-NNN-name> (<N> slices ago) — <one-line>
+
+## Architecture (Heavy mode only — OMIT this whole section in Standard/Minimal)
+[From the architecture presence probe. Render only when Mode is Heavy:]
+- threat-model: <present (N) | absent> · requirements: <present (N) | absent> · non-functional: <present (N) | absent>
+- cost-estimation: <present | absent> · diagrams: <present | absent> · actors: <present (N files) | absent>
+[If threat-model present AND no slices yet: "Architecture phase complete → next is /user-test or /slice."]
+[If threat-model absent AND no slices yet: "Architecture not yet built → run /heavy-architect."]
 
 ## Candidates
 - Backlog: <N not-started + in-flight>  (blocked-on-spike: <N>)
@@ -223,7 +245,7 @@ Balanced view plus:
 ## Critical rules
 
 - **READ-ONLY.** Never write or edit vault files.
-- **Derive, don't fabricate.** If a file is absent, state that explicitly.
+- **Derive, don't fabricate — never claim absence you didn't probe.** Report a file as absent/missing ONLY when it shows `absent` in an injection or presence probe above. Do NOT assert a vault file is missing (e.g. "no threat-model.json / requirements.json confirmed") from its mere absence in your input set — that is a hallucination, not a filesystem check. The Heavy-mode architecture artifacts are covered ONLY by the presence probe; if it shows `present`, the architecture phase is DONE and you must NOT recommend `/heavy-architect`.
 - **Be specific about next action.** Name the slash command, not "continue".
 - **Flags**: warn on overdue calibration, shippability gap >3 slices, unresolved drift, stranded branches.
 - **Brief mode**: no tables, terse one-liners. Token budget: `--brief` <500; default <2k; `--full` <5k.
