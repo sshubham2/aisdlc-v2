@@ -97,7 +97,7 @@ Build the CRG graph:
 TARGET="$PWD"
 for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
 OUT="$TARGET/diagnose-out"
-code-review-graph build "$TARGET" --out "$OUT/.code-review-graph"
+"${CRG:-code-review-graph}" build "$TARGET" --out "$OUT/.code-review-graph"
 ```
 
 If CRG fails (unsupported language, broken AST): report failure and ask whether to proceed in degraded

@@ -1,14 +1,14 @@
 {
-  "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills) + skills/bug-hunt/SKILL.md (v2-native, 27 total)",
+  "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills) + skills/bug-hunt/SKILL.md + skills/setup/SKILL.md (v2-native, 28 total)",
   "note": "Forward edges from each skill manifest; file inverse-edges (created_by/edited_by/read_by) computed globally. update access = read-modify-write (counts as both read and edit).",
   "stats": {
-    "skills": 27,
-    "skills_main_agent": 18,
+    "skills": 28,
+    "skills_main_agent": 19,
     "skills_delegable": 9,
     "named_agents_used": 6,
-    "tools": 49,
-    "file_nodes": 81,
-    "edges": 524,
+    "tools": 50,
+    "file_nodes": 83,
+    "edges": 535,
     "md_to_json_targets": 46
   },
   "nodes": {
@@ -201,6 +201,13 @@
         "requires_full_context": true,
         "user_invokable": true,
         "spawns_generic_subagent": false
+      },
+      {
+        "id": "setup",
+        "runs_in": "main-agent",
+        "requires_full_context": true,
+        "user_invokable": true,
+        "spawns_generic_subagent": false
       }
     ],
     "agents": [
@@ -380,6 +387,11 @@
         "found": true
       },
       {
+        "id": "setup",
+        "type": "methodology-tool",
+        "found": true
+      },
+      {
         "id": "shippability_decoupling_audit",
         "type": "methodology-tool",
         "found": true
@@ -493,6 +505,7 @@
         "v2_format": "other",
         "created_by": [
           "adopt",
+          "setup",
           "sync"
         ],
         "edited_by": [],
@@ -505,6 +518,28 @@
           "repro",
           "slice"
         ],
+        "validated_by": []
+      },
+      {
+        "id": ".gitignore",
+        "kind": "side-effect",
+        "v2_format": "n/a",
+        "created_by": [],
+        "edited_by": [
+          "setup"
+        ],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": ".mcp.json",
+        "kind": "side-effect",
+        "v2_format": "n/a",
+        "created_by": [
+          "setup"
+        ],
+        "edited_by": [],
+        "read_by": [],
         "validated_by": []
       },
       {
@@ -4255,6 +4290,61 @@
     {
       "from": "user-test",
       "to": "discover",
+      "type": "hands_off_to"
+    },
+    {
+      "from": "setup",
+      "to": "setup",
+      "type": "uses_tool"
+    },
+    {
+      "from": "setup",
+      "to": "code-review-graph",
+      "type": "uses_tool"
+    },
+    {
+      "from": "setup",
+      "to": "Bash",
+      "type": "uses_harness"
+    },
+    {
+      "from": "setup",
+      "to": "Read",
+      "type": "uses_harness"
+    },
+    {
+      "from": "setup",
+      "to": "AskUserQuestion",
+      "type": "uses_harness"
+    },
+    {
+      "from": "setup",
+      "to": ".mcp.json",
+      "type": "creates"
+    },
+    {
+      "from": "setup",
+      "to": ".gitignore",
+      "type": "appends"
+    },
+    {
+      "from": "setup",
+      "to": ".code-review-graph/",
+      "type": "creates"
+    },
+    {
+      "from": "setup",
+      "to": "triage",
+      "type": "hands_off_to"
+    },
+    {
+      "from": "setup",
+      "to": "adopt",
+      "type": "hands_off_to"
+    },
+    {
+      "from": "setup",
+      "to": "pulse",
       "type": "hands_off_to"
     }
   ]

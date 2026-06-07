@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Aggregate the 27 staged skill manifests into per-skill skill.json + a global skill-graph.json.
+"""Aggregate the 28 staged skill manifests into per-skill skill.json + a global skill-graph.json.
 Forward edges (reads/writes/uses/spawns) come from each manifest; inverse edges
 (created_by/edited_by/read_by/validated_by) are COMPUTED centrally so they are globally consistent."""
 import json, os, re, html, glob, sys, shutil
@@ -51,11 +51,11 @@ def unescape(x):
 
 # ---- load manifests ----
 manifests = []
-for i in range(0,8):
+for i in range(0,9):
     with open(os.path.join(MAN, f"batch{i}.json"), encoding="utf-8") as fh:
         manifests += unescape(json.load(fh))
 by_name = {m["name"]: m for m in manifests}
-assert len(manifests) == 27, f"expected 27 skills, got {len(manifests)}"
+assert len(manifests) == 28, f"expected 28 skills, got {len(manifests)}"
 
 # ---- canonicalize a path into a stable graph-node id ----
 def canon(p):
@@ -288,7 +288,7 @@ for m in manifests:
         edges.append({"from":s,"to":nxt,"type":"hands_off_to"})
 
 graph = {
-    "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills) + skills/bug-hunt/SKILL.md (v2-native, 27 total)",
+    "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills) + skills/bug-hunt/SKILL.md + skills/setup/SKILL.md (v2-native, 28 total)",
     "note": "Forward edges from each skill manifest; file inverse-edges (created_by/edited_by/read_by) computed globally. update access = read-modify-write (counts as both read and edit).",
     "stats": {
         "skills": len(manifests),

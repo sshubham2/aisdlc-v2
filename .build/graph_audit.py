@@ -90,7 +90,7 @@ for n in G["nodes"]["skills"]:
 
 # 6. hands_off_to targets exist (already covered by dangling check, but report unreachable skills)
 referenced = {e["to"] for e in G["edges"] if e["type"] == "hands_off_to"}
-entrypoints = {"triage", "adopt", "diagnose", "query-design", "pulse", "bug-hunt"}
+entrypoints = {"triage", "adopt", "diagnose", "query-design", "pulse", "bug-hunt", "setup"}
 unreferenced = skills - referenced - entrypoints
 if unreferenced:
     INFO.append(f"skills never handed-off-to (entrypoints/maintenance, expected): {sorted(unreferenced)}")

@@ -11,6 +11,7 @@
       "kind": "external-artifact",
       "produced_by": [
         "adopt",
+        "setup",
         "sync"
       ],
       "purpose": "Source graph for reachability/blast-radius/keyword queries on the buggy code area."

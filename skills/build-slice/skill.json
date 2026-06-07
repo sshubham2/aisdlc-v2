@@ -83,6 +83,7 @@
       "kind": "external-artifact",
       "produced_by": [
         "adopt",
+        "setup",
         "sync"
       ],
       "purpose": "Code graph consumed by code-review-graph queries during plan mode."

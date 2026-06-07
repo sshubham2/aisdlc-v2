@@ -77,7 +77,7 @@ Use `code-review-graph` MCP tools for god-node and blast-radius detection:
 
 If CRG graph is not yet built:
 ```bash
-code-review-graph build 2>/dev/null || echo "CRG unavailable — skip code metrics"
+"${CRG:-code-review-graph}" build 2>/dev/null || echo "CRG unavailable — skip code metrics"
 ```
 
 ## Step 4 — identify reduction candidates

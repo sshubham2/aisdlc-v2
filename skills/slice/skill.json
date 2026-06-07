@@ -76,6 +76,7 @@
       "kind": "external-artifact",
       "produced_by": [
         "adopt",
+        "setup",
         "sync"
       ],
       "purpose": "Source graph for code-review-graph queries and PSQ-1 blast-radius computation."

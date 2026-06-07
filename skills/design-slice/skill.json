@@ -19,6 +19,7 @@
       "kind": "external-artifact",
       "produced_by": [
         "adopt",
+        "setup",
         "sync"
       ],
       "purpose": "Source for reachability, blast-radius, and shortest-path queries before designing."

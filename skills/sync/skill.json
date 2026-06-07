@@ -172,6 +172,7 @@
       ],
       "created_by": [
         "adopt",
+        "setup",
         "sync"
       ],
       "edited_by": [],

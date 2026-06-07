@@ -32,7 +32,7 @@ if [ -d ".code-review-graph" ]; then echo "CRG=present"; else echo "CRG=missing"
 
 Verify code-review-graph is installed. Run:
 ```bash
-code-review-graph --version 2>/dev/null && echo "CRG_OK" || echo "CRG_MISSING"
+"${CRG:-code-review-graph}" --version 2>/dev/null && echo "CRG_OK" || echo "CRG_MISSING"
 ```
 If `CRG_MISSING`: **STOP** and tell the user to install it (`pip install code-review-graph`, then `code-review-graph install --platform claude-code`), then re-run `/adopt`.
 
@@ -42,7 +42,7 @@ If injected state shows `EXISTING_VAULT=true`: ask via `AskUserQuestion` — mer
 
 Build (or refresh) the code graph **before asking the user anything**:
 ```bash
-code-review-graph build .
+"${CRG:-code-review-graph}" build .
 ```
 
 Then read (in order of trust):

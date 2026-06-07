@@ -4,7 +4,7 @@
 
 `ai-sdlc` turns "build this feature" into a disciplined, reviewable pipeline: risk-first **slicing** with an
 in-loop **spike gate**, two-persona **adversarial review** (a Builder and a forked Critic), machine-queryable
-**JSON vault artifacts**, and one unified **candidate backlog**. It ships 26 skills, named review agents, a
+**JSON vault artifacts**, and one unified **candidate backlog**. It ships 28 skills, named review agents, a
 shared Python tooling library, and a SessionStart hook — all as one plugin.
 
 The pipeline writes its artifacts to an **external vault** (outside your code repo) so the design record never
@@ -18,9 +18,9 @@ pollutes your source tree, and every project gets its own isolated, worktree-sha
 |------|-----|-------|
 | **Claude Code** | the host runtime | desktop / CLI / IDE |
 | **Python 3** | the bundled tooling scripts | resolved automatically; see [Python interpreter](#python-interpreter) to override |
-| **PyYAML** | only `/diagnose` (+ a YAML fallback in `slice-candidates`) | `pip install pyyaml`; everything else is stdlib-only |
+| **PyYAML** | only `/diagnose` (+ a YAML fallback in `slice-candidates`) | installed for you by `/ai-sdlc:setup`; everything else is stdlib-only |
 | **git** | recommended | gives each repo a stable, worktree-shared vault key (works without it, but the vault then keys on the current directory) |
-| **code-review-graph** *(optional)* | blast-radius coupling in `/slice-candidates` + structural queries in several skills | `pip install code-review-graph`; absent → graceful degrade |
+| **code-review-graph** *(recommended)* | code-graph queries (blast-radius, reachability) in ~15 skills + the CRG MCP server | installed & registered by `/ai-sdlc:setup`; absent → graceful degrade |
 
 ---
 
@@ -38,7 +38,28 @@ path. The plugin's **SessionStart hook fires automatically** once installed — 
 interpreter and exposing it to every skill.
 
 > **Windows:** Claude Code runs plugin hooks via the bundled **git-bash**, not PowerShell. The shipped hook is
-> POSIX bash, so this works out of the box as long as Git for Windows (git-bash) is present.
+> a tiny POSIX-bash bootstrap (it hands off to Python), so this works out of the box as long as Git for
+> Windows (git-bash) is present.
+
+### First run: `/ai-sdlc:setup`
+
+After installing the plugin, run the one-time dependency doctor:
+
+```
+/ai-sdlc:setup
+```
+
+It resolves a working Python, installs the runtime deps (PyYAML + `code-review-graph`) **with visible
+progress**, registers the `code-review-graph` **MCP server** for Claude Code (a project-scoped, gitignored
+`.mcp.json`), builds the code graph, then prints the next steps. Two of them matter:
+
+1. **Restart Claude Code** — MCP servers load at startup, so the CRG graph tools only appear on the next launch.
+2. **Approve the one-time trust prompt** for `code-review-graph`; then `/mcp` should show it connected.
+
+`/ai-sdlc:setup` is idempotent — re-run it any time the toolchain looks broken (e.g. a skill reports
+`CRG_MISSING`). The SessionStart hook also nudges you to run it whenever a dependency is missing. Prefer a
+silent, automatic install instead? Set `AI_SDLC_AUTO_INSTALL=1` before launching Claude Code and the hook
+installs the deps itself (MCP registration still goes through `/ai-sdlc:setup`).
 
 ### Local development
 
@@ -64,7 +85,7 @@ Neither is hard-coded.
 
 ### Python interpreter
 
-The SessionStart hook (`hooks/setup-env.sh`) resolves an interpreter and persists it as `$PY` for every skill.
+The SessionStart hook resolves an interpreter and persists it as `$PY` (forward-slash-normalized, so it survives the shell round-trip) for every skill. The hook is a tiny bash bootstrap (`hooks/setup-env.sh`) that hands all logic to a Python resolver (`hooks/setup_env.py`).
 Resolution order:
 
 ```
@@ -179,7 +200,7 @@ skills/<name>/
   skill.json           generated design manifest (see below)
 agents/                named Critic / worker personas (system prompts)
 scripts/lib/           shared Python tooling used by >1 skill (vault_edit, the vault-root resolver, …)
-hooks/                 SessionStart hook (resolves $PY) + setup-env.sh
+hooks/                 SessionStart hook: setup-env.sh (bootstrap shim) + setup_env.py (resolver)
 schemas/               artifact schemas-by-example
 skill-graph.json       the whole pipeline as one dependency graph (generated)
 .build/                reproducible build pipeline: source manifests + the aggregator
@@ -188,7 +209,7 @@ requirements.txt       runtime Python deps (PyYAML; optional code-review-graph)
 
 ### Development
 
-`skill.json` (×26), each skill's `examples/`, and `skill-graph.json` are **generated** from the source manifests
+`skill.json` (×28), each skill's `examples/`, and `skill-graph.json` are **generated** from the source manifests
 in `.build/manifests/` — they are the diffable *design record*, not hand-maintained. `SKILL.md` and `scripts/`
 are hand-authored. To change a skill's design metadata, edit its `.build/manifests/batch*.json` entry and
 regenerate:
@@ -207,4 +228,4 @@ python3 .build/cross_block_audit.py skills/*/SKILL.md
 
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.0.3
+Shubhendu Shubham · plugin `ai-sdlc` v2.5.0

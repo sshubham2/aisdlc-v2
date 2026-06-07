@@ -155,7 +155,7 @@ def resolve_base() -> Path:
     NORMAL path → default (not an error)."""
     cfg = Path(os.path.expanduser(_BASE_CONFIG_FILE))
     try:
-        text = cfg.read_text(encoding="utf-8").strip()
+        text = cfg.read_text(encoding="utf-8-sig").strip()  # utf-8-sig strips a leading BOM (PowerShell Out-File adds one; plain utf-8 leaves ﻿ in the path)
     except (FileNotFoundError, OSError, UnicodeDecodeError):
         text = ""
     return Path(os.path.expanduser(text or _DEFAULT_BASE))
@@ -206,7 +206,7 @@ def _read_config_at(common: str | None) -> str | None:
     try:
         if not cfg.exists():
             return None  # no pin written (the normal case)
-        text = cfg.read_text(encoding="utf-8").strip()
+        text = cfg.read_text(encoding="utf-8-sig").strip()  # utf-8-sig strips a leading BOM (PowerShell Out-File adds one; plain utf-8 leaves ﻿ in the path)
     except (OSError, UnicodeDecodeError) as exc:
         _stderr(
             f"WARN: AI-SDLC vault-root config at {cfg} is present but unreadable "
@@ -233,6 +233,8 @@ def _resolve_vault_root() -> tuple[Path, str]:
     v2 case, fired on every tool import — stays SILENT to avoid per-import noise.
     """
     env = os.environ.get(_ENV_VAR)
+    if env:
+        env = env.lstrip("\ufeff").strip()  # tolerate a leading BOM / whitespace (PowerShell-written values, stale env-file round-trips)
     if env:
         _stderr(f"INFO: AI-SDLC vault root = {env!r} (via {_ENV_VAR} env var).")
         return Path(env), "env"

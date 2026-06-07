@@ -6,8 +6,9 @@
 #
 #   $PY -m pip install -r requirements.txt
 #
-# (The SessionStart hook hooks/setup-env.sh resolves $PY and best-effort-installs THIS file into
-#  it whenever a dep is missing — opt out with AI_SDLC_NO_AUTO_INSTALL=1.)
+# (The SessionStart hook resolves $PY but no longer installs: the heavy install moved to the
+#  interactive /ai-sdlc:setup skill, where pip output is visible. Opt into the old silent hook
+#  auto-install with AI_SDLC_AUTO_INSTALL=1.)
 PyYAML>=6.0
 
 # ── code-review-graph (CRG) ──────────────────────────────────────────────────

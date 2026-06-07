@@ -85,7 +85,7 @@ the code as it is *now*. Independence from `/diagnose` is deliberate — bug-hun
 TARGET="$PWD"; for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
 OUT="$TARGET/bug-hunt-out"; mkdir -p "$OUT/findings" "$OUT/sections" "$OUT/summary" "$OUT/.tmp"
 rm -rf "$OUT/.code-review-graph"                       # discard any prior graph — force a fresh build
-code-review-graph build "$TARGET" --out "$OUT/.code-review-graph"
+"${CRG:-code-review-graph}" build "$TARGET" --out "$OUT/.code-review-graph"
 ```
 
 ## Step 3 — Risk-rank into a work-list (depth, not breadth)

@@ -34,7 +34,7 @@ If the injected mode is not `heavy` → **STOP**: print "sync is Heavy-mode only
 ## Step 1 — Build code graph (CRG)
 
 ```bash
-code-review-graph build
+"${CRG:-code-review-graph}" build
 ```
 
 Produces `.code-review-graph/` — AST-level structure (classes, functions, endpoints, imports, types). All

@@ -41,6 +41,7 @@
       "kind": "external-artifact",
       "produced_by": [
         "adopt",
+        "setup",
         "sync"
       ],
       "purpose": "God-node detection: read pre-built graph report for highest in/out degree nodes"

@@ -37,7 +37,7 @@ MISSING. `${CLAUDE_SKILL_DIR}`-relative resolution works for both a plugin-cache
 
 ```bash
 test -n "$PY" && test -f "$PY"                          && echo "venv: OK"   || echo "venv: MISSING"
-code-review-graph --version >/dev/null 2>&1             && echo "crg: OK"    || echo "crg: MISSING (optional)"
+"${CRG:-code-review-graph}" --version >/dev/null 2>&1   && echo "crg: OK"    || echo "crg: MISSING (optional)"
 test -f "${CLAUDE_SKILL_DIR}/../../agents/critique.md"  && echo "agents: OK" || echo "agents: MISSING"
 test -f "${CLAUDE_SKILL_DIR}/../slice/SKILL.md"         && echo "skills: OK" || echo "skills: MISSING"
 ```
@@ -160,8 +160,8 @@ If `crg` passed Step 0, offer via `AskUserQuestion`:
 
 If yes:
 ```bash
-code-review-graph install --platform claude-code
-code-review-graph build .
+"${CRG:-code-review-graph}" install --platform claude-code
+"${CRG:-code-review-graph}" build .
 ```
 
 If the directory is not a git repo and `code-review-graph install` fails with a git error: **STOP**. Ask:

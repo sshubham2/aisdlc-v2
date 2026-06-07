@@ -67,6 +67,7 @@
       "kind": "external-artifact",
       "produced_by": [
         "adopt",
+        "setup",
         "sync"
       ],
       "purpose": "Code graph queried for brownfield component seeding (Step 0)"

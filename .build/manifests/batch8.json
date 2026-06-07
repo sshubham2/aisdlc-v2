@@ -1,0 +1,77 @@
+[
+  {
+    "name": "setup",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "Interactive, side-effecting dependency doctor: streams live pip + code-review-graph output to the user, prints a status report, may STOP and ask (no interpreter resolvable / target not a git repo), and writes repo-root side-effects (.mcp.json, .gitignore, .code-review-graph/) in the user's cwd. disable-model-invocation (user-only, never auto-run). All of this needs the parent conversation's tool access, visible terminal, and cwd - not a forked subagent. Logic lives in scripts/setup.py; the SKILL.md bash is a one-line $PYX bootstrap.",
+    "summary": "One-shot dependency doctor + installer for the AI SDLC pipeline. A tiny bash bootstrap resolves a working Python 3 ($PYX), then hands all work to scripts/setup.py: install the runtime deps (PyYAML + code-review-graph) into it with VISIBLE streaming progress, verify them, register the code-review-graph MCP server for Claude Code (project .mcp.json, gitignored because the abs interpreter path is machine-specific), build the code graph, and print a status report plus the exact next steps (restart Claude Code + approve the MCP trust prompt). Idempotent - installs only what is missing. Fixes the silent/opaque first-run SessionStart-hook install by doing it interactively where the user can see it. The visible-install counterpart to the probe-and-nudge SessionStart hook (hooks/setup_env.py).",
+    "agents": [],
+    "methodology_tools": [
+      {
+        "name": "setup",
+        "invocation": "$PYX \"${CLAUDE_SKILL_DIR}/scripts/setup.py\" [--check] [--no-mcp] [--no-graph] [repo]",
+        "purpose": "The whole skill body in Python (os/pathlib/subprocess - no bash-on-Windows path/encoding/quoting traps): resolve sys.executable, install PyYAML + code-review-graph (streaming, visible), verify imports, register the CRG MCP server, gitignore .mcp.json, build the graph, print a status table + next steps. --check prints current toolchain state without changes (used for the live-state injection)."
+      }
+    ],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "type": "external-package",
+        "invocation": "$PYX -m code_review_graph install --platform claude-code --no-instructions --no-skills --no-hooks -y | $PYX -m code_review_graph build",
+        "purpose": "Installed by setup (pip), then driven to register the project-scoped MCP server (writes .mcp.json) and build the code graph (.code-review-graph/) so the MCP tools + CLI have data.",
+        "found_in_temp": false,
+        "note": "External pip package (github.com/tirth8205/code-review-graph), MCP-native; intentionally not bundled in the plugin."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      {
+        "name": "Bash",
+        "purpose": "Bootstrap a working interpreter ($PYX) and exec scripts/setup.py; run the --check live-state probe"
+      },
+      {
+        "name": "Read",
+        "purpose": "Read setup.py's streamed report/exit to relay the status table + next steps to the user"
+      },
+      {
+        "name": "AskUserQuestion",
+        "purpose": "Reserved for interactive gates (e.g. interpreter unresolved / not a git repo) surfaced by setup.py"
+      }
+    ],
+    "file_access": [
+      {
+        "path": ".mcp.json",
+        "kind": "side-effect",
+        "access": "create",
+        "mechanism": "code-review-graph",
+        "safety_marker": null,
+        "modes": ["minimal", "standard", "heavy"],
+        "format": "json",
+        "purpose": "Register the code-review-graph MCP server for Claude Code (project-scoped stdio config; absolute interpreter path). Skipped by --no-mcp."
+      },
+      {
+        "path": ".gitignore",
+        "kind": "side-effect",
+        "access": "append",
+        "mechanism": "raw-write",
+        "safety_marker": null,
+        "modes": ["minimal", "standard", "heavy"],
+        "format": "other",
+        "purpose": "Append .mcp.json so the machine-specific absolute interpreter path it carries never commits."
+      },
+      {
+        "path": ".code-review-graph/",
+        "kind": "side-effect",
+        "access": "create",
+        "mechanism": "code-review-graph",
+        "safety_marker": null,
+        "modes": ["minimal", "standard", "heavy"],
+        "format": "other",
+        "purpose": "Build the code graph so the CRG MCP server + CLI have data to serve. Skipped by --no-graph."
+      }
+    ],
+    "hands_off_to": ["triage", "adopt", "pulse"],
+    "source": "skills/setup/SKILL.md (new in v2 - dependency doctor + installer; no v1 reference; counterpart to hooks/setup_env.py)"
+  }
+]
