@@ -133,10 +133,22 @@ Do NOT read individual slice design/mission files (active slice excepted). Do NO
 | Any worktree `MERGED` (worktree still exists post-merge) | WARN: CLEANUP-CANDIDATE — `git worktree remove <wt-path>` (merged branch leaked; run regardless of CAL-1 state) |
 | Any worktree `UNKNOWN` (classification indeterminate) | WARN: unknown worktree state on `<branch>` — inspect manually before continuing; surface the sub-reason (no milestone found / divergent commit history / missing branch) |
 | No BRANCH-2 override + CAL-1 overdue (>20 slices) | `/critic-calibrate` |
-| **No active slice** (no worktree, `slices/_index.json` absent/no active entry, no `slices/slice-NNN/milestone.json`) + Heavy mode + architecture **present** (`threat-model.json` exists per the probe) | `/user-test` (if the concept is B2C) or `/slice` — **architecture is DONE; never recommend re-running `/heavy-architect`** |
-| **No active slice** + Heavy mode + architecture **absent** (`threat-model.json` absent per the probe) | `/heavy-architect` |
-| **No active slice** + Standard / Minimal mode | `/slice` (or `/discover` if `candidates.json` is empty/absent) |
+| **Pre-slice** (no worktree, `slices/_index.json` absent/no active entry, no `slices/slice-NNN/milestone.json`) + `triage.json` **absent** | `/triage` (greenfield) or `/adopt` (existing codebase) — project not classified yet |
+| **Pre-slice** + `triage.json` present + `concept.json` **absent** (discover/adopt not run) | `/discover` — discovery (concept + actors + first candidates) gates everything after triage, in **every** mode. In Heavy, discover runs **before** `/heavy-architect` — do NOT skip to architecture. |
+| **Pre-slice** + `concept.json` present + Heavy mode + architecture **absent** (`threat-model.json` absent per the probe) | `/heavy-architect` |
+| **Pre-slice** + `concept.json` present + Heavy mode + architecture **present** (`threat-model.json` exists per the probe) | `/user-test` (if the concept is B2C) or `/slice` — **architecture is DONE; never re-recommend `/heavy-architect`** |
+| **Pre-slice** + `concept.json` present + Standard / Minimal mode | `/slice` (or `/slice-candidates` / `/discover` if `candidates.json` is empty/absent) |
 | Otherwise (an active slice exists) | Active-slice `milestone.json` `next_action` field |
+
+This chain is exhaustive for the pre-slice phase and covers **both** entry paths: greenfield (`/triage` → `/discover`)
+and brownfield (`/adopt` — which writes `triage.json` + `concept.json` + `candidates.json` up front, so it lands in
+the concept-present rows and is **never** told to re-run `/triage` or `/discover`). The phase signals are purely
+file-existence (`triage.json` → `concept.json` → `threat-model.json` → `slices/`), so each phase is detected from
+what its predecessor produced — not inferred.
+
+**Fail-safe (avoid confusion):** if NO row matches, or the signals are contradictory (an unexpected partial vault —
+e.g. `concept.json` present but `triage.json` absent), do **not** improvise a slash command. State the observed
+phase files and recommend `/pulse --full` or a manual check. A wrong "run X next" is worse than "here's what I see."
 
 ## Step 3 — Render via Haiku dispatch
 
@@ -183,8 +195,11 @@ The Haiku agent fills the template and returns the summary text. Main thread pri
 [From the architecture presence probe. Render only when Mode is Heavy:]
 - threat-model: <present (N) | absent> · requirements: <present (N) | absent> · non-functional: <present (N) | absent>
 - cost-estimation: <present | absent> · diagrams: <present | absent> · actors: <present (N files) | absent>
-[If threat-model present AND no slices yet: "Architecture phase complete → next is /user-test or /slice."]
-[If threat-model absent AND no slices yet: "Architecture not yet built → run /heavy-architect."]
+- Phase: <gate on concept.json so the order triage → discover → heavy-architect is respected:
+  • `concept.json` absent → "discovery not done yet — architecture comes after /discover"
+  • `concept.json` present + `threat-model.json` absent → "pending — /heavy-architect not yet run"
+  • `threat-model.json` present → "complete — core architecture artifacts exist">
+  (Do NOT name a slash command here — the single Recommended-next-action line below is authoritative.)
 
 ## Candidates
 - Backlog: <N not-started + in-flight>  (blocked-on-spike: <N>)
