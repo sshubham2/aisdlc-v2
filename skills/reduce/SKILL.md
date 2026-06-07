@@ -34,14 +34,15 @@ cat "$AI_SDLC_VAULT_ROOT/concept.json" 2>/dev/null | $PY -c "import sys,json; c=
 
 Vault file inventory (count by type):
 ```!
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 $PY -c "
-import pathlib, os
-vault = pathlib.Path(os.environ.get('AI_SDLC_VAULT_ROOT', 'architecture'))
+import pathlib, sys
+vault = pathlib.Path(sys.argv[1])
 for kind, glob in [('components', 'components/*.json'), ('contracts', 'contracts/*.json'), ('adrs', 'decisions/ADR-*.json'), ('slices', 'slices/slice-*/mission-brief.json')]:
     count = len(list(vault.glob(glob)))
     print(f'{kind}: {count}')
 print(f'total_vault_files: {len(list(vault.rglob(\"*.json\")))}')
-" 2>/dev/null || echo "vault inventory unavailable"
+" "$VAULT" 2>/dev/null || echo "vault inventory unavailable"
 ```
 
 ## Step 1 — determine thresholds

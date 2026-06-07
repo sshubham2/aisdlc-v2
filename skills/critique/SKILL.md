@@ -22,28 +22,33 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/pulse_worktree_resolver.py" --detect 
 
 Active slice mission-brief (mode + risk tier + critic_required):
 ```!
-$PY -c "import json,glob,os; v=os.environ.get('AI_SDLC_VAULT_ROOT','architecture'); slices=sorted(glob.glob(f'{v}/slices/slice-*/mission-brief.json')); f=slices[-1] if slices else None; d=json.load(open(f)) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" 2>/dev/null || echo "{}"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY -c "import json,glob,sys; v=sys.argv[1]; slices=sorted(glob.glob(f'{v}/slices/slice-*/mission-brief.json')); f=slices[-1] if slices else None; d=json.load(open(f)) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
 Active slice design.json (component contracts for Critic):
 ```!
-$PY -c "import json,glob,os; v=os.environ.get('AI_SDLC_VAULT_ROOT','architecture'); slices=sorted(glob.glob(f'{v}/slices/slice-*/design.json')); f=slices[-1] if slices else None; print(open(f).read() if f else '{}')" 2>/dev/null || echo "{}"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY -c "import json,glob,sys; v=sys.argv[1]; slices=sorted(glob.glob(f'{v}/slices/slice-*/design.json')); f=slices[-1] if slices else None; print(open(f).read() if f else '{}')" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
 Cross-slice action points:
 ```!
-$PY -c "import json,os; v=os.environ.get('AI_SDLC_VAULT_ROOT','architecture'); f=f'{v}/slices/action-points.json'; print(open(f).read() if os.path.exists(f) else '{}')" 2>/dev/null || echo "{}"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/slices/action-points.json'; print(open(f).read() if os.path.exists(f) else '{}')" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
 Slice index (most-recent-10):
 ```!
-$PY -c "import json,os; v=os.environ.get('AI_SDLC_VAULT_ROOT','architecture'); f=f'{v}/slices/_index.json'; print(open(f).read() if os.path.exists(f) else '{}')" 2>/dev/null || echo "{}"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/slices/_index.json'; print(open(f).read() if os.path.exists(f) else '{}')" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
 Project-calibrated checks — `active_checks` ONLY (learned from THIS project's past Critic misses via `/critic-calibrate`;
 this is the project overlay layered on the base `agents/critique.md`). Loads only this small section, never `runs[]`:
 ```!
-$PY -c "import json,os; v=os.environ.get('AI_SDLC_VAULT_ROOT','architecture'); f=f'{v}/critic-calibration-log.json'; d=json.load(open(f)) if os.path.exists(f) else {}; print(json.dumps(d.get('active_checks',[]),indent=2))" 2>/dev/null || echo "[]"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/critic-calibration-log.json'; d=json.load(open(f)) if os.path.exists(f) else {}; print(json.dumps(d.get('active_checks',[]),indent=2))" "$VAULT" 2>/dev/null || echo "[]"
 ```
 
 ## Mode/tier gating

@@ -20,7 +20,7 @@ After `/adopt`, the normal pipeline continues: `/discover` (optional, if concept
 
 ```!
 # Prior vault check
-AI_SDLC_VAULT="${AI_SDLC_VAULT_ROOT:-architecture}"
+AI_SDLC_VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 if [ -f "$AI_SDLC_VAULT/triage.json" ]; then echo "EXISTING_VAULT=true"; else echo "EXISTING_VAULT=false"; fi
 # Stack probe
 for f in package.json pyproject.toml go.mod Cargo.toml; do [ -f "$f" ] && echo "STACK_FILE=$f"; done
@@ -144,7 +144,8 @@ Set `"status": "accepted"`, add a field `"source": "firsthand-user-recall"`.
 Create all vault paths. Failure to create any → STOP, surface error.
 
 ```bash
-VAULT="${AI_SDLC_VAULT_ROOT:-architecture}"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+[ -n "$VAULT" ] || { echo "FATAL: vault root unresolved — run /ai-sdlc:setup or set AI_SDLC_VAULT_ROOT"; exit 1; }
 mkdir -p "$VAULT/decisions" "$VAULT/spikes" "$VAULT/slices" "$VAULT/components" "$VAULT/contracts" "$VAULT/schemas"
 ```
 
