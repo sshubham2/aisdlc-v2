@@ -63,6 +63,26 @@ def _stream(cmd: list[str]) -> int:
         return 1
 
 
+def hook_health() -> tuple[bool, list[str]]:
+    """Diagnose whether the SessionStart hook set its env vars cleanly THIS session.
+    A skill cannot write $CLAUDE_ENV_FILE (it is handed only to hooks), so /setup can
+    only DIAGNOSE these -- repairing them needs the hook to re-run, i.e. a restart."""
+    issues = []
+    py = os.environ.get("PY", "")
+    if not py:
+        issues.append("PY unset -- every skill that calls $PY will fail")
+    elif not os.path.isfile(py):
+        issues.append(f"PY is not a valid file ({py!r}) -- a mangled path (old-hook bug, fixed 2.5.1)")
+    if not os.environ.get("CRG"):
+        issues.append("CRG unset -- CRG calls fall back to a bare PATH lookup (works only if on PATH)")
+    vault = os.environ.get("AI_SDLC_VAULT_ROOT", "")
+    if not vault:
+        issues.append("AI_SDLC_VAULT_ROOT unset -- skills resolve the vault per-call (slower, still external)")
+    elif vault.startswith("\ufeff"):
+        issues.append("AI_SDLC_VAULT_ROOT has a leading BOM -- old-hook bug (fixed 2.5.1)")
+    return (not issues, issues)
+
+
 def do_check(repo: str) -> int:
     print(f"interpreter : {PY}")
     print(f"python      : {sys.version.split()[0]}")
@@ -74,6 +94,10 @@ def do_check(repo: str) -> int:
     print(f"mcp         : {'registered (./.mcp.json)' if registered else 'NOT registered'}")
     print(f"graph       : {'built (./.code-review-graph)' if (Path(repo) / '.code-review-graph').is_dir() else 'NOT built'}")
     print(f"git         : {'repo' if _is_git(repo) else 'NOT a git repo'}")
+    ok, issues = hook_health()
+    print(f"hook env    : {'OK (PY/CRG/VAULT all set by the hook)' if ok else 'DEGRADED'}")
+    for i in issues:
+        print(f"  ! {i}")
     return 0
 
 
@@ -158,6 +182,19 @@ NEXT STEPS
   2. On restart, APPROVE the one-time trust prompt for `code-review-graph` (stdio servers need
      consent). Confirm with /mcp - it should show "connected".
   3. Then start the pipeline:  /triage (greenfield) | /adopt (brownfield) | /pulse (state).""")
+
+    ok, issues = hook_health()
+    if not ok:
+        print("\n" + "-" * 64)
+        print("HOOK ENV: DEGRADED -- the SessionStart hook did not set its vars cleanly this session:")
+        for i in issues:
+            print(f"  ! {i}")
+        print("\n/setup self-resolved its own interpreter and ran fine, but OTHER skills rely on")
+        print("$PY / $CRG / $AI_SDLC_VAULT_ROOT. A skill CANNOT set these for the session -- only the")
+        print("SessionStart hook can, at startup. To fix the whole session:")
+        print("  1. RESTART Claude Code so the hook re-runs.")
+        print("  2. If still broken after restart: reinstall the plugin (/plugin -> ai-sdlc) and/or")
+        print("     set AI_SDLC_PY to a Python 3 with FORWARD slashes before launching Claude Code.")
     return 0
 
 
