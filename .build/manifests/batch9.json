@@ -4,12 +4,12 @@
     "user_invokable": true,
     "requires_full_context": true,
     "runs_in": "main-agent",
-    "context_rationale": "Inline orchestrator: resolves the active slice folder, spawns the forked slice-story narrator subagent for the heavy plain-language synthesis (keeping the parent context lean), then renders the returned JSON to story.html via render_story.py and performs an OUTWARD side-effect — uploading the report to Google Drive via the Google Drive MCP tool — and ends by prompting the user to run /build-slice. The outward push + the user prompt + the slice-folder write all need the parent conversation's tool access and authority, so the orchestrator stays main-agent and only the narration is forked.",
-    "summary": "Turns one slice's internal artifacts into a single plain-language STORY for a mixed technical / non-technical audience (tilted slightly technical, zero pipeline jargon), rendered as a standalone story.html. Adaptive across the lifecycle: before building it tells the objective, what was proven in spikes, how it's built, and what the design review changed; after building it adds what was built, what code review found, what reality testing showed, and what was learned. A forked slice-story narrator subagent reads the artifacts and returns structured JSON; render_story.py renders the HTML deterministically; the report is saved in the slice folder AND pushed to Google Drive; then the user is asked to start /build-slice when ready. Runs just after /critique (the pre-build report) and is also user-invokable any time. Never modifies source files.",
+    "context_rationale": "Inline orchestrator: resolves the active slice folder, spawns the forked slice-story narrator subagent for the heavy plain-language synthesis (keeping the parent context lean), then renders the returned JSON to story.html via render_story.py and delivers it to the user with SendUserFile (proactive status when auto-invoked / the user may be away, so it reaches their phone over Remote Control), and ends by prompting the user to run /build-slice. The delivery + the user prompt + the slice-folder write all need the parent conversation's tool access, so the orchestrator stays main-agent and only the narration is forked.",
+    "summary": "Turns one slice's internal artifacts into a single plain-language STORY for a mixed technical / non-technical audience (tilted slightly technical, zero pipeline jargon), rendered as a standalone story.html. Adaptive across the lifecycle: before building it tells the objective, what was proven in spikes, how it's built, and what the design review changed; after building it adds what was built, what code review found, what reality testing showed, and what was learned. A forked slice-story narrator subagent reads the artifacts and returns structured JSON; render_story.py renders the HTML deterministically; the report is saved in the slice folder and delivered straight to the user (phone included, over Remote Control) via SendUserFile; then the user is asked to start /build-slice when ready. Runs just after /critique (the pre-build report) and is also user-invokable any time. Never modifies source files.",
     "agents": [
       {
         "name": "slice-story",
-        "when": "After the active slice folder is resolved — before rendering/upload",
+        "when": "After the active slice folder is resolved — before rendering/delivery",
         "purpose": "Forked narrator: reads the slice artifacts handed to it, translates every pipeline code into plain English, and returns the slice STORY as structured story-sections JSON (no file writes, no HTML) so the heavy synthesis stays out of the parent context"
       }
     ],
@@ -25,7 +25,7 @@
     "harness_tools": [
       {
         "name": "Read",
-        "purpose": "Read the active slice artifacts (mission-brief.json, design.json, spikes, ADRs, critique.json, critique-review.json, and any post-build build-log/code-review/validation/reflection) to hand to the narrator; read story.html back for the Google Drive upload"
+        "purpose": "Read the active slice artifacts (mission-brief.json, design.json, spikes, ADRs, critique.json, critique-review.json, and any post-build build-log/code-review/validation/reflection) to hand to the narrator"
       },
       {
         "name": "Write",
@@ -40,8 +40,8 @@
         "purpose": "Spawn the named slice-story narrator subagent (subagent_type: slice-story) for the forked plain-language synthesis"
       },
       {
-        "name": "mcp__claude_ai_Google_Drive__create_file",
-        "purpose": "Upload story.html to Google Drive (text/html, conversion disabled) and return the shareable link; degrades gracefully with a local-only note if the Drive MCP server is not connected"
+        "name": "SendUserFile",
+        "purpose": "Deliver the rendered story.html straight to the user (proactive status when auto-invoked / the user may be away, so it reaches their phone over Remote Control). The primary delivery path — no external service, no extra permission, and not gated by the auto-mode safety classifier since the file goes to the user's own session rather than a third-party endpoint"
       }
     ],
     "file_access": [
@@ -121,16 +121,10 @@
         "path": "<vault>/slices/slice-NNN-<name>/story.html",
         "kind": "content-file", "access": "create", "mechanism": "raw-write", "safety_marker": null,
         "modes": ["minimal", "standard", "heavy"], "format": "html",
-        "purpose": "The deliverable: a standalone, self-contained plain-language report of the slice, saved in the slice folder and uploaded to Google Drive"
-      },
-      {
-        "path": "Google Drive: slice story report (story.html)",
-        "kind": "side-effect", "access": "create", "mechanism": "mcp-google-drive", "safety_marker": null,
-        "modes": ["minimal", "standard", "heavy"], "format": "other",
-        "purpose": "Outward push of story.html to the user's Google Drive via the Drive MCP create_file tool (text/html, conversion disabled); returns a shareable link. Skipped gracefully if the Drive MCP server is not connected."
+        "purpose": "The deliverable: a standalone, self-contained plain-language report of the slice, saved in the slice folder and delivered to the user via SendUserFile (reaches them wherever they are, phone included)"
       }
     ],
     "hands_off_to": ["build-slice"],
-    "source": "skills/slice-story/SKILL.md (new in v2 — plain-language per-slice report; spawns the slice-story narrator agent; renders story.html via render_story.py and pushes it to Google Drive; runs just after /critique, before /build-slice)"
+    "source": "skills/slice-story/SKILL.md (new in v2 — plain-language per-slice report; spawns the slice-story narrator agent; renders story.html via render_story.py and delivers it to the user via SendUserFile; runs just after /critique, before /build-slice)"
   }
 ]

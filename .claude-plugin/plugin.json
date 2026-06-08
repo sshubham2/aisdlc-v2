@@ -1,6 +1,6 @@
 {
   "name": "ai-sdlc",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Spec-driven AI SDLC pipeline (v2). Risk-first slicing with an in-loop spike gate, two-persona adversarial review (Builder + forked Critic), JSON vault artifacts, and a unified candidate backlog. Skills, agents, and shared tooling bundled as one plugin.",
   "author": { "name": "Shubhendu Shubham" },
   "keywords": ["sdlc", "spec-driven", "ai-pipeline", "slicing", "code-review"],

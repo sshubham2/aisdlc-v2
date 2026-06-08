@@ -1,9 +1,9 @@
 ---
 name: slice-story
-description: "Turns one slice's internal artifacts into a single plain-language STORY for a mixed technical / non-technical audience (tilted slightly technical, ZERO pipeline jargon), rendered as a standalone story.html. Adaptive across the lifecycle: before building it covers the objective, what was proven in spikes, how it's built, and what the design review changed; after building it adds what was built, what code review found, what reality testing showed, and what was learned. A forked slice-story narrator subagent does the heavy synthesis and returns structured JSON; render_story.py renders the HTML; the report is saved in the slice folder AND pushed to Google Drive; then you're asked to start /build-slice when ready."
-when_to_use: "Trigger phrases: /slice-story, 'tell the story of this slice', 'plain-language slice report', 'overview before build', 'explain this slice for non-engineers'. Runs automatically just after /critique (the pre-build report), and is user-invokable any time to get a readable report of where a slice stands. Optional arg: a slice id (default: the active slice); --no-drive to skip the Google Drive upload."
-argument-hint: "[slice-id] [--no-drive]"
-allowed-tools: Read, Write, Bash, Agent, mcp__claude_ai_Google_Drive__create_file
+description: "Turns one slice's internal artifacts into a single plain-language STORY for a mixed technical / non-technical audience (tilted slightly technical, ZERO pipeline jargon), rendered as a standalone story.html and delivered straight to you — including your phone over Remote Control — via SendUserFile. Adaptive across the lifecycle: before building it covers the objective, what was proven in spikes, how it's built, and what the design review changed; after building it adds what was built, what code review found, what reality testing showed, and what was learned. A forked slice-story narrator subagent does the heavy synthesis and returns structured JSON; render_story.py renders the HTML; then you're asked to start /build-slice when ready."
+when_to_use: "Trigger phrases: /slice-story, 'tell the story of this slice', 'plain-language slice report', 'overview before build', 'explain this slice for non-engineers'. Runs automatically just after /critique (the pre-build report), and is user-invokable any time to get a readable report of where a slice stands. Optional arg: a slice id (default: the active slice)."
+argument-hint: "[slice-id]"
+allowed-tools: Read, Write, Bash, Agent, SendUserFile
 ---
 
 # /slice-story — the slice's story, in plain language
@@ -13,8 +13,9 @@ background AND the engineer about to build it can both follow it. Slightly techn
 and **no pipeline jargon** (`AC2`, `C1`, `TRI-1`, "the Critic", "dispositions"…) ever reaches the page.
 
 The heavy synthesis is delegated to a forked **`slice-story` narrator subagent** so the parent context stays
-lean. This skill orchestrates: resolve the slice → spawn the narrator → render the HTML → save it in the slice
-folder AND push it to Google Drive → ask you to run `/build-slice` when ready. It never modifies source files.
+lean. This skill orchestrates: resolve the slice → spawn the narrator → render the HTML → **deliver it straight
+to the user via `SendUserFile`** (it reaches them wherever they are, phone included) → ask them to run
+`/build-slice` when ready. It never modifies source files.
 
 > Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` /
 > git config `aisdlc/vault-root`). Active slice = latest `<vault>/slices/slice-NNN-*/` (not under `archive/`).
@@ -30,8 +31,7 @@ $PY -c "import json,glob,os,sys; v=sys.argv[1]; ds=sorted([d for d in glob.glob(
 ## Step 0 — resolve the target slice
 
 From the injection above take `active_slice_dir` (absolute path), `slice`, `title`, `mode`, `risk_tier`, `stage`.
-If `$ARGUMENTS` names a slice id (a non-flag token like `slice-017`), target that folder instead
-(`<vault>/slices/<that-folder>/`). `--no-drive` in `$ARGUMENTS` skips the upload step.
+If `$ARGUMENTS` names a slice id (e.g. `slice-017`), target that folder instead (`<vault>/slices/<that-folder>/`).
 
 Prerequisite: the folder must contain at least `mission-brief.json`. If it doesn't, STOP:
 _"No slice to tell a story about — run /slice first."_ If `design.json` is absent, proceed but tell the user the
@@ -111,35 +111,32 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/render_story.py" \
 `render_story.py` is deterministic, stdlib-only, and stamps the generation time. On a non-zero exit, report the
 stderr and stop — do not hand-assemble HTML.
 
-## Step 5 — push to Google Drive
+## Step 5 — deliver the report to the user
 
-Skip this step entirely if `--no-drive` was passed, or if the `mcp__claude_ai_Google_Drive__create_file` tool
-is not available in this session (Drive MCP not connected) — in that case just note "Google Drive not connected;
-report saved locally only" and continue.
+Send the rendered report straight to the user with the **`SendUserFile`** tool. This reaches them wherever they
+are — including a phone over Remote Control — with no external service and no extra permission, and (because the
+file goes to the user's own session, not a third-party endpoint) the auto-mode safety classifier does not block it:
 
-Otherwise read `<target-slice>/story.html` and upload it:
+- `files`: `["<target-slice>/story.html"]`
+- `status`: use `"proactive"` when `/slice-story` was auto-invoked by `/critique` or the user may be away (so it
+  pushes to their phone); use `"normal"` when the user just invoked `/slice-story` themselves and is watching.
+- `caption`: one short line, e.g.
+  `"Slice story — <slice-id> <title> (<stage-label>): a plain-language overview of the objective, how it's built, and what review changed."`
 
-- tool: `mcp__claude_ai_Google_Drive__create_file`
-- `title`: `"<slice-id> — <title> — slice story (<stage-label>).html"` (stage-label = the plain stage, e.g. "before building")
-- `textContent`: the full story.html contents
-- `contentMimeType`: `"text/html"`
-- `disableConversionToGoogleType`: `true`  (keep it a real HTML file, not a converted Google Doc)
-- `parentId`: if `$AI_SDLC_DRIVE_FOLDER` is set (or git config `aisdlc/drive-folder` resolves a folder id), pass it; otherwise omit (uploads to Drive root).
-
-Capture the returned file's link/id. If the upload errors, report the error but DO NOT fail the skill — the
-local `story.html` is the source of truth; Drive is a convenience copy.
+The local `<target-slice>/story.html` is the source of truth; `SendUserFile` surfaces that exact file. If the
+delivery tool is somehow unavailable, fall back to telling the user the local path — never fail the skill.
 
 ## Step 6 — report and hand off
 
-Tell the user, plainly:
+After delivering the file, tell the user plainly:
 
 ```
 Slice story ready — <slice-id> <title> (<stage-label>).
-  • Saved:  <target-slice>/story.html
-  • Drive:  <link>            (or "not connected / skipped")
+  • Delivered above (story.html) — open it for the full styled report.
+  • Saved at: <target-slice>/story.html
 
-This is a plain-language overview of the objective, what it took to get here, and — if review happened —
-what changed because of it. Open it, share it, or read it yourself.
+A plain-language overview of the objective, what it took to get here, and — if review happened — what changed
+because of it.
 
 When you're ready, run /build-slice to start building.
 ```
@@ -154,21 +151,21 @@ design, the user can loop back to `/design-slice` → `/critique` before buildin
 - Do NOT restate the narrator's persona/rules in the prompt — they live in `agents/slice-story.md`.
 - NO pipeline jargon in the deliverable. The narrator handles translation; if you spot a leaked code (`AC2`, `C1`, `TRI-1`…) in the output, send it back to re-translate.
 - WRITE story.html from the narrator's returned JSON only — never fabricate the story.
-- The Google Drive push is OUTWARD. It happens because this skill's job is to publish the report; honor `--no-drive` and degrade gracefully when Drive isn't connected. Never block the skill on an upload failure.
+- DELIVER the report with `SendUserFile` so it reaches the user wherever they are (phone included). Use `proactive` status when auto-invoked or the user may be away; `normal` when they're watching. Never fail the skill if delivery is unavailable — fall back to the local path.
 - HALT after reporting — never auto-invoke `/build-slice` (it is user-invoked by design).
-- READ-ONLY on source + the rest of the vault: this skill writes only `story-sections.json` + `story.html` in the slice folder (plus the Drive copy).
+- READ-ONLY on source + the rest of the vault: this skill writes only `story-sections.json` + `story.html` in the slice folder.
 
 ## Anti-patterns
 
 - Narrating in the main thread "to save a subagent call" — that re-pollutes the context this skill exists to keep lean.
 - Letting internal codes leak into prose because "the engineer will understand" — the report is for both audiences; codes go in the small grey `ref` tags only.
 - Padding the story with sections for stages that haven't happened (no build yet ⇒ no "what we built").
-- Failing the skill because Google Drive wasn't connected — the local report still shipped.
+- Only naming the local file path and not delivering it — always `SendUserFile` the report so the user can open it directly (especially on phone).
 
 ## Pipeline position
 
 - predecessor: `/slice-story` follows `/critique` (the pre-build report); also user-invokable out-of-loop any time
 - successor: `/build-slice`
-- auto-advance: false — generate + publish the report, then HALT and ask the user to run `/build-slice` when ready
-- on-clean-completion: write `story-sections.json` + `story.html`, push to Google Drive (unless `--no-drive` / not connected), report both locations, and prompt `/build-slice`. Do NOT auto-invoke the build.
+- auto-advance: false — generate + deliver the report, then HALT and ask the user to run `/build-slice` when ready
+- on-clean-completion: write `story-sections.json` + `story.html`, deliver `story.html` to the user via `SendUserFile` (proactive when auto-invoked / the user may be away), report the saved path, and prompt `/build-slice`. Do NOT auto-invoke the build.
 - user-input gates (halt auto-advance): always halts at Step 6 — the user reviews the story and starts the build (or loops back to `/design-slice`) themselves.

@@ -7,8 +7,8 @@
     "skills_delegable": 9,
     "named_agents_used": 7,
     "tools": 52,
-    "file_nodes": 86,
-    "edges": 557,
+    "file_nodes": 85,
+    "edges": 556,
     "md_to_json_targets": 47
   },
   "nodes": {
@@ -277,6 +277,11 @@
         "found": false
       },
       {
+        "id": "SendUserFile",
+        "type": "harness",
+        "found": false
+      },
+      {
         "id": "Skill",
         "type": "harness",
         "found": false
@@ -360,11 +365,6 @@
         "id": "finding_dedup",
         "type": "methodology-tool",
         "found": true
-      },
-      {
-        "id": "mcp__claude_ai_Google_Drive__create_file",
-        "type": "harness",
-        "found": false
       },
       {
         "id": "mock_budget_lint",
@@ -1350,17 +1350,6 @@
         "read_by": [
           "adopt"
         ],
-        "validated_by": []
-      },
-      {
-        "id": "Google Drive: slice story report (story.html)",
-        "kind": "side-effect",
-        "v2_format": "n/a",
-        "created_by": [
-          "slice-story"
-        ],
-        "edited_by": [],
-        "read_by": [],
         "validated_by": []
       },
       {
@@ -4446,7 +4435,7 @@
     },
     {
       "from": "slice-story",
-      "to": "mcp__claude_ai_Google_Drive__create_file",
+      "to": "SendUserFile",
       "type": "uses_harness"
     },
     {
@@ -4512,11 +4501,6 @@
     {
       "from": "slice-story",
       "to": "<vault>/slices/slice-NNN/story.html",
-      "type": "creates"
-    },
-    {
-      "from": "slice-story",
-      "to": "Google Drive: slice story report (story.html)",
       "type": "creates"
     },
     {

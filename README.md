@@ -155,6 +155,12 @@ python3 /path/to/aisdlc-v2/scripts/lib/_vault_paths.py
 > location yourself before switching. Precedence means a project with an env var or git-pin set will ignore the
 > base file.
 
+### Slice reports (`/slice-story`)
+
+`/slice-story` renders a plain-language report of a slice (`story.html`) and **delivers it straight to you** — it's
+pushed into the conversation, so it reaches you wherever you are, **including your phone over Remote Control**. The
+file is also saved in the slice folder. No external service, no upload step, no extra permission.
+
 ---
 
 ## The pipeline at a glance
@@ -168,6 +174,7 @@ triage / adopt  →  discover  →  (user-test)
      → risk-spike     (in-loop BLOCKING spike gate: prove the candidate's assumptions, or block)
      → design-slice
      → critique  (+ critique-review)
+     → slice-story    (plain-language report of the slice, delivered straight to you — phone included)
      → build-slice
      → code-review
      → validate-slice

@@ -260,7 +260,7 @@ parallel writers are possible (standard Edit is safe for the orchestrator's own 
 NO post-triage meta-review step.
 
 On CLEAN or NEEDS-FIXES: advance to `/slice-story` (it generates the plain-language pre-build report, saves it
-in the slice folder + pushes it to Google Drive, then prompts the user to run `/build-slice` when ready).
+in the slice folder + delivers it to you (phone included, via SendUserFile), then prompts the user to run `/build-slice` when ready).
 On BLOCKED: do NOT invoke any successor — HALT and surface instructions to the user.
 
 ## Critical rules
