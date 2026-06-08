@@ -58,7 +58,8 @@
         "critique",
         "critique-review",
         "drift-check",
-        "reflect"
+        "reflect",
+        "slice-story"
       ],
       "validated_by": [],
       "purpose": "Primary deliverable: just-enough spec covering what's new, components touched, contracts, data model deltas, wiring matrix, ADR refs, auth model, error model.",
@@ -95,6 +96,7 @@
         "design-slice",
         "pulse",
         "reflect",
+        "slice-story",
         "validate-slice"
       ],
       "validated_by": [],
@@ -133,6 +135,7 @@
         "heavy-architect",
         "reduce",
         "reflect",
+        "slice-story",
         "sync"
       ],
       "validated_by": [],

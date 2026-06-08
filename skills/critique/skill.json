@@ -84,7 +84,8 @@
         "build-slice",
         "commit-slice",
         "critique-review",
-        "reflect"
+        "reflect",
+        "slice-story"
       ],
       "validated_by": [],
       "purpose": "Critic findings, Builder draft dispositions, and user-ratified triage table",
@@ -121,6 +122,7 @@
         "design-slice",
         "pulse",
         "reflect",
+        "slice-story",
         "validate-slice"
       ],
       "validated_by": [],

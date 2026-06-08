@@ -1,6 +1,6 @@
 ---
 name: critique
-description: "Adversarial design review of the current slice by a separate Critic AI persona. Spawns a 'critique' subagent with 9 fixed attack dimensions, writes findings to critique.json, gates /build-slice behind user-owned TRI-1 triage. Mandatory in Standard (medium/high tier) and Heavy modes; skippable on low-tier slices with no mandatory triggers. BLOCKED verdict prevents auto-advance; CLEAN or NEEDS-FIXES proceed to /build-slice."
+description: "Adversarial design review of the current slice by a separate Critic AI persona. Spawns a 'critique' subagent with 9 fixed attack dimensions, writes findings to critique.json, gates /build-slice behind user-owned TRI-1 triage. Mandatory in Standard (medium/high tier) and Heavy modes; skippable on low-tier slices with no mandatory triggers. BLOCKED verdict prevents auto-advance; CLEAN or NEEDS-FIXES proceed to /slice-story (the plain-language pre-build report), then /build-slice."
 when_to_use: "Trigger phrases: /critique, 'critique this design', 'review the slice design', 'have the Critic review', 'adversarial review'. Use after /design-slice, before /build-slice. The forked adversarial review returns to the main thread for the interactive TRI-1 user triage gate."
 argument-hint: "[--force]"
 allowed-tools: Read, Grep, Bash, Write, Edit, Agent, AskUserQuestion, Skill
@@ -71,9 +71,10 @@ security-sensitive paths, methodology surface (`skills/**`, `agents/**`, `script
 
 **`/critique --force`**: run regardless of tier; record the reason in `critique.json`.
 
-**On skip**: update `milestone.json` (`stage: "critique"`, `next_action: "/build-slice"`, mark step done
+**On skip**: update `milestone.json` (`stage: "critique"`, `next_action: "/slice-story"`, mark step done
 as `skipped`). Print: _"Slice tier is `low`, no mandatory triggers. Skipping /critique — Builder self-review
-applies. Re-run with `/critique --force` to override."_ Then invoke `/build-slice` via Skill.
+applies. Re-run with `/critique --force` to override."_ Then invoke `/slice-story` via Skill (it produces the
+plain-language pre-build report, then prompts `/build-slice`).
 
 ## Prerequisite check
 
@@ -237,15 +238,15 @@ NFR-1 carry-over: slices with `mission-brief.json` mtime before 2026-05-06 are e
 ## Step 5 — gate decision + milestone update
 
 After verdict:
-- **CLEAN** → proceed to `/build-slice`
-- **NEEDS-FIXES** → ACCEPTED-PENDING fixes applied during `/build-slice`; OVERRIDDEN/DEFERRED recorded
+- **CLEAN** → proceed to `/slice-story`
+- **NEEDS-FIXES** → proceed to `/slice-story`; ACCEPTED-PENDING fixes are applied during `/build-slice`; OVERRIDDEN/DEFERRED recorded
 - **BLOCKED** (any ESCALATED) → **HALT (PCA-1)**. Do NOT auto-advance. Revise design (`/design-slice`),
   then re-run `/critique`.
 
 **Heavy mode + BLOCKED**: human reviewer sign-off on the redesign required before triage may clear BLOCKED.
 
 Update `<vault>/slices/slice-NNN-<name>/milestone.json` via `Edit`:
-- `stage: "critique"`, `next_action: "/build-slice"` (or `"address blockers then re-run /critique"`)
+- `stage: "critique"`, `next_action: "/slice-story"` (or `"address blockers then re-run /critique"`)
 - Mark `{ "step": "critique", "done": true }` (or `"skipped"`)
 - `current_focus`: critique result summary (blocker + major counts)
 - `on_resume`: next step (or address blockers first)
@@ -258,7 +259,8 @@ parallel writers are possible (standard Edit is safe for the orchestrator's own 
 `/critique-review` already ran IN-LOOP at Step 3.5 (its findings were triaged in Step 4.5), so there is
 NO post-triage meta-review step.
 
-On CLEAN or NEEDS-FIXES: advance to `/build-slice`.
+On CLEAN or NEEDS-FIXES: advance to `/slice-story` (it generates the plain-language pre-build report, saves it
+in the slice folder + pushes it to Google Drive, then prompts the user to run `/build-slice` when ready).
 On BLOCKED: do NOT invoke any successor — HALT and surface instructions to the user.
 
 ## Critical rules
@@ -273,9 +275,9 @@ On BLOCKED: do NOT invoke any successor — HALT and surface instructions to the
 ## Pipeline position
 
 - predecessor: `/design-slice`
-- successor: `/build-slice` (the `/critique-review` meta-review runs IN-LOOP at Step 3.5, before triage)
+- successor: `/slice-story` (the plain-language pre-build report; it then prompts `/build-slice`. The `/critique-review` meta-review runs IN-LOOP at Step 3.5, before triage)
 - auto-advance: true (CLEAN/NEEDS-FIXES only)
 - user-input gates (halt auto-advance):
   - **Step 4.5 TRI-1** — always; user is final triage authority over BOTH Critic passes; Builder cannot self-ratify.
   - **Verdict BLOCKED** — halt; redesign via `/design-slice` then re-run `/critique`.
-- on-clean-completion: `/build-slice`.
+- on-clean-completion: `/slice-story`.

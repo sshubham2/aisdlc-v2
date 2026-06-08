@@ -1,0 +1,212 @@
+{
+  "name": "slice-story",
+  "user_invokable": true,
+  "requires_full_context": true,
+  "runs_in": "main-agent",
+  "context_rationale": "Inline orchestrator: resolves the active slice folder, spawns the forked slice-story narrator subagent for the heavy plain-language synthesis (keeping the parent context lean), then renders the returned JSON to story.html via render_story.py and performs an OUTWARD side-effect — uploading the report to Google Drive via the Google Drive MCP tool — and ends by prompting the user to run /build-slice. The outward push + the user prompt + the slice-folder write all need the parent conversation's tool access and authority, so the orchestrator stays main-agent and only the narration is forked.",
+  "summary": "Turns one slice's internal artifacts into a single plain-language STORY for a mixed technical / non-technical audience (tilted slightly technical, zero pipeline jargon), rendered as a standalone story.html. Adaptive across the lifecycle: before building it tells the objective, what was proven in spikes, how it's built, and what the design review changed; after building it adds what was built, what code review found, what reality testing showed, and what was learned. A forked slice-story narrator subagent reads the artifacts and returns structured JSON; render_story.py renders the HTML deterministically; the report is saved in the slice folder AND pushed to Google Drive; then the user is asked to start /build-slice when ready. Runs just after /critique (the pre-build report) and is also user-invokable any time. Never modifies source files.",
+  "reads": [
+    {
+      "path": "<vault>/slices/slice-NNN/mission-brief.json",
+      "kind": "content-file",
+      "produced_by": [
+        "slice"
+      ],
+      "purpose": "The slice intent, acceptance criteria, must-not-defer, out-of-scope — the front of the story"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/design.json",
+      "kind": "content-file",
+      "produced_by": [
+        "design-slice"
+      ],
+      "purpose": "Components, interfaces, data deltas, auth + error handling — the 'how it's built' section"
+    },
+    {
+      "path": "<vault>/spikes/spike-*.json",
+      "kind": "content-file",
+      "produced_by": [
+        "risk-spike"
+      ],
+      "purpose": "Risk-spike verdicts — the 'what we proved before building' section (read when present)"
+    },
+    {
+      "path": "<vault>/decisions/ADR-*.json",
+      "kind": "content-file",
+      "produced_by": [
+        "adopt",
+        "design-slice",
+        "discover",
+        "reflect",
+        "triage"
+      ],
+      "purpose": "Decisions locked by this slice, with reversibility — the 'decisions we locked' section"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/critique.json",
+      "kind": "content-file",
+      "produced_by": [
+        "critique"
+      ],
+      "purpose": "Reviewer findings + what the team decided — the 'what the review changed' section"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/critique-review.json",
+      "kind": "content-file",
+      "produced_by": [
+        "critique-review"
+      ],
+      "purpose": "Second-pass review (missed/over-flagged items) folded into the review-changes narrative when present"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/milestone.json",
+      "kind": "content-file",
+      "produced_by": [
+        "slice"
+      ],
+      "purpose": "Determine the furthest lifecycle stage reached, to decide which sections the story includes"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/build-log.json",
+      "kind": "content-file",
+      "produced_by": [
+        "build-slice"
+      ],
+      "purpose": "Post-build: what was actually built, deferrals, deviations — the 'what we built' section (read when present)"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/code-review.json",
+      "kind": "content-file",
+      "produced_by": [
+        "code-review"
+      ],
+      "purpose": "Post-build: code-review findings in plain language — the 'what the code review found' section (read when present)"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/validation.json",
+      "kind": "content-file",
+      "produced_by": [
+        "validate-slice"
+      ],
+      "purpose": "Post-build: reality-test results — the 'what reality testing showed' section (read when present)"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/reflection.json",
+      "kind": "content-file",
+      "produced_by": [
+        "reflect"
+      ],
+      "purpose": "Post-build: what held up, what was wrong, what we'd change — the 'what we learned' section (read when present)"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "<vault>/slices/slice-NNN/story-sections.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "slice-story"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [
+        "render_story"
+      ],
+      "purpose": "The narrator's structured story (the render input); persisted so story.html can be re-rendered without re-running the agent. Per-slice active-folder artifact — raw-write is correct (not a shared aggregate).",
+      "example_schema": "aisdlc/story-sections@1",
+      "example": "examples/story-sections.json"
+    },
+    {
+      "path": "<vault>/slices/slice-NNN/story.html",
+      "kind": "content-file",
+      "v1_format": "html",
+      "v2_format": "html",
+      "write_semantics": "create",
+      "write_mechanism": "raw-write",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "slice-story"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "The deliverable: a standalone, self-contained plain-language report of the slice, saved in the slice folder and uploaded to Google Drive"
+    },
+    {
+      "path": "Google Drive: slice story report (story.html)",
+      "kind": "side-effect",
+      "v1_format": "other",
+      "v2_format": "n/a",
+      "write_semantics": "create",
+      "write_mechanism": "mcp-google-drive",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [
+        "slice-story"
+      ],
+      "edited_by": [],
+      "read_by": [],
+      "validated_by": [],
+      "purpose": "Outward push of story.html to the user's Google Drive via the Drive MCP create_file tool (text/html, conversion disabled); returns a shareable link. Skipped gracefully if the Drive MCP server is not connected."
+    }
+  ],
+  "agents": [
+    {
+      "name": "slice-story",
+      "when": "After the active slice folder is resolved — before rendering/upload",
+      "purpose": "Forked narrator: reads the slice artifacts handed to it, translates every pipeline code into plain English, and returns the slice STORY as structured story-sections JSON (no file writes, no HTML) so the heavy synthesis stays out of the parent context"
+    }
+  ],
+  "tools": [
+    {
+      "name": "render_story",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/render_story.py\" --sections-file <vault>/slices/slice-NNN-<name>/story-sections.json --out <vault>/slices/slice-NNN-<name>/story.html",
+      "purpose": "Deterministic, dependency-free renderer: turns the narrator's story-sections.json into a self-contained, styled, print-friendly story.html (inline CSS, no JS, no external assets). Single-skill script; owns all styling so the look is consistent and the agent never hand-writes HTML.",
+      "found": true,
+      "path": "skills/slice-story/scripts/render_story.py"
+    }
+  ],
+  "harness_tools": [
+    {
+      "name": "Read",
+      "purpose": "Read the active slice artifacts (mission-brief.json, design.json, spikes, ADRs, critique.json, critique-review.json, and any post-build build-log/code-review/validation/reflection) to hand to the narrator; read story.html back for the Google Drive upload"
+    },
+    {
+      "name": "Write",
+      "purpose": "Write the narrator's returned story-sections.json into the slice folder before rendering"
+    },
+    {
+      "name": "Bash",
+      "purpose": "Resolve the active slice folder + lifecycle stage (live-state injection) and run render_story.py"
+    },
+    {
+      "name": "Agent",
+      "purpose": "Spawn the named slice-story narrator subagent (subagent_type: slice-story) for the forked plain-language synthesis"
+    },
+    {
+      "name": "mcp__claude_ai_Google_Drive__create_file",
+      "purpose": "Upload story.html to Google Drive (text/html, conversion disabled) and return the shareable link; degrades gracefully with a local-only note if the Drive MCP server is not connected"
+    }
+  ],
+  "hands_off_to": [
+    "build-slice"
+  ],
+  "source": "skills/slice-story/SKILL.md (new in v2 — plain-language per-slice report; spawns the slice-story narrator agent; renders story.html via render_story.py and pushes it to Google Drive; runs just after /critique, before /build-slice)",
+  "missing_references": []
+}

@@ -39,6 +39,7 @@
         "critique",
         "design-slice",
         "slice",
+        "slice-story",
         "supersede-slice"
       ],
       "validated_by": [],
@@ -74,6 +75,7 @@
         "design-slice",
         "drift-check",
         "reflect",
+        "slice-story",
         "supersede-slice",
         "validate-slice"
       ],

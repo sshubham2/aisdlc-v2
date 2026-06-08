@@ -61,7 +61,8 @@
       ],
       "edited_by": [],
       "read_by": [
-        "build-slice"
+        "build-slice",
+        "slice-story"
       ],
       "validated_by": [],
       "purpose": "Meta-Critic findings: VALID/SUSPICIOUS/SEVERITY-WRONG per finding plus missed findings",

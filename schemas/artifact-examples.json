@@ -271,5 +271,51 @@
     "test": "checkout-flow-mockup", "mode": "prototype", "date": "<ts>", "participants": 1,
     "tasks": [{ "task": "complete a purchase", "result": "stuck", "observation": "user could not find the pay button" }],
     "findings": [{ "kind": "stuck", "detail": "pay button below the fold", "becomes_candidate": "SC-030", "becomes_risk": null }]
+  },
+  "story-sections": {
+    "_schema": "aisdlc/story-sections@1",
+    "_note": "Plain-language STORY of one slice, produced by the slice-story sub-agent and rendered to story.html by render_story.py. Fields optional; sections render in array order. Audience: technical + non-technical. NO pipeline jargon in prose; trace tags go in `ref` only.",
+    "slice": "slice-021", "title": "realtime-presence",
+    "headline": "Show teammates who's viewing a document, live.",
+    "stage": "pre-build", "mode": "standard", "risk_tier": "medium",
+    "tldr_md": "We're adding a small live indicator so people editing a shared document can see who else is looking at it right now. The first plan needed one always-open connection per viewer; testing showed a single server couldn't hold enough of those, so the design switched to a lighter live feed. A reviewer also caught that the feed didn't check who was asking, so we added a sign-in check before any names are shared.",
+    "sections": [
+      {
+        "heading": "What we set out to do",
+        "body_md": "When several people open the same document, no one can tell who else is there. This slice adds **live presence**: the avatars of everyone currently viewing a document, appearing and disappearing as they come and go. It's for teams who edit shared docs together and keep stepping on each other's work.",
+        "items": [
+          { "label": "A teammate's avatar appears within about 2 seconds of them opening the doc.", "detail": "Checked with two real browsers on one document.", "ref": "AC1", "badge": "target" }
+        ]
+      },
+      {
+        "heading": "What we proved before building",
+        "body_md": "The original idea was one always-open connection per viewer. Before committing, we ran a quick experiment to see how many of those a single managed server could actually hold.",
+        "items": [
+          { "label": "Could one server hold 500 live connections? No.", "detail": "It started failing around 120. So we changed course: instead of an always-open socket per viewer, the page now subscribes to a lightweight one-way live feed.", "ref": "R-27", "badge": "changed-course" }
+        ],
+        "tech_note_md": "Dropped raw WebSockets for **server-sent events (SSE)** with reconnect/backoff. A managed pub/sub remains the fallback if SSE fan-out becomes the bottleneck."
+      },
+      {
+        "heading": "How it's built",
+        "tone": "tech",
+        "body_md": "A small **presence** service tracks who is currently on each document. The document page subscribes to a live feed when it loads and updates the avatars as people join or leave. Identity comes from the existing sign-in session; if the feed drops, the page quietly reconnects.",
+        "tech_note_md": "New endpoint `GET /presence/:doc` (SSE) emits `{userId, joined}` events. `presence.ts` owns state; `doc-view` subscribes on mount. Auth via the existing session cookie. No new database tables.",
+        "items": [
+          { "label": "We committed to a server-sent-events feed here.", "detail": "That's costly to undo later, so we only locked it because this slice needs it.", "ref": "ADR-014", "badge": "decision" }
+        ]
+      },
+      {
+        "heading": "What the review changed",
+        "body_md": "An independent review of the plan found one real problem worth fixing before building.",
+        "items": [
+          { "label": "The live feed didn't check who was asking — anyone could watch a document's viewers.", "detail": "Fixed in the plan: the feed now requires a signed-in session before it opens.", "ref": "C1", "badge": "fixed" },
+          { "label": "A second look noted there was no test for the feed dropping and reconnecting.", "detail": "Added to the build's checklist so a dropped connection is exercised.", "badge": "noted" }
+        ]
+      }
+    ],
+    "glossary": [
+      { "term": "server-sent events (SSE)", "plain": "a one-way live feed the browser keeps open to receive updates the moment they happen." }
+    ],
+    "generated_at": "<ts>"
   }
 }

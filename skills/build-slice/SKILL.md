@@ -260,7 +260,7 @@ If `/drift-check` found entries, route through `$PY "${CLAUDE_SKILL_DIR}/../../s
 
 ## Pipeline position
 
-- predecessor: `/critique` (post-TRI-1, on CLEAN or NEEDS-FIXES) · successor: `/code-review` · auto-advance: true
+- predecessor: `/slice-story` (which follows `/critique` post-TRI-1, on CLEAN or NEEDS-FIXES; user-invoked — `/slice-story` halts and prompts the build) · successor: `/code-review` · auto-advance: true
 - on-clean-completion: once the pre-finish gate fully passes (all ACs, must-not-defer, drift-check, all Step 6 audits) and `build-log.json` is written, invoke `/code-review` via the Skill tool. `/code-review` auto-advances to `/validate-slice` on clean completion.
 - user-input gates (halt auto-advance):
   - Plan-mode approval (Step 3) — HALT for explicit user sign-off before any code edits.

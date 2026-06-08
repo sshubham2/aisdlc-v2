@@ -126,6 +126,7 @@
         "design-slice",
         "pulse",
         "reflect",
+        "slice-story",
         "validate-slice"
       ],
       "validated_by": [],
@@ -156,6 +157,7 @@
         "commit-slice",
         "pulse",
         "reflect",
+        "slice-story",
         "validate-slice"
       ],
       "validated_by": [],

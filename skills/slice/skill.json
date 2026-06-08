@@ -121,6 +121,7 @@
         "design-slice",
         "drift-check",
         "reflect",
+        "slice-story",
         "supersede-slice",
         "validate-slice"
       ],
@@ -159,6 +160,7 @@
         "design-slice",
         "pulse",
         "reflect",
+        "slice-story",
         "validate-slice"
       ],
       "validated_by": [],

@@ -86,7 +86,8 @@
       ],
       "edited_by": [],
       "read_by": [
-        "heavy-architect"
+        "heavy-architect",
+        "slice-story"
       ],
       "validated_by": [],
       "purpose": "Spike result document with test, outcome, and decision",

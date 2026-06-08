@@ -1,15 +1,15 @@
 {
-  "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills) + skills/bug-hunt/SKILL.md + skills/setup/SKILL.md (v2-native, 28 total)",
+  "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills) + skills/bug-hunt/SKILL.md + skills/setup/SKILL.md + skills/slice-story/SKILL.md (v2-native, 29 total)",
   "note": "Forward edges from each skill manifest; file inverse-edges (created_by/edited_by/read_by) computed globally. update access = read-modify-write (counts as both read and edit).",
   "stats": {
-    "skills": 28,
-    "skills_main_agent": 19,
+    "skills": 29,
+    "skills_main_agent": 20,
     "skills_delegable": 9,
-    "named_agents_used": 6,
-    "tools": 50,
-    "file_nodes": 83,
-    "edges": 535,
-    "md_to_json_targets": 46
+    "named_agents_used": 7,
+    "tools": 52,
+    "file_nodes": 86,
+    "edges": 557,
+    "md_to_json_targets": 47
   },
   "nodes": {
     "skills": [
@@ -208,6 +208,13 @@
         "requires_full_context": true,
         "user_invokable": true,
         "spawns_generic_subagent": false
+      },
+      {
+        "id": "slice-story",
+        "runs_in": "main-agent",
+        "requires_full_context": true,
+        "user_invokable": true,
+        "spawns_generic_subagent": false
       }
     ],
     "agents": [
@@ -228,6 +235,9 @@
       },
       {
         "id": "field-recon"
+      },
+      {
+        "id": "slice-story"
       }
     ],
     "tools": [
@@ -352,6 +362,11 @@
         "found": true
       },
       {
+        "id": "mcp__claude_ai_Google_Drive__create_file",
+        "type": "harness",
+        "found": false
+      },
+      {
         "id": "mock_budget_lint",
         "type": "methodology-tool",
         "found": true
@@ -378,6 +393,11 @@
       },
       {
         "id": "pulse_worktree_resolver",
+        "type": "methodology-tool",
+        "found": true
+      },
+      {
+        "id": "render_story",
         "type": "methodology-tool",
         "found": true
       },
@@ -740,6 +760,7 @@
           "heavy-architect",
           "reduce",
           "reflect",
+          "slice-story",
           "sync"
         ],
         "validated_by": []
@@ -1014,6 +1035,7 @@
           "commit-slice",
           "pulse",
           "reflect",
+          "slice-story",
           "validate-slice"
         ],
         "validated_by": []
@@ -1037,7 +1059,9 @@
           "code-review"
         ],
         "edited_by": [],
-        "read_by": [],
+        "read_by": [
+          "slice-story"
+        ],
         "validated_by": []
       },
       {
@@ -1049,7 +1073,8 @@
         ],
         "edited_by": [],
         "read_by": [
-          "build-slice"
+          "build-slice",
+          "slice-story"
         ],
         "validated_by": []
       },
@@ -1065,7 +1090,8 @@
           "build-slice",
           "commit-slice",
           "critique-review",
-          "reflect"
+          "reflect",
+          "slice-story"
         ],
         "validated_by": []
       },
@@ -1085,7 +1111,8 @@
           "critique",
           "critique-review",
           "drift-check",
-          "reflect"
+          "reflect",
+          "slice-story"
         ],
         "validated_by": []
       },
@@ -1111,6 +1138,7 @@
           "design-slice",
           "pulse",
           "reflect",
+          "slice-story",
           "validate-slice"
         ],
         "validated_by": []
@@ -1135,6 +1163,7 @@
           "design-slice",
           "drift-check",
           "reflect",
+          "slice-story",
           "supersede-slice",
           "validate-slice"
         ],
@@ -1157,8 +1186,33 @@
           "critique",
           "design-slice",
           "slice",
+          "slice-story",
           "supersede-slice"
         ],
+        "validated_by": []
+      },
+      {
+        "id": "<vault>/slices/slice-NNN/story-sections.json",
+        "kind": "content-file",
+        "v2_format": "json",
+        "created_by": [
+          "slice-story"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": [
+          "render_story"
+        ]
+      },
+      {
+        "id": "<vault>/slices/slice-NNN/story.html",
+        "kind": "content-file",
+        "v2_format": "html",
+        "created_by": [
+          "slice-story"
+        ],
+        "edited_by": [],
+        "read_by": [],
         "validated_by": []
       },
       {
@@ -1172,7 +1226,8 @@
         "read_by": [
           "code-review",
           "commit-slice",
-          "reflect"
+          "reflect",
+          "slice-story"
         ],
         "validated_by": []
       },
@@ -1208,7 +1263,8 @@
         ],
         "edited_by": [],
         "read_by": [
-          "heavy-architect"
+          "heavy-architect",
+          "slice-story"
         ],
         "validated_by": []
       },
@@ -1294,6 +1350,17 @@
         "read_by": [
           "adopt"
         ],
+        "validated_by": []
+      },
+      {
+        "id": "Google Drive: slice story report (story.html)",
+        "kind": "side-effect",
+        "v2_format": "n/a",
+        "created_by": [
+          "slice-story"
+        ],
+        "edited_by": [],
+        "read_by": [],
         "validated_by": []
       },
       {
@@ -4345,6 +4412,116 @@
     {
       "from": "setup",
       "to": "pulse",
+      "type": "hands_off_to"
+    },
+    {
+      "from": "slice-story",
+      "to": "slice-story",
+      "type": "spawns"
+    },
+    {
+      "from": "slice-story",
+      "to": "render_story",
+      "type": "uses_tool"
+    },
+    {
+      "from": "slice-story",
+      "to": "Read",
+      "type": "uses_harness"
+    },
+    {
+      "from": "slice-story",
+      "to": "Write",
+      "type": "uses_harness"
+    },
+    {
+      "from": "slice-story",
+      "to": "Bash",
+      "type": "uses_harness"
+    },
+    {
+      "from": "slice-story",
+      "to": "Agent",
+      "type": "uses_harness"
+    },
+    {
+      "from": "slice-story",
+      "to": "mcp__claude_ai_Google_Drive__create_file",
+      "type": "uses_harness"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/slices/slice-NNN/mission-brief.json",
+      "type": "reads"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/slices/slice-NNN/design.json",
+      "type": "reads"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/spikes/spike-*.json",
+      "type": "reads"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/decisions/ADR-*.json",
+      "type": "reads"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/slices/slice-NNN/critique.json",
+      "type": "reads"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/slices/slice-NNN/critique-review.json",
+      "type": "reads"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/slices/slice-NNN/milestone.json",
+      "type": "reads"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/slices/slice-NNN/build-log.json",
+      "type": "reads"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/slices/slice-NNN/code-review.json",
+      "type": "reads"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/slices/slice-NNN/validation.json",
+      "type": "reads"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/slices/slice-NNN/reflection.json",
+      "type": "reads"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/slices/slice-NNN/story-sections.json",
+      "type": "creates"
+    },
+    {
+      "from": "slice-story",
+      "to": "<vault>/slices/slice-NNN/story.html",
+      "type": "creates"
+    },
+    {
+      "from": "slice-story",
+      "to": "Google Drive: slice story report (story.html)",
+      "type": "creates"
+    },
+    {
+      "from": "slice-story",
+      "to": "build-slice",
       "type": "hands_off_to"
     }
   ]
