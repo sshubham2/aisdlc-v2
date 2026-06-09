@@ -1,17 +1,39 @@
 ---
 name: risk-spike
-description: "In-loop slice step-0 gate. Reads the picked candidate's blocking assumptions from candidates.json, spawns field-recon to survey current platform reality, then proves each assumption with throwaway code on real environments. All proven -> advances to /design-slice; any FAILED -> marks the candidate blocked and halts until a risk-free fallback is discussed and re-spiked. Records verdicts into candidates.json, risk-register.json, and spikes/spike-*.json."
-when_to_use: "Trigger phrases: /risk-spike, 'spike the risks', 'prove the assumptions', 'run feasibility spike'. Auto-triggered by /slice after candidate claim; runs as step-0 of every slice. Also user-invokable directly with an optional candidate-id or risk-id argument to re-spike a specific assumption."
-argument-hint: "[SC-NNN | R-NN | all]"
+description: "In-loop slice spike gate with TWO modes. FEASIBILITY (default, step-0): reads the picked candidate's blocking assumptions from candidates.json, spawns field-recon, proves each with throwaway code on real environments; all proven -> /design-slice, any FAILED -> candidate blocked until a fallback is re-spiked. DESIGN (--mode design, post-synthesis): reads the synthesized design.json's pending decidable_disagreements + must-verify cross-domain invariants and lets REALITY adjudicate the tournament; all GO -> /critique, any NO-GO -> back to /design-slice to re-synthesize. Records verdicts into candidates.json/risk-register.json/spikes/ (feasibility) or design.json (design)."
+when_to_use: "Trigger phrases: /risk-spike, 'spike the risks', 'prove the assumptions', 'run feasibility spike', 'design spike'. Feasibility mode is auto-triggered by /slice as step-0 of every slice; design mode is auto-triggered by /design-slice after tournament synthesis. Also user-invokable: pass --mode design to adjudicate a design composition, or a candidate/risk id to re-spike a specific feasibility assumption."
+argument-hint: "[--mode feasibility|design] [SC-NNN | R-NN | all]"
 allowed-tools: Read, Write, Edit, Bash, Agent, AskUserQuestion, Skill
 ---
 
-# /risk-spike — in-loop feasibility gate (slice step-0)
+# /risk-spike — in-loop spike gate (feasibility + design)
+
+The reality-grounded spike gate runs in TWO places in the slice loop — **the crown jewel is split, not diluted:
+one spike before design, one after.** Both prove things against the *real* environment with throwaway code.
+
+> Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / git `aisdlc/vault-root`).
+
+## Mode — feasibility (default) or design
+
+Determine the mode from the argument (`--mode feasibility|design`); **default is `feasibility`** when no `--mode`
+is given (backward-compatible — bare `/risk-spike` is the step-0 feasibility gate exactly as before).
+
+- **`feasibility`** (step-0, BEFORE `/design-slice`): *is the premise even possible?* Proves the picked
+  candidate's blocking assumptions — gates whether to spend tournament tokens at all. Follow **Steps 1–6** below.
+- **`design`** (post-synthesis, AFTER `/design-slice`, before `/critique`): *does THIS specific composition hold?*
+  Reads the synthesized `design.json` and lets reality **adjudicate the tournament's empirically-decidable
+  disagreements + must-verify cross-domain invariants**. Jump to **"# DESIGN-SPIKE MODE"** near the end; it
+  reuses the Step 2–4 spike machinery but targets the design, not the candidate.
+
+The two modes share the same spike discipline (Steps 2–4: design the spike, field-recon, run on the real
+environment, write the artifact). They differ only in **what** they target and **where** they hand off.
+
+---
+
+# FEASIBILITY MODE (default — slice step-0)
 
 Step-0 of the per-slice loop. **No design happens until every blocking assumption is proven.**
 Candidate picked by `/slice`; verdicts advance to `/design-slice` (all GO) or block the slice (any NO-GO).
-
-> Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / git `aisdlc/vault-root`).
 
 ## Active candidate — injected
 
@@ -155,6 +177,100 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --vault "$AI_SD
 - Present `AskUserQuestion`: "Assumption <A-id> failed. What fallback should we try? Options: (a) propose an alternative approach and re-spike, (b) deprioritize this candidate and pick a different one via /slice."
 - On fallback selected: record `fallback` in candidates.json, await re-spike or `/slice`.
 
+## Step 6b — record gate outcome (measurement spine)
+
+One row per slice into `<vault>/gate-log.json` (roadmap Theme 8 / plan Phase 0). `risk-spike` is a
+**high** reality-contact gate (throwaway code on the real environment) — `gate_log.py` stamps that:
+
+```bash
+# verdict: go = all proven · no-go = any FAILED · conditional = any CONDITIONAL with none failed
+# findings-count: number of assumptions that came back NO-GO (FAILED)
+# --cross-domain (Phase 2.3): set ONLY when re-spiking a cross-domain-transfer invariant — i.e. design.json
+# already exists and carries a cross_domain_transfer (absent on the normal step-0 spike, before any design).
+SLICE_DIR="$AI_SDLC_VAULT_ROOT/slices/<slice-NNN-name>"
+CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate risk-spike --slice <slice-NNN-name> \
+    --verdict <go|no-go|conditional> --findings-count <N failed> $CD \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
+---
+
+# DESIGN-SPIKE MODE (`--mode design` — post-synthesis)
+
+Runs AFTER `/design-slice` has synthesized one design from the tournament, BEFORE `/critique`. The point: a
+tournament composes pieces from independent designers, and where they disagreed on something *empirically
+decidable* — or imported a cross-domain pattern whose preconditions aren't yet proven — **reality adjudicates,
+not the Critic.** This is the post-synthesis half of the split spike (it catches the Frankenstein-composition
+risk that selection alone can't).
+
+## Step D1 — identify design-spike targets
+
+Read the active slice's `design.json` (latest `<vault>/slices/slice-*/design.json`). Collect targets:
+
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY -c "import json,glob,sys; v=sys.argv[1]; fs=sorted(glob.glob(f'{v}/slices/slice-*/design.json')); f=fs[-1] if fs else None; d=json.load(open(f,encoding='utf-8')) if f else {}; t=d.get('tournament',{}); dd=[x for x in t.get('decidable_disagreements',[]) if x.get('verdict','pending')=='pending']; mv=[i for i in (d.get('cross_domain_transfer') or {}).get('invariants',[]) if i.get('status')=='must-verify']; print(json.dumps({'design':f,'decidable_disagreements':dd,'must_verify_invariants':mv},indent=2))" "$VAULT"
+```
+
+- **Decidable disagreements** (`tournament.decidable_disagreements` with `verdict: pending`) — "API supports X?",
+  "fast enough?", "integration works?" — questions the designers split on that a spike can settle.
+- **Must-verify invariants** (`cross_domain_transfer.invariants[].status == "must-verify"`) — the borrowed
+  pattern's preconditions that were imported on faith. Each must end at `holds` (proven) or `fails` (drop it).
+
+**If both lists are empty:** nothing to adjudicate. Write a one-line skip note, do not log a gate row, advance to
+`/critique` via the Skill tool.
+
+## Step D2–D4 — spike each target
+
+Use the **same spike discipline as feasibility mode**: design a minimal real-runtime test (Step 2), spawn
+`field-recon` per external technology when the target touches an external API/platform (Step 2.5 — the
+asymmetric early-drop rule applies), run it on the real environment and decide GO/NO-GO/CONDITIONAL (Step 3),
+and write the throwaway artifact to `<vault>/spikes/spike-<name>.json` (Step 4). **Never fabricate a result;** if
+the environment is unavailable, stop and tell the user exactly what's needed.
+
+For a *decidable disagreement*, the spike answers the contested question. For a *must-verify invariant*, the
+spike tests whether the precondition actually holds in this domain (the invariant-blind transfer is exactly what
+this catches).
+
+## Step D5 — write verdicts back into design.json
+
+Reflect each target's verdict into the design (read-modify-write via `Edit`; `design.json` is a per-slice file
+with a single writer here, so `Edit` is safe):
+
+- Each `tournament.decidable_disagreements[i]`: set `verdict` (`go`/`no-go`) and `spike: spike-<name>`.
+- Each resolved `cross_domain_transfer.invariants[i]`: flip `status` `must-verify` → `holds` (with proving
+  evidence) or `fails` (drop that part of the analogy; note what replaces it).
+
+## Step D6 — gate decision + handoff
+
+- **All targets GO / CONDITIONAL** (composition holds against reality) → advance to **`/critique`** via the Skill
+  tool. The decidable disagreements are now settled; only *taste* disagreements remain for the Critic + user.
+- **Any target NO-GO** (a decidable disagreement lost, or a must-verify invariant `fails`) → **hand back to
+  `/design-slice`** to re-synthesize with the failed branch dropped. **Do NOT block the candidate** — the
+  *premise* already passed the step-0 feasibility spike; only this specific composition failed. Tell the user
+  which branch reality rejected and why, then invoke `/design-slice` via the Skill tool (it re-runs Step 2
+  synthesis excluding the loser).
+
+## Step D6b — record gate outcome (measurement spine)
+
+The design spike is **high** reality-contact (throwaway code on the real environment). Set `--cross-domain` when
+the design carries a `cross_domain_transfer` (Phase 2.3 validity-ratio signal — did reality confirm the borrowed
+pattern?):
+
+```bash
+SLICE_DIR="$(dirname "<design.json path from D1>")"
+CD=""; $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
+# verdict: go = all targets held · no-go = any failed · findings-count = number of NO-GO targets
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate risk-spike --slice "$(basename "$SLICE_DIR")" \
+    --verdict <go|no-go|conditional> --findings-count <N failed> --reality-contact high $CD \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
 ## Critical rules
 
 - **NEVER fabricate spike results.** If you can't run it, say so and stop.
@@ -164,12 +280,23 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --vault "$AI_SD
 - **OAuth / cross-account scopes**: test with TWO different accounts on the actual scope. Most failures appear only in the second account.
 - **Payment gateways**: use real sandbox, not mocked.
 - **Push notifications**: test actual delivery, not mock dispatch.
+- **Reality spine (Phase 1.3).** This is a HIGH reality-contact gate — it proves assumptions with throwaway code
+  on the real environment, so it can say a hard *no*. It is **mandatory at every tier** (it never gets lightened
+  for low-tier slices), and no model-on-model gate (`/critique`, `/code-review`) may override a NO-GO here.
+  Reality > code-graph > model-critic.
 
 ## Pipeline position
 
+**Feasibility mode (default — step-0):**
 - predecessor: `/slice` (auto-invoked after candidate claim) · successor: `/design-slice`
 - auto-advance: YES — all assumptions proven → Skill `/design-slice` immediately
-- user-input gates:
-  - No spiking candidate in context → `AskUserQuestion` for target (Step 1)
-  - Any NO-GO → `AskUserQuestion` for fallback decision (Step 6)
-  - Environment unavailable → halt and tell the user what's needed (Step 3)
+
+**Design mode (`--mode design` — post-synthesis):**
+- predecessor: `/design-slice` (auto-invoked after tournament synthesis when decidable disagreements / must-verify
+  invariants / high-tier-or-irreversible warrant it) · successor: `/critique` (all GO) or `/design-slice` (any NO-GO → re-synthesize)
+- auto-advance: YES — all targets held → Skill `/critique`; any NO-GO → Skill `/design-slice`
+
+- user-input gates (both modes):
+  - No spiking candidate in context (feasibility) → `AskUserQuestion` for target (Step 1)
+  - Any NO-GO (feasibility) → `AskUserQuestion` for fallback decision (Step 6)
+  - Environment unavailable → halt and tell the user what's needed (Step 3 / D2–D4)

@@ -1,11 +1,17 @@
-"""reflection_lookup.py — surface past reflections relevant to the active slice (v2, NEW).
+"""reflection_lookup.py — surface past slices relevant to the active slice (v2, NEW).
 
-Shared CLI for `/design-slice`'s "Relevant past reflections" injection. Extracts
-keywords (from the active slice's `mission-brief.json` with `--from-mission-brief`, or
-from `--keywords`), scans every past `reflection.json` (live + archived slices, the
-active slice excluded), scores each by keyword hits across its `lessons` / `discovered`
-/ `corrected` / `validated` / `deferred` text, and prints the top matches — so the
-designer reuses prior learnings instead of re-discovering them. Read-only.
+Shared CLI for `/design-slice`'s prior-context injection. Extracts keywords (from the
+active slice's `mission-brief.json` with `--from-mission-brief`, or from `--keywords`),
+then surfaces TWO things, both read-only:
+
+1. **Nearest prior slice** (Phase 2.2 / roadmap Theme 4): the past slice whose MISSION is
+   most lexically similar (most shared keywords across title/intent/ACs), printed as a
+   seam-coherence anchor — "prefer consistency with slice-NNN unless there's a reason to
+   diverge." Lexical only (no embeddings), >=2 shared keywords to avoid spurious matches.
+2. **Relevant past reflections**: scans every past `reflection.json` (live + archived,
+   active excluded), scores by keyword hits across `lessons` / `discovered` / `corrected`
+   / `validated` / `deferred` text, prints the top matches — so the designer reuses prior
+   learnings instead of re-discovering them.
 
 CLI: `--vault ROOT [--repo-root .] (--from-mission-brief | --keywords "a b c") [--top N]`.
 Exit 0 always (no keywords / no matches is a normal result, printed as a note).
@@ -100,6 +106,27 @@ def _iter_reflections(vault: Path, exclude_folder: str | None):
                 yield d.name, refl
 
 
+def _iter_mission_briefs(vault: Path, exclude_folder: str | None):
+    """Yield (slice_folder_name, mission_brief_dict) over live + archived slices —
+    the corpus for the nearest-prior-slice match (Phase 2.2)."""
+    roots = [vault / "slices", vault / "slices" / "archive"]
+    for base in roots:
+        if not base.is_dir():
+            continue
+        for d in sorted(base.iterdir()):
+            if not d.is_dir() or d.name == "archive" or d.name == exclude_folder:
+                continue
+            mp = d / "mission-brief.json"
+            if not mp.is_file():
+                continue
+            try:
+                mb = json.loads(mp.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(mb, dict):
+                yield d.name, mb
+
+
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     p = argparse.ArgumentParser(
@@ -138,10 +165,21 @@ def main(argv: list[str] | None = None) -> int:
         print("(no keywords to match — proceeding without prior-reflection context)")
         return 0
 
+    # --- NEAREST PRIOR SLICE (Phase 2.2 / roadmap Theme 4) ---
+    # The past slice whose MISSION is most lexically similar to this one — a seam-
+    # coherence anchor for design-slice ("prefer consistency with slice-NNN unless
+    # there's a reason to diverge"). Lexical (shared keyword count), no embeddings.
+    brief_scored = []
+    for folder, mb in _iter_mission_briefs(vault, exclude):
+        shared = sorted(kws & _mission_keywords(mb if isinstance(mb, dict) else {}))
+        if len(shared) >= 2:  # >=2 shared keywords to avoid spurious single-word matches
+            brief_scored.append((len(shared), folder, shared, str(mb.get("title") or "")))
+    brief_scored.sort(key=lambda t: (-t[0], t[1]))
+
+    # --- relevant past reflections (reuse prior learnings) ---
     scored = []
     for folder, refl in _iter_reflections(vault, exclude):
-        strings = _reflection_strings(refl)
-        blob = " ".join(strings).lower()
+        blob = " ".join(_reflection_strings(refl)).lower()
         hits = sorted(k for k in kws if k in blob)
         if hits:
             matched_lessons = [s for s in (refl.get("lessons") or [])
@@ -149,16 +187,28 @@ def main(argv: list[str] | None = None) -> int:
             scored.append((len(hits), folder, hits, matched_lessons))
     scored.sort(key=lambda t: (-t[0], t[1]))
 
-    if not scored:
-        print(f"(no past reflections match: {', '.join(sorted(kws))})")
-        return 0
+    out: list[str] = []
+    if brief_scored:
+        _, folder, shared, title = brief_scored[0]
+        title_s = f" - {title}" if title else ""  # ASCII only (Windows cp1252-safe stdout)
+        out.append(f"NEAREST PRIOR SLICE (most similar mission): {folder}{title_s}  "
+                   f"[shared: {', '.join(shared)}]")
+        out.append("   Prefer consistency with its approach (interfaces, boundaries, naming) unless THIS "
+                   "slice has a concrete reason to diverge. (Seam coherence - Phase 2.2 / Theme 4.)")
+        if len(brief_scored) > 1:
+            out.append("   (other related: " + ", ".join(f for _, f, _, _ in brief_scored[1:4]) + ")")
+        out.append("")
+    if scored:
+        out.append(f"RELEVANT PAST REFLECTIONS (matched on: {', '.join(sorted(kws))}):")
+        for _, folder, hits, lessons in scored[:args.top]:
+            out.append(f"  {folder}  [matched: {', '.join(hits)}]")
+            for les in (lessons or [])[:3]:
+                out.append(f"     - {les}")
 
-    lines = [f"RELEVANT PAST REFLECTIONS (matched on: {', '.join(sorted(kws))}):"]
-    for _, folder, hits, lessons in scored[:args.top]:
-        lines.append(f"  {folder}  [matched: {', '.join(hits)}]")
-        for les in (lessons or [])[:3]:
-            lines.append(f"     - {les}")
-    sys.stdout.write("\n".join(lines) + "\n")
+    if not out:
+        print(f"(no past slice matches the mission keywords: {', '.join(sorted(kws))})")
+        return 0
+    sys.stdout.write("\n".join(out) + "\n")
     return 0
 
 

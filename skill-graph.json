@@ -1,15 +1,15 @@
 {
-  "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills) + skills/bug-hunt/SKILL.md + skills/setup/SKILL.md + skills/slice-story/SKILL.md (v2-native, 29 total)",
+  "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills) + skills/bug-hunt/SKILL.md + skills/setup/SKILL.md + skills/slice-story/SKILL.md + skills/product-doc/SKILL.md (v2-native, 30 total)",
   "note": "Forward edges from each skill manifest; file inverse-edges (created_by/edited_by/read_by) computed globally. update access = read-modify-write (counts as both read and edit).",
   "stats": {
-    "skills": 29,
-    "skills_main_agent": 20,
+    "skills": 30,
+    "skills_main_agent": 21,
     "skills_delegable": 9,
-    "named_agents_used": 7,
-    "tools": 52,
-    "file_nodes": 85,
-    "edges": 556,
-    "md_to_json_targets": 47
+    "named_agents_used": 11,
+    "tools": 54,
+    "file_nodes": 90,
+    "edges": 602,
+    "md_to_json_targets": 43
   },
   "nodes": {
     "skills": [
@@ -215,6 +215,13 @@
         "requires_full_context": true,
         "user_invokable": true,
         "spawns_generic_subagent": false
+      },
+      {
+        "id": "product-doc",
+        "runs_in": "main-agent",
+        "requires_full_context": true,
+        "user_invokable": true,
+        "spawns_generic_subagent": false
       }
     ],
     "agents": [
@@ -231,10 +238,22 @@
         "id": "critique-review"
       },
       {
+        "id": "designer-crossdomain"
+      },
+      {
+        "id": "designer-expert"
+      },
+      {
+        "id": "designer-practice"
+      },
+      {
         "id": "diagnose-narrator"
       },
       {
         "id": "field-recon"
+      },
+      {
+        "id": "product-doc"
       },
       {
         "id": "slice-story"
@@ -307,6 +326,11 @@
         "found": true
       },
       {
+        "id": "assemble_changelog",
+        "type": "methodology-tool",
+        "found": true
+      },
+      {
         "id": "branch_workflow_audit",
         "type": "methodology-tool",
         "found": true
@@ -363,6 +387,11 @@
       },
       {
         "id": "finding_dedup",
+        "type": "methodology-tool",
+        "found": true
+      },
+      {
+        "id": "gate_log",
         "type": "methodology-tool",
         "found": true
       },
@@ -682,6 +711,7 @@
         "read_by": [
           "archive",
           "heavy-architect",
+          "product-doc",
           "pulse",
           "reduce",
           "reflect",
@@ -778,6 +808,19 @@
         "validated_by": []
       },
       {
+        "id": "<vault>/doc-manifest.json",
+        "kind": "content-file",
+        "v2_format": "json",
+        "created_by": [
+          "product-doc"
+        ],
+        "edited_by": [],
+        "read_by": [
+          "drift-check"
+        ],
+        "validated_by": []
+      },
+      {
         "id": "<vault>/drift-log.json",
         "kind": "content-file",
         "v2_format": "json",
@@ -790,6 +833,29 @@
           "pulse"
         ],
         "validated_by": [
+          "vault_edit"
+        ]
+      },
+      {
+        "id": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "v2_format": "json",
+        "created_by": [],
+        "edited_by": [
+          "code-review",
+          "critique",
+          "critique-review",
+          "drift-check",
+          "reflect",
+          "risk-spike",
+          "validate-slice"
+        ],
+        "read_by": [
+          "critic-calibrate",
+          "pulse"
+        ],
+        "validated_by": [
+          "gate_log",
           "vault_edit"
         ]
       },
@@ -948,6 +1014,7 @@
           "code-review",
           "critic-calibrate",
           "critique",
+          "product-doc",
           "pulse",
           "reflect",
           "slice",
@@ -1048,7 +1115,9 @@
           "commit-slice"
         ],
         "edited_by": [],
-        "read_by": [],
+        "read_by": [
+          "product-doc"
+        ],
         "validated_by": []
       },
       {
@@ -1060,7 +1129,8 @@
         ],
         "edited_by": [],
         "read_by": [
-          "slice-story"
+          "slice-story",
+          "validate-slice"
         ],
         "validated_by": []
       },
@@ -1322,6 +1392,7 @@
           "build-slice",
           "discover",
           "heavy-architect",
+          "product-doc",
           "pulse",
           "reduce",
           "slice",
@@ -1342,6 +1413,19 @@
         "validated_by": []
       },
       {
+        "id": "CHANGELOG.md",
+        "kind": "content-file",
+        "v2_format": "markdown",
+        "created_by": [
+          "product-doc"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": [
+          "assemble_changelog"
+        ]
+      },
+      {
         "id": "Cargo.toml",
         "kind": "content-file",
         "v2_format": "other",
@@ -1355,8 +1439,10 @@
       {
         "id": "README.md",
         "kind": "content-file",
-        "v2_format": "json",
-        "created_by": [],
+        "v2_format": "markdown",
+        "created_by": [
+          "product-doc"
+        ],
         "edited_by": [],
         "read_by": [
           "adopt"
@@ -1489,7 +1575,7 @@
       {
         "id": "bug-hunt-out/sections/*.md",
         "kind": "content-file",
-        "v2_format": "json",
+        "v2_format": "markdown",
         "created_by": [
           "bug-hunt"
         ],
@@ -1511,7 +1597,7 @@
       {
         "id": "bug-hunt-out/summary/*.md",
         "kind": "content-file",
-        "v2_format": "json",
+        "v2_format": "markdown",
         "created_by": [
           "bug-hunt"
         ],
@@ -1640,7 +1726,7 @@
       {
         "id": "diagnose-out/sections/*.md",
         "kind": "content-file",
-        "v2_format": "json",
+        "v2_format": "markdown",
         "created_by": [
           "diagnose"
         ],
@@ -1651,7 +1737,7 @@
       {
         "id": "diagnose-out/sections/00-overview.md",
         "kind": "content-file",
-        "v2_format": "json",
+        "v2_format": "markdown",
         "created_by": [
           "diagnose"
         ],
@@ -1673,9 +1759,31 @@
       {
         "id": "diagnose-out/summary/*.md",
         "kind": "content-file",
-        "v2_format": "json",
+        "v2_format": "markdown",
         "created_by": [
           "diagnose"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "docs/api-reference.md",
+        "kind": "content-file",
+        "v2_format": "markdown",
+        "created_by": [
+          "product-doc"
+        ],
+        "edited_by": [],
+        "read_by": [],
+        "validated_by": []
+      },
+      {
+        "id": "docs/user-guide.md",
+        "kind": "content-file",
+        "v2_format": "markdown",
+        "created_by": [
+          "product-doc"
         ],
         "edited_by": [],
         "read_by": [],
@@ -2285,6 +2393,21 @@
     },
     {
       "from": "design-slice",
+      "to": "designer-practice",
+      "type": "spawns"
+    },
+    {
+      "from": "design-slice",
+      "to": "designer-crossdomain",
+      "type": "spawns"
+    },
+    {
+      "from": "design-slice",
+      "to": "designer-expert",
+      "type": "spawns"
+    },
+    {
+      "from": "design-slice",
       "to": "project_frame_synth",
       "type": "uses_tool"
     },
@@ -2382,6 +2505,11 @@
       "from": "design-slice",
       "to": "<vault>/cost-estimation.json",
       "type": "updates"
+    },
+    {
+      "from": "design-slice",
+      "to": "risk-spike",
+      "type": "hands_off_to"
     },
     {
       "from": "design-slice",
@@ -2665,6 +2793,16 @@
     },
     {
       "from": "validate-slice",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "validate-slice",
+      "to": "vault_edit",
+      "type": "uses_tool"
+    },
+    {
+      "from": "validate-slice",
       "to": "Read",
       "type": "uses_harness"
     },
@@ -2691,6 +2829,11 @@
     {
       "from": "validate-slice",
       "to": "<vault>/slices/slice-NNN/build-log.json",
+      "type": "reads"
+    },
+    {
+      "from": "validate-slice",
+      "to": "<vault>/slices/slice-NNN/code-review.json",
       "type": "reads"
     },
     {
@@ -2725,6 +2868,11 @@
     },
     {
       "from": "validate-slice",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
+    },
+    {
+      "from": "validate-slice",
       "to": "reflect",
       "type": "hands_off_to"
     },
@@ -2741,6 +2889,16 @@
     {
       "from": "critique",
       "to": "triage_audit",
+      "type": "uses_tool"
+    },
+    {
+      "from": "critique",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "critique",
+      "to": "vault_edit",
       "type": "uses_tool"
     },
     {
@@ -2820,6 +2978,11 @@
     },
     {
       "from": "critique",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
+    },
+    {
+      "from": "critique",
       "to": "critique-review",
       "type": "hands_off_to"
     },
@@ -2841,6 +3004,16 @@
     {
       "from": "critique-review",
       "to": "critique_review_audit",
+      "type": "uses_tool"
+    },
+    {
+      "from": "critique-review",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "critique-review",
+      "to": "vault_edit",
       "type": "uses_tool"
     },
     {
@@ -2890,6 +3063,11 @@
     },
     {
       "from": "critique-review",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
+    },
+    {
+      "from": "critique-review",
       "to": "critique",
       "type": "hands_off_to"
     },
@@ -2897,6 +3075,16 @@
       "from": "code-review",
       "to": "code-review",
       "type": "spawns"
+    },
+    {
+      "from": "code-review",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "code-review",
+      "to": "vault_edit",
+      "type": "uses_tool"
     },
     {
       "from": "code-review",
@@ -2975,6 +3163,11 @@
     },
     {
       "from": "code-review",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
+    },
+    {
+      "from": "code-review",
       "to": "validate-slice",
       "type": "hands_off_to"
     },
@@ -3034,6 +3227,11 @@
       "type": "appends"
     },
     {
+      "from": "critic-calibrate",
+      "to": "<vault>/gate-log.json",
+      "type": "reads"
+    },
+    {
       "from": "reflect",
       "to": "vault_edit",
       "type": "uses_tool"
@@ -3076,6 +3274,11 @@
     {
       "from": "reflect",
       "to": "build_checks_integrity",
+      "type": "uses_tool"
+    },
+    {
+      "from": "reflect",
+      "to": "gate_log",
       "type": "uses_tool"
     },
     {
@@ -3176,6 +3379,11 @@
     {
       "from": "reflect",
       "to": "<vault>/lessons-learned.json",
+      "type": "appends"
+    },
+    {
+      "from": "reflect",
+      "to": "<vault>/gate-log.json",
       "type": "appends"
     },
     {
@@ -3310,6 +3518,11 @@
     },
     {
       "from": "drift-check",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "drift-check",
       "to": "code-review-graph",
       "type": "uses_tool"
     },
@@ -3360,6 +3573,11 @@
     },
     {
       "from": "drift-check",
+      "to": "<vault>/doc-manifest.json",
+      "type": "reads"
+    },
+    {
+      "from": "drift-check",
       "to": "<vault>/components/*.json",
       "type": "reads"
     },
@@ -3372,6 +3590,11 @@
       "from": "drift-check",
       "to": "<vault>/schemas/*.json",
       "type": "reads"
+    },
+    {
+      "from": "drift-check",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
     },
     {
       "from": "supersede-slice",
@@ -4010,6 +4233,16 @@
     },
     {
       "from": "risk-spike",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "risk-spike",
+      "to": "vault_edit",
+      "type": "uses_tool"
+    },
+    {
+      "from": "risk-spike",
       "to": "code-review-graph",
       "type": "uses_tool"
     },
@@ -4080,7 +4313,17 @@
     },
     {
       "from": "risk-spike",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
+    },
+    {
+      "from": "risk-spike",
       "to": "design-slice",
+      "type": "hands_off_to"
+    },
+    {
+      "from": "risk-spike",
+      "to": "critique",
       "type": "hands_off_to"
     },
     {
@@ -4304,6 +4547,11 @@
       "type": "reads"
     },
     {
+      "from": "pulse",
+      "to": "<vault>/gate-log.json",
+      "type": "reads"
+    },
+    {
       "from": "user-test",
       "to": "vault_edit",
       "type": "uses_tool"
@@ -4507,6 +4755,96 @@
       "from": "slice-story",
       "to": "build-slice",
       "type": "hands_off_to"
+    },
+    {
+      "from": "product-doc",
+      "to": "product-doc",
+      "type": "spawns"
+    },
+    {
+      "from": "product-doc",
+      "to": "assemble_changelog",
+      "type": "uses_tool"
+    },
+    {
+      "from": "product-doc",
+      "to": "code-review-graph",
+      "type": "uses_tool"
+    },
+    {
+      "from": "product-doc",
+      "to": "Read",
+      "type": "uses_harness"
+    },
+    {
+      "from": "product-doc",
+      "to": "Write",
+      "type": "uses_harness"
+    },
+    {
+      "from": "product-doc",
+      "to": "Edit",
+      "type": "uses_harness"
+    },
+    {
+      "from": "product-doc",
+      "to": "Bash",
+      "type": "uses_harness"
+    },
+    {
+      "from": "product-doc",
+      "to": "Agent",
+      "type": "uses_harness"
+    },
+    {
+      "from": "product-doc",
+      "to": "AskUserQuestion",
+      "type": "uses_harness"
+    },
+    {
+      "from": "product-doc",
+      "to": "<vault>/concept.json",
+      "type": "reads"
+    },
+    {
+      "from": "product-doc",
+      "to": "<vault>/triage.json",
+      "type": "reads"
+    },
+    {
+      "from": "product-doc",
+      "to": "<vault>/slices/_index.json",
+      "type": "reads"
+    },
+    {
+      "from": "product-doc",
+      "to": "<vault>/slices/slice-NNN/changelog.json",
+      "type": "reads"
+    },
+    {
+      "from": "product-doc",
+      "to": "README.md",
+      "type": "creates"
+    },
+    {
+      "from": "product-doc",
+      "to": "CHANGELOG.md",
+      "type": "creates"
+    },
+    {
+      "from": "product-doc",
+      "to": "docs/api-reference.md",
+      "type": "creates"
+    },
+    {
+      "from": "product-doc",
+      "to": "docs/user-guide.md",
+      "type": "creates"
+    },
+    {
+      "from": "product-doc",
+      "to": "<vault>/doc-manifest.json",
+      "type": "creates"
     }
   ]
 }

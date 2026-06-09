@@ -98,6 +98,12 @@
         "slice-candidates"
       ],
       "purpose": "Surface the live candidate backlog (counts, top-priority, blocked-on-spike) in the macro-state summary."
+    },
+    {
+      "path": "<vault>/gate-log.json",
+      "kind": "content-file",
+      "produced_by": [],
+      "purpose": "Per-gate outcome log — read fully to compute the per-gate hit-rate in /pulse (Phase 0.3)"
     }
   ],
   "outputs": [],

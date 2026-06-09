@@ -71,6 +71,11 @@ locked channel itself):
    `"crg":"degraded"|"absent"` in the summary.
 4. Groups coupled findings into connected **clusters** ("must-do-together"); orders clusters (and findings within
    them) by priority `severity_rank×10 + blast_rank − effort_rank` (desc); SC-NNN ids are assigned in that order.
+   **Thickness heuristic (Theme 4):** a coupled cluster whose members are EACH thin (small effort, non-large blast)
+   is over-sliced — slicing them apart pays N× the context-rebuild + critique/review/validate overhead for one shared
+   code seam — so it is flagged for **MERGE** (advisory: a `THIN+COUPLED … consider MERGING` rationale note + a
+   `merge_recommendations` summary entry). Candidates are **never** auto-consolidated (Hard Rule #5 holds — one finding
+   → one candidate, DAG intact); the user merges at `/slice` time if they agree.
 5. Constructs one candidate per finding (schema: `examples/slice-candidates.json`), with `source:[{type:"finding",
    ref}]`, a normalized 1–10 `priority.score`, `dependencies:[]` (a confirmed finding is an independent, coupled-not-
    blocked fix — so candidates.json stays a valid DAG), and a "Must do together with SC-X" rationale note for cluster
@@ -78,7 +83,7 @@ locked channel itself):
    assigning ids + de-duplicating against findings already turned into candidates (live ∪ `archive/candidates.json`)
    inside the lock.
 6. Emits a JSON summary to stdout: `{appended, appended_ids, skipped_existing, confirmed_findings, clusters,
-   crg, order, top:{id,title,rationale}}`. Relay it in Step 2.
+   merge_recommendations:[{ids,size,action:"merge"|"group"}], crg, order, top:{id,title,rationale}}`. Relay it in Step 2.
 
 ## Step 2 — Report to user
 
@@ -88,6 +93,9 @@ Relay the builder's JSON summary:
 - `appended` new candidates (and `skipped_existing` already-present findings, if any)
 - `crg` mode (`used` / `degraded` / `absent`) — note the degradation if not `used`
 - `clusters` — any "must-do-together" SC groups
+- `merge_recommendations` — thin coupled clusters (Theme 4): list each as "consider **merging** SC-X+SC-Y into one
+  slice" (`action:"merge"`, size ≤3) or "**group** SC-X…SC-Z into fewer slices" (`action:"group"`, size ≥4). Frame
+  it as a recommendation the owner weighs at `/slice` time — the candidates remain separate; nothing was merged.
 - `top` — the first candidate by recommended order (`id` + `title` + one-line `rationale`)
 
 ## --obo interactive review mode

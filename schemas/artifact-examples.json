@@ -104,6 +104,34 @@
     "data_model_deltas": [],
     "wiring_matrix": [{ "module": "presence.ts", "consumer_entrypoint": "doc-view subscribes on mount", "consumer_test": "tests/presence.test.ts" }],
     "adrs": ["ADR-014"], "auth_model": "session cookie", "error_model": "SSE retry w/ backoff",
+    "cross_domain_transfer": {
+      "_note": "Optional (Phase 2.1). Present only when this design imports a pattern from another domain. Tier-gated: omit on low/mechanical slices. status per invariant: holds (reasoned true here) | must-verify (empirically decidable, not yet proven -> a /critique focus + re-spike candidate) | fails (precondition does not hold here -> that part of the analogy dropped).",
+      "source_domain": "distributed systems / lattice theory",
+      "pattern": "CRDT-style convergent replica: each client view is an eventually-consistent set of who-is-here",
+      "rationale": "Presence is a converging-replica problem, not a request/response one — importing CRDT convergence avoids a brittle hand-rolled sync.",
+      "invariants": [
+        { "precondition": "join/leave updates are commutative + idempotent (order-independent)", "status": "holds", "evidence": "events carry a server-assigned sequence; replaying in any order converges" },
+        { "precondition": "one SSE server can fan out to the expected concurrent viewers", "status": "must-verify", "evidence": "spiked at R-27 — held to ~120 conns, fallback to managed pub/sub above that" },
+        { "precondition": "client clocks are synced within the staleness tolerance", "status": "fails", "evidence": "clients have no synced clock — dropped; use the server-assigned sequence instead of client timestamps" }
+      ]
+    },
+    "tournament": {
+      "_note": "Optional (Phase 3). Present only when the tier-gated multi-designer tournament ran (omit on low/mechanical single-flight slices). selected: core|partial|none. decidable_disagreements (verdict pending here) are adjudicated by the post-synthesis /risk-spike --mode design (reality fills go/no-go); taste_disagreements fall through to /critique + the user. channeled_experts feeds the /critique expert-independence guard (the Critic must be a DIFFERENT expert).",
+      "tier": "high",
+      "designers": ["designer-practice", "designer-crossdomain", "designer-expert"],
+      "proposals": [
+        { "designer": "designer-practice", "approach": "managed pub/sub (Pusher/Ably) WebSocket presence channel", "selected": "partial" },
+        { "designer": "designer-crossdomain", "approach": "CRDT-style convergent replica over SSE — presence as an eventually-consistent set", "selected": "core" },
+        { "designer": "designer-expert", "approach": "channeled Kleppmann — CRDT presence with an explicit causal-order log", "selected": "partial" }
+      ],
+      "channeled_experts": ["Martin Kleppmann"],
+      "selection_rationale": "SSE over managed pub/sub — CRG shows doc-view already holds an EventSource (CRG-fit); CRDT convergence is spike-able + reversible; dropped the causal-order log as YAGNI (simplest-that-works).",
+      "coherence_check": "all chosen pieces assume eventual consistency + server-assigned sequence ordering — no contradictory consistency model.",
+      "decidable_disagreements": [
+        { "question": "can one SSE server fan out to the expected concurrent viewers, or is managed pub/sub required above N?", "spike": "pending", "verdict": "pending" }
+      ],
+      "taste_disagreements": ["presence set keyed by userId vs sessionId — boundary choice deferred to /critique + user"]
+    },
     "at": "<ts>"
   },
   "build-log": {
@@ -119,6 +147,7 @@
     "_schema": "aisdlc/validation@1",
     "slice": "slice-021",
     "result": "pass",
+    "reality_contact": "high",
     "criteria": [{ "id": "AC1", "result": "pass", "evidence": "two browsers, avatar in 1.4s", "cause": null }],
     "reality_surprises": [{ "note": "Safari needs an explicit retry header", "becomes_candidate": "SC-024" }],
     "shippability_regression": { "ran": true, "failed_rows": [] },
@@ -166,9 +195,12 @@
   },
   "code-review": {
     "_schema": "aisdlc/code-review@1",
-    "_note": "Adversarial code-Critic on the slice diff (CRSI-1). Advisory in v1.",
+    "_note": "Adversarial code-Critic on the slice diff (CRSI-1). Advisory in v1. A perf/complexity finding is a HYPOTHESIS, not an asserted Big-O (model complexity reasoning is hallucination-prone) — mark it measure_at_validate:true so /validate-slice Step 1b benchmarks it on real data (Theme 8: reason→flag here, measure→verdict there).",
     "slice": "slice-021", "reviewed_by": "code-review agent",
-    "findings": [{ "id": "CR1", "dimension": "edge-case", "severity": "minor", "file": "src/presence.ts:42", "claim": "no backoff cap on SSE retry", "fix": "cap retry at 30s" }],
+    "findings": [
+      { "id": "CR1", "dimension": "edge-case", "severity": "minor", "file": "src/presence.ts:42", "claim": "no backoff cap on SSE retry", "fix": "cap retry at 30s" },
+      { "id": "CR2", "dimension": "edge-case", "severity": "major", "file": "src/feed.ts:88", "claim": "renderFeed does a .find() per item inside the render loop — hypothesised O(n^2), bites ~>2k items", "fix": "index by id into a Map once before the loop; /validate-slice to benchmark at 1x/10x/100x", "measure_at_validate": true }
+    ],
     "dimensions_checked": ["assumptions", "edge-cases", "security", "contract-gaps", "drift"]
   },
   "spike": {
@@ -184,8 +216,19 @@
   },
   "drift-log": {
     "_schema": "aisdlc/drift-log@1",
-    "_note": "Append-only audit (R-32). Categories: drift | unspecified-code | stale-claim.",
+    "_note": "Append-only audit (R-32). Categories: drift | unspecified-code | stale-claim | stale-doc (stale-doc = a /product-doc-generated doc drifted from code, via doc-manifest.json).",
     "entries": [{ "at": "<ts>", "trigger": "slice-021", "category": "stale-claim", "finding": "ADR-008 claims WebSocket; code uses SSE.", "resolution": "superseded by ADR-014" }]
+  },
+  "gate-log": {
+    "_schema": "aisdlc/gate-log@1",
+    "_note": "Append-only per-gate outcome log (roadmap Theme 8 measurement spine). Two row kinds. VERDICT rows (default; ONE per GATE per slice, appended via gate_log.py | vault_edit append, SVW-1 locked) carry findings_count/_real/_noise → PRECISION. reality_contact ranks the gate by what it touches that is NOT the model: high = real env/device/data (risk-spike, validate-slice); medium = real code graph (drift-check); low = the model grading the model (critique, critique-review, code-review). RECALL rows (kind:\"miss\", emitted by /reflect Step 3b) record a real issue the owning gate SHOULD have caught but MISSED — surfaced in build/validate or post-ship; they carry severity + caught_by, NO verdict/findings_count. Per-gate recall = catches/(catches+misses), catches = Σ findings_real on that gate's verdict rows. Readers (/pulse, /critic-calibrate) MUST filter kind:\"miss\" OUT of the precision/raised math. mode/tier optional. Surfaced as the per-gate hit-rate line in /pulse.",
+    "entries": [
+      { "at": "<ts>", "slice": "slice-021", "gate": "risk-spike", "verdict": "go", "findings_count": 0, "reality_contact": "high" },
+      { "at": "<ts>", "slice": "slice-021", "gate": "critique", "verdict": "needs-fixes", "findings_count": 4, "reality_contact": "low", "findings_real": 3, "findings_noise": 1, "mode": "standard", "tier": "medium" },
+      { "at": "<ts>", "slice": "slice-021", "gate": "validate-slice", "verdict": "pass", "findings_count": 0, "reality_contact": "high" },
+      { "at": "<ts>", "slice": "slice-021", "gate": "critique", "kind": "miss", "reality_contact": "low", "severity": "major", "caught_by": "validate", "ref": "AC4 concurrent-writer race — design assumed single writer" },
+      { "at": "<ts>", "slice": "slice-017", "gate": "code-review", "kind": "miss", "reality_contact": "low", "severity": "blocker", "caught_by": "post-ship", "ref": "IDOR on GET /receipts/{id} — escaped to prod, fixed by slice-021 via /repro" }
+    ]
   },
   "parallel-conflict-resolution-log": {
     "_schema": "aisdlc/parallel-conflict-resolution-log@1",
@@ -193,10 +236,11 @@
     "entries": [{ "type": "hard-conflict-resolution", "timestamp": "<ts>", "repo_head_sha_pre_resolution": "9f3a1c7e", "u_files_resolved": ["src/receipt/parser.ts", "tests/receipt/parser.test.ts"], "concerned_slices": ["slice-019-refactor-parser", "slice-021-add-receipt-ocr"], "resolution_mechanism": "gate-on-hand-resolve (PCR-2b) — hand-resolved + code-review agent + TRI-RESOLVE-1 user gate", "code_review_verdict": "no blockers; both-sides intent preserved", "tri_resolve_1_disposition": "apply" }]
   },
   "critic-calibration-log": {
-    "_schema": "aisdlc/critic-calibration-log@2",
-    "_note": "Two sections. active_checks[] = the SUMMARIZED, deduped, live project overlay that /critique reads before every review (the ONLY section /critique loads, so it stays small regardless of history). runs[] = append-only audit history of every /critic-calibrate run; a new run NEVER overwrites a prior one. /critic-calibrate upserts accepted proposals into active_checks (dedup by id) and appends the run to runs. agents/critique.md (the plugin base Critic) is NEVER edited from a project — recurring/generic checks are mailed to the maintainer to fold into the next plugin version.",
+    "_schema": "aisdlc/critic-calibration-log@3",
+    "_note": "Three sections. active_checks[] = the SUMMARIZED, deduped live project overlay /critique reads before every review (the ADD direction — checks the Critic was MISSING). calibration_notes[] = the LIGHTEN direction (Phase 4.1 / Theme 5): per-project signals that a model-on-model dimension/gate has been low-signal here (low precision / quiet over a window); /critique + /code-review read them to weight that dimension lighter — INFORM, never disable. HARD RULE: only critique/critique-review/code-review (+ project active_checks) may be lightened; the reality spine risk-spike/validate-slice is NEVER lightened. runs[] = append-only audit history of every /critic-calibrate run; a new run NEVER overwrites a prior one. /critic-calibrate upserts accepted ADD proposals into active_checks, confirmed LIGHTEN proposals into calibration_notes (or retires a noisy active_check), and appends the run to runs. agents/critique.md (the plugin base Critic) is NEVER edited from a project.",
     "active_checks": [{ "id": "CC-001", "check": "Check auth/authz on every new API endpoint and mutation path.", "category": "missing-auth-checks", "evidence": ["slice-014", "slice-019", "slice-021"], "added_at": "<ts>" }],
-    "runs": [{ "at": "<ts>", "window": 15, "patterns": [{ "category": "missing-auth-checks", "slices": ["slice-014", "slice-019", "slice-021"] }], "proposals": [{ "text": "Add an explicit auth-on-every-endpoint dimension.", "decision": "accepted", "check_id": "CC-001" }] }]
+    "calibration_notes": [{ "id": "CN-001", "target_gate": "critique", "target_dimension": "3. Over-engineering", "signal": "low-precision", "window": 15, "precision": 0.2, "evidence": ["slice-017", "slice-020", "slice-022", "slice-024"], "note": "Over-engineering findings were FALSE-ALARM 4/5 times here (this project already runs lean) — weight this dimension lighter on low-tier slices; do NOT inflate. Advisory only; never a reality sign-off.", "confirmed_at": "<ts>" }],
+    "runs": [{ "at": "<ts>", "window": 15, "patterns": [{ "category": "missing-auth-checks", "slices": ["slice-014", "slice-019", "slice-021"] }], "proposals": [{ "text": "Add an explicit auth-on-every-endpoint dimension.", "kind": "add", "decision": "accepted", "check_id": "CC-001" }, { "text": "Lighten the Over-engineering dimension (FALSE-ALARM 4/5 over 15 slices).", "kind": "lighten", "decision": "accepted", "note_id": "CN-001" }] }]
   },
   "sync-log": {
     "_schema": "aisdlc/sync-log@1",
@@ -223,6 +267,19 @@
     "committed": true,
     "merged": true
   },
+  "doc-manifest": {
+    "_schema": "aisdlc/doc-manifest@1",
+    "_note": "Provenance anchor written by /product-doc into <vault>/doc-manifest.json (single-shot raw-write). Records which product docs were generated, the CRG public-surface snapshot each was grounded in, and the source commit — so /drift-check can flag a doc as 'stale-doc' when the code surface it documented no longer matches reality (Phase 4 / Theme 6). The docs themselves are markdown DELIVERABLES in the CODE repo (README.md, CHANGELOG.md, docs/*), NOT vault JSON; only this manifest lives in the vault.",
+    "at": "<ts>",
+    "source_commit": "08f217c",
+    "public_surface": { "entry_points": ["cli: aisdlc"], "exports": ["build_backlog", "vault_edit"], "endpoints": [] },
+    "docs": [
+      { "path": "README.md", "kind": "readme", "generated_at": "<ts>", "grounded_in": ["crg:module:cli", "vault:concept.json"] },
+      { "path": "CHANGELOG.md", "kind": "changelog", "generated_at": "<ts>", "grounded_in": ["vault:slices/archive/*/changelog.json"] },
+      { "path": "docs/api-reference.md", "kind": "api-reference", "generated_at": "<ts>", "grounded_in": ["crg:exports"] },
+      { "path": "docs/user-guide.md", "kind": "user-guide", "generated_at": "<ts>", "grounded_in": ["vault:concept.json", "crg:module:cli"] }
+    ]
+  },
   "build-checks": {
     "_schema": "aisdlc/build-checks@1",
     "_note": "Project evergreen rules surfaced at /build-slice (BC-1). Append via vault_edit.",
@@ -242,6 +299,26 @@
     "_schema": "aisdlc/non-functional@1",
     "_note": "Heavy: NFRs + compliance mapping.",
     "nfrs": [{ "id": "NFR-2", "kind": "latency", "target": "webhook->PAID < 2s p95", "status": "met", "verification_ref": "tests/perf_webhook.py", "compliance": ["PCI"] }]
+  },
+  "cost-estimation": {
+    "_schema": "aisdlc/cost-estimation@1",
+    "_note": "Heavy: upfront infra cost per component at 1K/10K/100K users (compute/storage/network/third-party), with monthly + per-user totals per scale. Human-authored (locked-at: heavy-architect); refined as reality lands.",
+    "currency": "USD",
+    "components": [
+      { "name": "api-server", "scales": {
+        "1k":   { "compute": 50,   "storage": 10,  "network": 5,   "third_party": 15,  "total_monthly": 80,   "per_user": 0.08 },
+        "10k":  { "compute": 320,  "storage": 60,  "network": 40,  "third_party": 90,  "total_monthly": 510,  "per_user": 0.051 },
+        "100k": { "compute": 2600, "storage": 500, "network": 380, "third_party": 700, "total_monthly": 4180, "per_user": 0.0418 } } }
+    ],
+    "totals_monthly": { "1k": 80, "10k": 510, "100k": 4180 }
+  },
+  "diagrams": {
+    "_schema": "aisdlc/diagrams@1",
+    "_note": "Heavy: human design intent as Mermaid diagram SOURCE in JSON string fields (NOT rendered files). System overview + key sequence flows. locked-at: heavy-architect.",
+    "diagrams": [
+      { "id": "system-overview", "kind": "flowchart", "mermaid": "flowchart TD\n  client[Client] --> api[API Server]\n  api --> db[(Postgres)]\n  api --> queue[[Job Queue]]\n  queue --> worker[Worker]" },
+      { "id": "checkout-sequence", "kind": "sequence", "mermaid": "sequenceDiagram\n  Client->>API: POST /checkout\n  API->>DB: reserve inventory\n  API->>Payments: charge\n  Payments-->>API: paid\n  API-->>Client: 201 Created" }
+    ]
   },
   "component": {
     "_schema": "aisdlc/component@1",
@@ -279,6 +356,18 @@
     "headline": "Show teammates who's viewing a document, live.",
     "stage": "pre-build", "mode": "standard", "risk_tier": "medium",
     "tldr_md": "We're adding a small live indicator so people editing a shared document can see who else is looking at it right now. The first plan needed one always-open connection per viewer; testing showed a single server couldn't hold enough of those, so the design switched to a lighter live feed. A reviewer also caught that the feed didn't check who was asking, so we added a sign-in check before any names are shared.",
+    "signoff": {
+      "_note": "Optional. Who has actually said 'yes' to this slice, separated by WHAT did the approving: reality (a spike on a real environment, or real-device/data testing) vs the model (a design or code review). Reality-approved and model-approved are NOT the same green. not_yet = checks that haven't happened at this lifecycle stage.",
+      "reality_approved": [
+        { "what": "Could one server hold 500 always-open live connections? Tested on a real managed server — it tapped out near 120, so the design switched to a lighter one-way feed.", "by": "spike on a real server", "ref": "R-27" }
+      ],
+      "model_approved": [
+        { "what": "The plan was reviewed and one real gap — a live feed that didn't check who was asking — was found and fixed before any code was written.", "by": "independent design review", "ref": "C1" }
+      ],
+      "not_yet": [
+        "Reality testing on real devices and data hasn't happened yet — that comes after the build, when the slice is checked against the real world."
+      ]
+    },
     "sections": [
       {
         "heading": "What we set out to do",

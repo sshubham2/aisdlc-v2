@@ -1,6 +1,6 @@
 {
-  "_schema": "aisdlc/critic-calibration-log@2",
-  "_note": "Two sections. active_checks[] = the SUMMARIZED, deduped, live project overlay that /critique reads before every review (the ONLY section /critique loads, so it stays small regardless of history). runs[] = append-only audit history of every /critic-calibrate run; a new run NEVER overwrites a prior one. /critic-calibrate upserts accepted proposals into active_checks (dedup by id) and appends the run to runs. agents/critique.md (the plugin base Critic) is NEVER edited from a project — recurring/generic checks are mailed to the maintainer to fold into the next plugin version.",
+  "_schema": "aisdlc/critic-calibration-log@3",
+  "_note": "Three sections. active_checks[] = the SUMMARIZED, deduped live project overlay /critique reads before every review (the ADD direction — checks the Critic was MISSING). calibration_notes[] = the LIGHTEN direction (Phase 4.1 / Theme 5): per-project signals that a model-on-model dimension/gate has been low-signal here (low precision / quiet over a window); /critique + /code-review read them to weight that dimension lighter — INFORM, never disable. HARD RULE: only critique/critique-review/code-review (+ project active_checks) may be lightened; the reality spine risk-spike/validate-slice is NEVER lightened. runs[] = append-only audit history of every /critic-calibrate run; a new run NEVER overwrites a prior one. /critic-calibrate upserts accepted ADD proposals into active_checks, confirmed LIGHTEN proposals into calibration_notes (or retires a noisy active_check), and appends the run to runs. agents/critique.md (the plugin base Critic) is NEVER edited from a project.",
   "active_checks": [
     {
       "id": "CC-001",
@@ -12,6 +12,24 @@
         "slice-021"
       ],
       "added_at": "<ts>"
+    }
+  ],
+  "calibration_notes": [
+    {
+      "id": "CN-001",
+      "target_gate": "critique",
+      "target_dimension": "3. Over-engineering",
+      "signal": "low-precision",
+      "window": 15,
+      "precision": 0.2,
+      "evidence": [
+        "slice-017",
+        "slice-020",
+        "slice-022",
+        "slice-024"
+      ],
+      "note": "Over-engineering findings were FALSE-ALARM 4/5 times here (this project already runs lean) — weight this dimension lighter on low-tier slices; do NOT inflate. Advisory only; never a reality sign-off.",
+      "confirmed_at": "<ts>"
     }
   ],
   "runs": [
@@ -31,8 +49,15 @@
       "proposals": [
         {
           "text": "Add an explicit auth-on-every-endpoint dimension.",
+          "kind": "add",
           "decision": "accepted",
           "check_id": "CC-001"
+        },
+        {
+          "text": "Lighten the Over-engineering dimension (FALSE-ALARM 4/5 over 15 slices).",
+          "kind": "lighten",
+          "decision": "accepted",
+          "note_id": "CN-001"
         }
       ]
     }

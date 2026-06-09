@@ -162,6 +162,51 @@ def _render_glossary(glossary: list) -> str:
     )
 
 
+def _render_signoff(signoff: dict) -> str:
+    """Render the 'Who has signed off' panel: reality-approved vs model-approved vs
+    not-yet, so the reader sees at a glance whether reality or just a review said yes.
+    Each list is optional; the whole panel is omitted when nothing applies."""
+    if not isinstance(signoff, dict):
+        return ""
+
+    def _items(lst: list) -> str:
+        rows = []
+        for it in (lst or []):
+            if isinstance(it, str):
+                rows.append(f"<li>{_inline(it.strip())}</li>")
+            elif isinstance(it, dict):
+                what = _inline(str(it.get("what", "")).strip())
+                by = it.get("by")
+                ref = it.get("ref")
+                by_html = f' <span class="so-by">— {html.escape(str(by), quote=False)}</span>' if by else ""
+                ref_html = f'<span class="ref">{html.escape(str(ref), quote=False)}</span>' if ref else ""
+                rows.append(f'<li>{what}{by_html}{ref_html}</li>')
+        return "".join(rows)
+
+    groups = (
+        ("reality_approved", "Proven against reality", "so-reality"),
+        ("model_approved", "Reviewed by the model", "so-model"),
+        ("not_yet", "Not yet checked against reality", "so-notyet"),
+    )
+    cols = []
+    for key, label, cls in groups:
+        body = _items(signoff.get(key) or [])
+        if body:
+            cols.append(
+                f'<div class="so-col {cls}"><div class="so-label">{label}</div>'
+                f"<ul>{body}</ul></div>"
+            )
+    if not cols:
+        return ""
+    return (
+        '<section class="signoff"><h2>Who has signed off</h2>'
+        f'<div class="signoff-grid">{"".join(cols)}</div>'
+        '<p class="signoff-foot">Reality testing can say a hard no, so a reality sign-off is the '
+        "strongest kind. A review is the model checking the plan or the code &mdash; valuable, but not "
+        "the same as proving it against the real world.</p></section>"
+    )
+
+
 _CSS = """
 :root{--ink:#1a1d23;--muted:#5b6470;--line:#e4e7ec;--bg:#fbfbfc;--card:#fff;
 --accent:#2563eb;--good:#0f7b4f;--good-bg:#e6f4ed;--warn:#9a6700;--warn-bg:#fdf3d8;
@@ -183,6 +228,15 @@ border-radius:10px;padding:16px 20px;margin:26px 0;}
 .tldr .lbl{font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);
 font-weight:700;margin-bottom:4px;}
 .tldr p{margin:.3em 0;}
+.signoff{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 24px;margin:18px 0;}
+.signoff h2{font-size:20px;margin:0 0 14px;}
+.signoff-grid{display:flex;flex-wrap:wrap;gap:14px;}
+.so-col{flex:1 1 220px;border-radius:9px;padding:12px 15px;}
+.so-reality{background:var(--good-bg);} .so-model{background:var(--grey-bg);} .so-notyet{background:var(--warn-bg);}
+.so-label{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;}
+.so-reality .so-label{color:var(--good);} .so-model .so-label{color:var(--muted);} .so-notyet .so-label{color:var(--warn);}
+.so-col ul{margin:0;padding-left:1.1em;} .so-col li{margin:.4em 0;font-size:14.5px;}
+.so-by{color:var(--muted);font-size:13px;} .signoff-foot{color:var(--muted);font-size:13.5px;margin:14px 0 0;}
 .section{background:var(--card);border:1px solid var(--line);border-radius:12px;
 padding:22px 24px;margin:18px 0;}
 .section.tech{background:var(--tech-bg);}
@@ -216,7 +270,7 @@ color:var(--muted);font-weight:700;margin-bottom:4px;}
 .glossary dd{margin:2px 0 0;color:var(--muted);}
 footer.foot{margin-top:40px;padding-top:18px;border-top:1px solid var(--line);
 font-size:13px;color:#9aa3af;}
-@media print{body{background:#fff}.section,.tldr{break-inside:avoid;border-color:#ccc}}
+@media print{body{background:#fff}.section,.tldr,.signoff{break-inside:avoid;border-color:#ccc}}
 """
 
 
@@ -248,6 +302,8 @@ def render(data: dict) -> str:
     if tldr:
         tldr_html = f'<div class="tldr"><div class="lbl">In short</div>{_md(str(tldr))}</div>'
 
+    signoff_html = _render_signoff(data.get("signoff") or {})
+
     sections_html = "\n".join(
         _render_section(s) for s in (data.get("sections") or []) if isinstance(s, dict)
     )
@@ -268,6 +324,7 @@ def render(data: dict) -> str:
 {chips_html}
 </header>
 {tldr_html}
+{signoff_html}
 {sections_html}
 {glossary_html}
 <footer class="foot">

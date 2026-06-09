@@ -44,11 +44,12 @@ VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vau
 $PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/slices/_index.json'; print(open(f).read() if os.path.exists(f) else '{}')" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
-Project-calibrated checks — `active_checks` ONLY (learned from THIS project's past Critic misses via `/critic-calibrate`;
-this is the project overlay layered on the base `agents/critique.md`). Loads only this small section, never `runs[]`:
+Project-calibrated overlay (learned from THIS project via `/critic-calibrate`; layered on the base `agents/critique.md`).
+Loads two small sections only, never `runs[]`: `active_checks` (extra checks to APPLY — the Critic was missing these)
+and `calibration_notes` (dimensions to LIGHTEN — they've been low-signal here; weight lower, never a reality sign-off):
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/critic-calibration-log.json'; d=json.load(open(f)) if os.path.exists(f) else {}; print(json.dumps(d.get('active_checks',[]),indent=2))" "$VAULT" 2>/dev/null || echo "[]"
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/critic-calibration-log.json'; d=json.load(open(f,encoding='utf-8')) if os.path.exists(f) else {}; print(json.dumps({'active_checks':d.get('active_checks',[]),'calibration_notes':d.get('calibration_notes',[])},indent=2))" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
 ## Mode/tier gating
@@ -91,9 +92,11 @@ Read (all from the active slice folder):
 Pattern-recognition inputs (query JSON vault directly; use code-review-graph / CRG for code-graph queries):
 - `<vault>/slices/action-points.json` — curated cross-slice action-points register
 - `<vault>/slices/_index.json` — most-recent-10 slice table
-- `<vault>/critic-calibration-log.json` → **`active_checks[]` ONLY** — this project's calibrated Critic checks (injected
-  above). Hand them to the Critic in Step 2 as extra dimensions. NEVER read `runs[]` (it grows unboundedly; the overlay
-  is the small `active_checks` section). Absent file/key → no extra checks (silent no-op).
+- `<vault>/critic-calibration-log.json` → **`active_checks[]` + `calibration_notes[]` ONLY** (both injected above).
+  `active_checks` are extra dimensions to APPLY; `calibration_notes` (Phase 4.1) are dimensions this project found
+  low-signal — hand them to the Critic in Step 2 to weight LIGHTER (never to skip). NEVER read `runs[]` (it grows
+  unboundedly). Absent file/keys → no overlay (silent no-op). Note: a calibration_note can only ever lighten a
+  model-on-model dimension — it can NEVER touch the reality gates.
 - Open individual `reflection.json` files **only** when action-points or _index point to a specific match.
 
 Project-frame (PFS-1): run via Bash and capture stdout:
@@ -119,6 +122,24 @@ Forced: <true | false>
 # design.json
 <full JSON contents>
 
+# Cross-domain transfer — invariants to attack (Phase 2.1; present only if design.json has cross_domain_transfer)
+<the design's cross_domain_transfer block, or "none">
+For each `must-verify` invariant, attack whether the borrowed pattern's precondition ACTUALLY holds here — a
+cross-domain transfer is a high-ceiling, high-variance move, and the design may have imported the pattern's
+surface without its preconditions. A clean transfer survives; an invariant-blind one is a finding.
+NOTE: if a post-synthesis design spike already ran, the cross_domain_transfer invariants will read `holds`/`fails`
+(not `must-verify`) and `tournament.decidable_disagreements` will carry spike verdicts — reality already
+adjudicated those; do NOT re-litigate a spike-settled question. Focus on what the spike could NOT decide.
+
+# Tournament provenance + EXPERT INDEPENDENCE (Phase 3.5; present only if design.json has a `tournament` block)
+<the design's `tournament` block, or "none">
+Designer C channeled these experts: <tournament.channeled_experts names, or "none">.
+You MUST reason as a DIFFERENT expert — you did not write this design; attack it. If your sharpest critique lens
+would BE one of the channeled experts, deliberately switch to a different authority: a Critic who shares the
+designer's expert shares the designer's blind spots, and stacked same-mind scrutiny launders errors into false
+confidence. Your expert lens is ONE voice among the 9 dimensions, NEVER a trump card. Attack the `taste_disagreements`
+the tournament left open (boundary placement, naming, layering) as legitimate design forks for the user to weigh.
+
 # project-frame
 <stdout of project_frame_synth, or "(project-frame unavailable)">
 
@@ -130,6 +151,12 @@ Forced: <true | false>
 
 # Project-calibrated checks (apply IN ADDITION to your 9 fixed dimensions — learned from THIS project's past Critic misses)
 <active_checks[] from critic-calibration-log.json, or "none">
+
+# Project calibration notes — LIGHTEN (Phase 4.1; this project found these dimensions low-signal — weight them LIGHTER, do NOT inflate)
+<calibration_notes[] from critic-calibration-log.json, or "none">
+For each note, treat the named dimension as lower-yield FOR THIS PROJECT (it has been FALSE-ALARM / quiet over the
+cited window): hold a higher bar before filing in it, and do not pad severity. This NEVER suppresses a real issue —
+file it if you see one — and it NEVER applies to the reality gates. It only counters this project's measured over-firing.
 
 # Specific archived reflections (only if directly relevant)
 <contents, or "none">
@@ -205,6 +232,14 @@ Critic findings for slice-NNN <name>:
 
 OVERRIDDEN / DEFERRED / ESCALATED MUST carry a non-empty rationale (triage audit refuses empty).
 
+**Anti-alert-fatigue (Theme 5) — surface the novel, batch the routine.** A gate that makes the user ratify ten
+look-alike findings one-by-one trains the rubber-stamp reflex, and a rubber-stamped gate is theater. So shape the
+presentation by signal, not by uniform list:
+- **Blockers + majors: individually**, each with its own ratify line (above). These are never batched.
+- **Minors: batched.** Present them as ONE group — *"N minors, all drafted `<disposition>` — accept all as drafted? (Enter = yes, or name any id to review/override)."* Don't force a keystroke per minor.
+- **Tag each finding NOVEL vs RECURRING.** A finding is RECURRING if this dimension+claim shape was already raised-and-accepted in a recent slice (check `<vault>/critic-calibration-log.json` `active_checks[]`/`runs[]` + the recent reflections' calibration). **Lead with the NOVEL findings** — that is where the user's attention is worth spending; recurring ones can ride the batch.
+- **Rubber-stamp awareness.** If the user ratifies *every* draft disposition unchanged (no override / no severity change), that wholesale-accept is itself a signal — note it in the triage `notes`. It feeds `/critic-calibrate`'s lighten analysis: a model-on-model gate whose findings are always accepted-as-drafted with zero pushback over several slices is a candidate to lighten (never the reality spine). This is descriptive, not a block — the user still owns the verdict.
+
 Once the user ratifies, compute **final verdict** mechanically:
 - Any `escalated` → **BLOCKED**
 - Else any `accepted-pending` → **NEEDS-FIXES**
@@ -234,6 +269,31 @@ correct, re-run. Do NOT bypass.
 
 NFR-1 carry-over: slices with `mission-brief.json` mtime before 2026-05-06 are exempt
 (`carry_over_exempt: true`; audit returns zero violations).
+
+### Record the gate outcome (measurement spine — Phase 0.1 + 0.2)
+
+After the triage is ratified, append one row for the **first Critic** to `<vault>/gate-log.json`. The TRI-1
+dispositions make per-gate **precision** computable (Phase 0.2): derive from the ratified dispositions —
+
+- `findings-count` = total first-Critic findings
+- `findings-real` = dispositions in {`accepted-fixed`, `accepted-pending`, `deferred`, `escalated`} — a real
+  issue, even if deferred or blocking
+- `findings-noise` = dispositions in {`overridden`} — the user judged it NOT a real issue (a false positive)
+
+`critique` is a **low** reality-contact gate (the model grading the model); `gate_log.py` stamps that.
+
+```bash
+# mode from triage.json; tier = slice risk_tier from mission-brief.json
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate critique --slice <slice-NNN-name> \
+    --verdict <clean|needs-fixes|blocked> --findings-count <N> \
+    --findings-real <R> --findings-noise <noise> \
+    --mode <minimal|standard|heavy> --tier <low|medium|high> \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
+(The `/critique-review` meta-Critic logs its OWN row when it runs at Step 3.5 — this row is the first Critic's.)
 
 ## Step 5 — gate decision + milestone update
 
@@ -271,10 +331,14 @@ On BLOCKED: do NOT invoke any successor — HALT and surface instructions to the
 - Do NOT bypass the TRI-1 gate (Step 4.5) — even in auto-advance mode.
 - TRACK Critic accuracy in `/reflect`. Every 10–20 slices, run `/critic-calibrate`.
 - "No issues found" on 3+ slices in a row is a smell — re-read more aggressively or escalate.
+- **Model-on-model gate (Phase 1.3).** This is LOW reality-contact — the model grading the model. It is advisory
+  and lighter on low-tier slices (see Mode/tier gating: skippable on Standard-low / Minimal-low with no mandatory
+  triggers) and NEVER overrides a reality gate (`/risk-spike`, `/validate-slice`). A clean critique is a
+  model-approval, not a reality sign-off — trust it less than a spike.
 
 ## Pipeline position
 
-- predecessor: `/design-slice`
+- predecessor: `/design-slice` (or `/risk-spike --mode design` when a post-synthesis design spike ran — the spike already settled the empirically-decidable tournament disagreements; you attack the taste forks + the rest)
 - successor: `/slice-story` (the plain-language pre-build report; it then prompts `/build-slice`. The `/critique-review` meta-review runs IN-LOOP at Step 3.5, before triage)
 - auto-advance: true (CLEAN/NEEDS-FIXES only)
 - user-input gates (halt auto-advance):

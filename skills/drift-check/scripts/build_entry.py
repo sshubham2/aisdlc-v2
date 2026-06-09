@@ -12,7 +12,7 @@ Two output modes:
     `vault_edit append --content-file <path>` form).
 
 Entry shape: `{at, trigger, category, finding[, resolution][, action][, rationale]}`.
-`category` ∈ {drift, unspecified-code, stale-claim}. `trigger` is canonicalized to
+`category` ∈ {drift, unspecified-code, stale-claim, stale-doc}. `trigger` is canonicalized to
 `slice-NNN` (DCE-1 matches that pattern); a non-slice trigger passes through verbatim.
 Optional fields are omitted (never written as null). `--action accept-drift` REQUIRES
 `--rationale` (must reference a next-action slice per the /drift-check contract).
@@ -36,7 +36,7 @@ if str(_REPO) not in sys.path:
 
 from scripts.lib import _stdout
 
-_CATEGORIES = {"drift", "unspecified-code", "stale-claim"}
+_CATEGORIES = {"drift", "unspecified-code", "stale-claim", "stale-doc"}
 _SLICE_RE = re.compile(r"^(slice-\d+)(?:-.+)?$")
 
 
@@ -56,7 +56,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         prog="build_entry",
         description="Serialize a drift-log.json entry for vault_edit append (/drift-check).",
     )
-    p.add_argument("--category", required=True, help="drift | unspecified-code | stale-claim")
+    p.add_argument("--category", required=True, help="drift | unspecified-code | stale-claim | stale-doc")
     p.add_argument("--finding", required=True, help="the drift finding text")
     p.add_argument("--trigger", default=None, help="slice-NNN (canonicalized) or other trigger label")
     p.add_argument("--resolution", default=None, help="how it was resolved (optional)")

@@ -238,6 +238,34 @@ def _walk_function_for_mocks(
     return mocks
 
 
+def _collect_test_functions(
+    tree: ast.Module,
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Collect the test functions a Python runner would actually run: module-level ``test_*``
+    functions and ``test_*`` methods of (possibly nested) classes. Deliberately does NOT
+    descend into a function's BODY — a ``test_*`` def nested inside another function is a local
+    helper the runner never collects, and its mocks are ALREADY attributed to the enclosing
+    real test by ``_walk_function_for_mocks`` (which walks the full body, nested helpers
+    included, so a mock can't be hidden by nesting). Collecting it as a separate test would
+    double-count those mocks (spuriously tripping the budget) and emit a phantom violation.
+    Class bodies and control-flow blocks ARE descended (real tests live there); only crossing
+    a function boundary stops the descent."""
+    out: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+
+    def visit(node: ast.AST, inside_func: bool) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not inside_func and node.name.startswith("test_"):
+                out.append(node)
+            for child in ast.iter_child_nodes(node):
+                visit(child, True)  # now inside a function body — no nested def is a real test
+        else:
+            for child in ast.iter_child_nodes(node):
+                visit(child, inside_func)
+
+    visit(tree, False)
+    return out
+
+
 def lint_file(
     path: Path,
     seam_allowlist: frozenset[str] = frozenset(),
@@ -283,12 +311,7 @@ def _lint_python(
         )]
 
     violations: list[LintViolation] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if not node.name.startswith("test_"):
-            continue
-
+    for node in _collect_test_functions(tree):
         mocks = _walk_function_for_mocks(node)
 
         if len(mocks) > 1:

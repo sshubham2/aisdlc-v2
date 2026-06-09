@@ -23,6 +23,14 @@
       "purpose": "Confirm the slice was SHIPPED and interpret deviations during AC validation."
     },
     {
+      "path": "<vault>/slices/slice-NNN/code-review.json",
+      "kind": "content-file",
+      "produced_by": [
+        "code-review"
+      ],
+      "purpose": "Step 1b (Theme 8): read findings with measure_at_validate:true (code-review complexity/perf hypotheses) to profile/benchmark on real data — reason→flag at code-review, measure→verdict here."
+    },
+    {
       "path": "<vault>/shippability.json",
       "kind": "content-file",
       "produced_by": [
@@ -179,6 +187,40 @@
       "purpose": "Append reality-surprise findings that spawn future work as new candidates.",
       "example_schema": "aisdlc/slice-candidates@1",
       "example": "examples/slice-candidates.json"
+    },
+    {
+      "path": "<vault>/gate-log.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [],
+      "edited_by": [
+        "code-review",
+        "critique",
+        "critique-review",
+        "drift-check",
+        "reflect",
+        "risk-spike",
+        "validate-slice"
+      ],
+      "read_by": [
+        "critic-calibrate",
+        "pulse"
+      ],
+      "validated_by": [
+        "gate_log",
+        "vault_edit"
+      ],
+      "purpose": "Append one gate-outcome row per slice (measurement spine, roadmap Theme 8 / plan Phase 0)",
+      "example_schema": "aisdlc/gate-log@1",
+      "example": "examples/gate-log.json"
     }
   ],
   "agents": [],
@@ -246,6 +288,22 @@
       "purpose": "SRSC-1 canonical catalog runner: executes each row's Machine-cmd and reports PASS/FAIL to catch regressions.",
       "found": true,
       "path": "skills/validate-slice/scripts/shippability_runner.py"
+    },
+    {
+      "name": "gate_log",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --gate validate-slice --slice slice-NNN --verdict <verdict> --findings-count <N> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+      "purpose": "Emit + SVW-1-append one gate-outcome row to gate-log.json (measurement spine, roadmap Theme 8 / plan Phase 0)",
+      "found": true,
+      "path": "scripts/lib/gate_log.py"
+    },
+    {
+      "name": "vault_edit",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+      "purpose": "SVW-1 locked append of the gate-outcome row to gate-log.json (Phase 0)",
+      "found": true,
+      "path": "scripts/lib/vault_edit.py"
     }
   ],
   "harness_tools": [

@@ -43,7 +43,9 @@
     {
       "path": "README.md",
       "kind": "content-file",
-      "produced_by": [],
+      "produced_by": [
+        "product-doc"
+      ],
       "purpose": "Read as hypothesis only; not trusted over code observations"
     },
     {
@@ -118,6 +120,7 @@
         "build-slice",
         "discover",
         "heavy-architect",
+        "product-doc",
         "pulse",
         "reduce",
         "slice",
@@ -151,6 +154,7 @@
       "read_by": [
         "archive",
         "heavy-architect",
+        "product-doc",
         "pulse",
         "reduce",
         "reflect",
@@ -469,7 +473,9 @@
         "design-slice"
       ],
       "validated_by": [],
-      "purpose": "Cost estimation placeholder, flagged for user population (Heavy mode only)"
+      "purpose": "Cost estimation placeholder, flagged for user population (Heavy mode only)",
+      "example_schema": "aisdlc/cost-estimation@1",
+      "example": "examples/cost-estimation.json"
     },
     {
       "path": "<vault>/diagrams.json",
@@ -488,7 +494,9 @@
       "edited_by": [],
       "read_by": [],
       "validated_by": [],
-      "purpose": "Architecture diagrams generated from code-review-graph code graph (Heavy mode only)"
+      "purpose": "Architecture diagrams generated from code-review-graph code graph (Heavy mode only)",
+      "example_schema": "aisdlc/diagrams@1",
+      "example": "examples/diagrams.json"
     }
   ],
   "agents": [],

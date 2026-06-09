@@ -180,7 +180,7 @@
       "path": "bug-hunt-out/sections/*.md",
       "kind": "content-file",
       "v1_format": "markdown",
-      "v2_format": "json",
+      "v2_format": "markdown",
       "write_semantics": "create",
       "write_mechanism": "raw-write",
       "modes": [
@@ -220,7 +220,7 @@
       "path": "bug-hunt-out/summary/*.md",
       "kind": "content-file",
       "v1_format": "markdown",
-      "v2_format": "json",
+      "v2_format": "markdown",
       "write_semantics": "create",
       "write_mechanism": "raw-write",
       "modes": [

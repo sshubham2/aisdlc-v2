@@ -59,7 +59,7 @@ If sources contradict, surface the contradiction. Don't silently pick one.
 
 ## Output
 
-Return ONE JSON object — the `field-recon.json` content the /risk-spike skill will write (schema by example: `skills/risk-spike/examples/field-recon.json`). The narrative prose (queries, findings, contradictions) lives in string/array fields; the recommendation is structured:
+Return ONE JSON object — the `field-recon.json` content the /risk-spike skill will write (schema by example: `skills/risk-spike/examples/spike.json` — `field-recon.json` reuses the spike example's structure; see the inline schema below). The narrative prose (queries, findings, contradictions) lives in string/array fields; the recommendation is structured:
 
 ```json
 {

@@ -4,7 +4,7 @@
   "requires_full_context": true,
   "runs_in": "main-agent",
   "context_rationale": "This skill asks up to 4 clarifying questions interactively when real design ambiguity exists, and its design output is anchored to the live conversation context with the user; it also calls /critique via Skill tool as auto-advance.",
-  "summary": "Produces a just-enough per-slice design (design.json) by querying code-review-graph for blast-radius and reachability context, consulting the ephemeral project-frame synthesizer, identifying only what is new for this slice, asking <=4 clarifying questions when genuinely ambiguous, and tagging every new ADR with reversibility. In Heavy mode it also updates threat-model.json and cost-estimation.json. Completes by updating milestone.json and auto-advancing to /critique.",
+  "summary": "Produces a just-enough per-slice design (design.json) via a tier-gated DESIGN TOURNAMENT: medium/high/novel slices spawn 2-3 BLIND designer subagents (practice, cross-domain, expert) and reality-ground a single synthesis (CRG-fit / spike-ability / reversibility / simplest-that-works) with a composition-coherence pass, while low/mechanical slices use a single inline flight at zero added cost. Queries code-review-graph for blast-radius, consults the project-frame synthesizer, tags every new ADR with reversibility, and (Heavy mode) updates threat-model.json and cost-estimation.json. Empirically-decidable tournament disagreements + must-verify cross-domain invariants gate a post-synthesis /risk-spike --mode design before /critique; otherwise auto-advances to /critique.",
   "reads": [
     {
       "path": "<vault>/slices/slice-NNN/mission-brief.json",
@@ -243,10 +243,28 @@
         "design-slice"
       ],
       "validated_by": [],
-      "purpose": "Heavy mode only: update when the slice changes the infrastructure footprint."
+      "purpose": "Heavy mode only: update when the slice changes the infrastructure footprint.",
+      "example_schema": "aisdlc/cost-estimation@1",
+      "example": "examples/cost-estimation.json"
     }
   ],
-  "agents": [],
+  "agents": [
+    {
+      "name": "designer-practice",
+      "when": "Step 1 tournament (medium/high/novel slices), spawned BLIND in parallel with the others",
+      "purpose": "Designer A (practice/social-proof): designs from how the problem is solved in the wild (WebSearch), names known failure modes avoided, flags the over-engineered popular answer; returns a design-proposal the orchestrator synthesizes"
+    },
+    {
+      "name": "designer-crossdomain",
+      "when": "Step 1 tournament (medium/high/novel slices), spawned BLIND in parallel with the others",
+      "purpose": "Designer B (latent cross-domain): imports a pattern from a different domain with the same abstract structure (no WebSearch, to avoid anchoring) and classifies the analogy's invariants holds|must-verify|fails; emits the cross_domain_transfer block the synthesis carries"
+    },
+    {
+      "name": "designer-expert",
+      "when": "Step 1 tournament (high/novel/irreversible slices), spawned BLIND in parallel with the others",
+      "purpose": "Designer C (expert-channeled): identifies 1-few named experts whose work fits and designs as they would, recording channeled_experts so the downstream /critique expert lens stays independent (Phase 3.5)"
+    }
+  ],
   "tools": [
     {
       "name": "project_frame_synth",
@@ -300,6 +318,7 @@
     }
   ],
   "hands_off_to": [
+    "risk-spike",
     "critique"
   ],
   "source": "temp/skills/design-slice/SKILL.md",

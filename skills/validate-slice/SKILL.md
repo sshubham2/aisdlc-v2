@@ -24,6 +24,7 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py" --vault "$AI_SDLC_VAULT_R
 Read from the active slice folder:
 - `mission-brief.json` — acceptance criteria, verification plan, walking-skeleton/exploratory-charter flags
 - `build-log.json` — what was actually built; interpret deviations during AC validation
+- `code-review.json` (if present) — for any finding with `measure_at_validate: true` (a complexity/perf hypothesis the code-Critic deliberately did NOT assert), Step 1b benchmarks it on real data
 
 **Prerequisite gate**: if `build-log.json` is missing OR `result != "shipped"` → STOP and surface. The slice
 is not ready to validate.
@@ -40,6 +41,27 @@ For each AC in `mission-brief.json`, execute the check described in its verifica
 
 Early projects without a deployment target: run locally with real sample data or demonstrate in user-facing
 form (terminal, screenshot, recording). "We'll really test this later" is NOT acceptable.
+
+## Step 1b — measure code-review complexity candidates (Theme 8: reason → flag, measure → verdict)
+
+`/code-review` flags performance/complexity concerns as **hypotheses** (`measure_at_validate: true`), never asserted
+Big-O — because the model's complexity *reasoning* is hallucination-prone. You own the **verdict**: measure them.
+
+Read `code-review.json` (skip this step if absent or no finding carries `measure_at_validate: true`). For each such
+finding, working against the built slice code (the worktree `$wt`, as in Steps 5–6):
+
+1. Build a **realistic** input at the scale the finding names — the largest real sample available, NOT a toy.
+2. **Profile / benchmark** the flagged path on it (`time` / `timeit` / `hyperfine`; count ops or DB queries; watch
+   memory — whatever the hypothesis predicts). Scale the input 1× → 10× → 100× and observe how cost actually grows.
+3. Record a MEASURED verdict, numbers as evidence:
+   - **CONFIRMED** — cost grows as feared at real scale → a real defect. If it breaks an AC's performance bar, that
+     AC is FAIL/PARTIAL; otherwise log a `reality_surprise` (→ candidate).
+   - **REFUTED** — flat / acceptable at real scale → the candidate was a code-review false-alarm; record it (with the
+     measurement) so the model-gate's over-reach is visible, not silently dropped.
+   - **INCONCLUSIVE** — no real input buildable this slice → say so explicitly; do NOT pass it off as measured.
+
+Put the measurement (command + numbers) in the relevant AC's `evidence`, and any CONFIRMED/REFUTED outcome in
+`reality_surprises`. A benchmarked number is a reality sign-off; a re-asserted Big-O is not.
 
 ## Step 2 — capture evidence per criterion
 
@@ -193,6 +215,7 @@ Write `<vault>/slices/slice-NNN-<name>/validation.json` (schema by example: `exa
   "_schema": "aisdlc/validation@1",
   "slice": "slice-NNN",
   "result": "pass|fail|partial",
+  "reality_contact": "high",
   "criteria": [
     {
       "id": "AC1",
@@ -218,13 +241,19 @@ Write `<vault>/slices/slice-NNN-<name>/validation.json` (schema by example: `exa
 Top-level `"result"` is computed as `"pass"` only when ALL criteria are `"pass"` AND all audits and
 shippability checks are green. Any criterion `"fail"` or `"partial"` → aggregate `"fail"` or `"partial"`.
 
+`reality_contact` is always `"high"` for this gate (Phase 1): validation runs against the **real** environment
+(real device / real user / real data), so a `pass` here is a **reality sign-off** — the strongest kind of
+green, categorically distinct from the model-approvals (`/critique`, `/code-review`) earlier in the loop. The
+gate-log row this skill writes (Step 9b) already carries `reality_contact: high`; say "reality-approved" — not
+just "passed" — when you summarize a clean result.
+
 ## Step 8 — update milestone.json
 
 Edit `<vault>/slices/slice-NNN-<name>/milestone.json` (schema by example: `examples/milestone.json`):
 - `stage: "validate"`
 - mark `validate` step `done: true`
 - `next_action`: `/reflect` (clean) or `fix regression then re-run /validate-slice` (blocked)
-- `current_focus`: validation summary (N/M ACs passed, shippability status)
+- `current_focus`: validation summary — on PASS, **reality-approved** (N/M ACs passed on the real env, shippability status); on FAIL/PARTIAL, what reality rejected
 - `updated_by: "validate-slice"`, `at: <ts>`
 
 ## Step 9 — append reality surprises to shared files (SVW-1)
@@ -245,6 +274,26 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
   --json '{"id":"SC-NNN","title":"...","status":"candidate","source":[{"type":"reality-surprise","ref":"R-NN"}],...}'
 ```
 
+## Step 9b — record gate outcome (measurement spine)
+
+One row per slice into `<vault>/gate-log.json` (roadmap Theme 8 / plan Phase 0). **Runs ALWAYS, even on a
+clean pass.** `validate-slice` is a **high** reality-contact gate (real device / real user / real data) —
+`gate_log.py` stamps that. Run in-fork (shared vault + `vault_edit` lock make it write-safe; this skill
+already appends to shared files in Step 9):
+
+```bash
+# verdict = aggregate result: pass|partial|fail; findings-count = number of FAIL + PARTIAL criteria
+# --cross-domain (Phase 2.3): set when this slice's design imported a cross-domain pattern — this reality
+# verdict is the PRIMARY signal for the cross-domain validity ratio (did reality confirm the borrowed pattern?).
+SLICE_DIR="$AI_SDLC_VAULT_ROOT/slices/<slice-NNN-name>"
+CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate validate-slice --slice <slice-NNN-name> \
+    --verdict <pass|partial|fail> --findings-count <N fail+partial> $CD \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
 ## Critical rules
 
 - USE REAL ENVIRONMENTS. No mocks or simulators when real is possible.
@@ -256,6 +305,9 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
 - Shared-aggregate vault files (risk-register.json, candidates.json) mutate ONLY via vault_edit append.
 - Heavy mode: produce compliance-grade records — reproducible commands, timestamped evidence, sign-off field,
   cross-reference to test-plan IDs.
+- **Reality spine (Phase 1.3).** HIGH reality-contact — a `pass` is **reality-approved** (real device / user /
+  data), the strongest kind of green and categorically above any model-approval. Mandatory at every tier; no
+  model-on-model gate (`/critique`, `/code-review`) can wave through a reality FAIL/PARTIAL.
 
 ## Pipeline position
 

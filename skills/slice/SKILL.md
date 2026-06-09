@@ -31,10 +31,19 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/stranded_slice_audit.py" --repo-root 
 - exit 2 (git unavailable) → surface stderr and continue (fail-visible, never silent).
 
 ## Step 1 — recommend (don't just list)
-The injected candidates are already scored (priority.score, effort, blast_radius, blocked-on-spike). Present a
-**ranked recommendation** with a 🏆 top pick and a one-line "why this one", plus 2–4 alternatives. If `/slice
+The injected candidates are already scored (priority.score, effort, blast_radius, blocked-on-spike) and carry a
+**`couples-with`** line (Theme 4): other live candidates touching the same code area. Present a **ranked
+recommendation** with a 🏆 top pick and a one-line "why this one", plus 2–4 alternatives. If `/slice
 "<description>"` was invoked, evaluate that intent against the ranking — say so if it isn't strongest. If the user
 says "you pick" / autonomous → take #1.
+
+**Surface coupling when you recommend** — it changes the pick, not just decorates it:
+- A pick that **`couples-with` an `[IN-FLIGHT: conflict risk]`** candidate touches the same files as a slice already
+  in flight in another worktree → call it out: the two will likely **merge-conflict**. Recommend sequencing after
+  that slice lands, or coordinating, rather than starting both blind.
+- A pick that couples with another *pickable* candidate is a **merge opportunity** (cf. `/slice-candidates` thickness
+  heuristic) — note "doing SC-X with it would share the context rebuild" so the user can choose a slightly thicker,
+  coherent cut over two thin ones that fight over the same seam.
 
 **Candidate selection is a user-input gate**: HALT for the pick unless explicit intent was supplied or the user said
 "you pick".

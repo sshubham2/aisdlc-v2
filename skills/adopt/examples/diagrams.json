@@ -1,0 +1,16 @@
+{
+  "_schema": "aisdlc/diagrams@1",
+  "_note": "Heavy: human design intent as Mermaid diagram SOURCE in JSON string fields (NOT rendered files). System overview + key sequence flows. locked-at: heavy-architect.",
+  "diagrams": [
+    {
+      "id": "system-overview",
+      "kind": "flowchart",
+      "mermaid": "flowchart TD\n  client[Client] --> api[API Server]\n  api --> db[(Postgres)]\n  api --> queue[[Job Queue]]\n  queue --> worker[Worker]"
+    },
+    {
+      "id": "checkout-sequence",
+      "kind": "sequence",
+      "mermaid": "sequenceDiagram\n  Client->>API: POST /checkout\n  API->>DB: reserve inventory\n  API->>Payments: charge\n  Payments-->>API: paid\n  API-->>Client: 201 Created"
+    }
+  ]
+}

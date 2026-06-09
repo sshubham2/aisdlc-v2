@@ -369,6 +369,16 @@
         "name": "shippability_runner",
         "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py\" <vault>/shippability.json",
         "purpose": "SRSC-1 canonical catalog runner: executes each row's Machine-cmd and reports PASS/FAIL to catch regressions."
+      },
+      {
+        "name": "gate_log",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --gate validate-slice --slice slice-NNN --verdict <verdict> --findings-count <N> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "Emit + SVW-1-append one gate-outcome row to gate-log.json (measurement spine, roadmap Theme 8 / plan Phase 0)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "SVW-1 locked append of the gate-outcome row to gate-log.json (Phase 0)"
       }
     ],
     "external_tools": [],
@@ -419,6 +429,20 @@
         ],
         "format": "json",
         "purpose": "Confirm the slice was SHIPPED and interpret deviations during AC validation."
+      },
+      {
+        "path": "<vault>/slices/slice-NNN-<name>/code-review.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Step 1b (Theme 8): read findings with measure_at_validate:true (code-review complexity/perf hypotheses) to profile/benchmark on real data — reason→flag at code-review, measure→verdict here."
       },
       {
         "path": "<vault>/slices/slice-NNN-<name>/validation.json",
@@ -503,6 +527,20 @@
         ],
         "format": "json",
         "purpose": "Append reality-surprise findings that spawn future work as new candidates."
+      },
+      {
+        "path": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append one gate-outcome row per slice (measurement spine, roadmap Theme 8 / plan Phase 0)"
       }
     ],
     "hands_off_to": [

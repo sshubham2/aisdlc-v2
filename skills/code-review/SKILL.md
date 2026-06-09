@@ -24,6 +24,17 @@ must match — drift from them is Dimension 7):
 - `design.json` — what's new, components touched, contracts, wiring matrix, ADR refs
 - `decisions/ADR-*.json` referenced by the slice, and `build-log.json` (verify `result: shipped`)
 
+## Project calibration overlay — injected (Phase 4.1)
+
+Dimensions this project found low-signal via `/critic-calibrate` (weight them LIGHTER — never skip, never reality gates):
+```!
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/critic-calibration-log.json'; d=json.load(open(f,encoding='utf-8')) if os.path.exists(f) else {}; print(json.dumps([n for n in d.get('calibration_notes',[]) if n.get('target_gate') in ('code-review','critique')],indent=2))" "$VAULT" 2>/dev/null || echo "[]"
+```
+For each note, treat the named dimension as lower-yield FOR THIS PROJECT (it has been FALSE-ALARM / quiet over the
+cited window): hold a higher bar before filing in it, and do not pad severity. This NEVER suppresses a real issue
+(file it if you see one) and NEVER applies to a reality gate — it only counters this project's measured over-firing.
+
 ## Slice diff (in-scope only) — injected
 
 **WT-ROOT-1:** the diff and any targeted Reads come from the slice WORKTREE `$wt` (HEAD = the slice branch),
@@ -55,10 +66,27 @@ stop. Read any `NEW-UNTRACKED:` files from `"$wt/<path>"` for review (new files 
    and INFERRED edges the new code depends on.
 4. Write `<vault>/slices/slice-NNN-<name>/code-review.json` (schema by example: `examples/code-review.json`).
 5. Update `<vault>/slices/slice-NNN-<name>/milestone.json`: `stage: "code-review"`.
+6. **Record the gate outcome** — one row per slice into `<vault>/gate-log.json` (measurement spine, roadmap
+   Theme 8 / plan Phase 0). `code-review` is a **low** reality-contact gate (the model grading a diff);
+   `gate_log.py` stamps that. Run this in-fork (the shared vault + `vault_edit` lock make it write-safe):
+
+```bash
+# verdict: no-code-changes | clean (0 findings) | findings (>=1); findings-count = blocker+major+minor
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate code-review --slice <slice-NNN-name> \
+    --verdict <no-code-changes|clean|findings> --findings-count <N> \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
 
 ## Return
 A 2-line summary to the main thread: `Result` + blocker/major/minor counts. The full review lives in
 `code-review.json`. Findings are **advisory in v1** (they do not block `/validate-slice`).
+
+**Model-on-model gate (Phase 1.3).** This is LOW reality-contact — the model grading a diff (the CRG cross-check
+reads real code, but the verdict is still the model's judgment). It is advisory by design; the gate that can
+actually say *no* against reality is `/validate-slice` (real device/data). Never present a clean code-review as
+a reality sign-off, and never let it override a reality gate.
 
 ## Pipeline position
 - predecessor: `/build-slice` · successor: `/validate-slice` · auto-advance: true

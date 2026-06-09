@@ -131,7 +131,7 @@ Stage derivation (from files present in slice folder):
 - no `validation.json` → `"build"`
 - no `reflection.json` → `"validate"`
 
-## `slices/archive/_index.json` schema: `examples/archive-index.json`
+## `slices/archive/_index.json` schema: `examples/slice-index.json`
 
 Full chronological catalog of all archived slices (not capped at 10). Fields: `_schema`, `total`, `updated`,
 `slices[]` (slice/title/shipped/summary). Same one-liner source rule as above.

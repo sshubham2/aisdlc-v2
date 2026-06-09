@@ -129,6 +129,40 @@
       "purpose": "Update stage, progress box, current focus, on-resume after critique",
       "example_schema": "aisdlc/milestone@1",
       "example": "examples/milestone.json"
+    },
+    {
+      "path": "<vault>/gate-log.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [],
+      "edited_by": [
+        "code-review",
+        "critique",
+        "critique-review",
+        "drift-check",
+        "reflect",
+        "risk-spike",
+        "validate-slice"
+      ],
+      "read_by": [
+        "critic-calibrate",
+        "pulse"
+      ],
+      "validated_by": [
+        "gate_log",
+        "vault_edit"
+      ],
+      "purpose": "Append one gate-outcome row per slice (measurement spine, roadmap Theme 8 / plan Phase 0)",
+      "example_schema": "aisdlc/gate-log@1",
+      "example": "examples/gate-log.json"
     }
   ],
   "agents": [
@@ -154,6 +188,22 @@
       "purpose": "Validates critique.md Triage section for required fields, valid verdict, complete disposition rows, and non-empty rationale on OVERRIDDEN/DEFERRED/ESCALATED",
       "found": true,
       "path": "skills/critique/scripts/triage_audit.py"
+    },
+    {
+      "name": "gate_log",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --gate critique --slice slice-NNN --verdict <verdict> --findings-count <N> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+      "purpose": "Emit + SVW-1-append one gate-outcome row to gate-log.json (measurement spine, roadmap Theme 8 / plan Phase 0)",
+      "found": true,
+      "path": "scripts/lib/gate_log.py"
+    },
+    {
+      "name": "vault_edit",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+      "purpose": "SVW-1 locked append of the gate-outcome row to gate-log.json (Phase 0)",
+      "found": true,
+      "path": "scripts/lib/vault_edit.py"
     }
   ],
   "harness_tools": [

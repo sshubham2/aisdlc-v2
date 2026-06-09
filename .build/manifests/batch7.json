@@ -5,7 +5,7 @@
     "requires_full_context": true,
     "runs_in": "main-agent",
     "context_rationale": "Interactive blocking gate: writes and runs throwaway proof code, needs credentials/device access, and on failure requires a human discussion of a risk-free fallback before re-spiking — depends on the live slice session.",
-    "summary": "First step of the slice loop (slice step-0 gate). Reads the picked candidate's blocking assumptions from candidates.json and proves each with throwaway code on real environments; spawns the field-recon subagent to survey current platform reality first. All assumptions proven -> advances to /design-slice; any FAILED -> marks the candidate blocked and halts the slice until a risk-free fallback is discussed and re-spiked. Records spike verdicts back into candidates.json and the risk ledger.",
+    "summary": "In-loop spike gate with TWO modes (the crown jewel is split, not diluted). FEASIBILITY (default, step-0, before /design-slice): reads the picked candidate's blocking assumptions from candidates.json and proves each with throwaway code on real environments; spawns the field-recon subagent to survey current platform reality first; all proven -> /design-slice, any FAILED -> candidate blocked until a fallback is re-spiked; verdicts recorded back into candidates.json + the risk ledger. DESIGN (--mode design, post-synthesis, after /design-slice's tournament): reads the synthesized design.json's pending decidable_disagreements + must-verify cross-domain invariants and lets REALITY adjudicate the tournament, writing verdicts back into design.json; all GO -> /critique, any NO-GO -> back to /design-slice to re-synthesize (the premise already passed feasibility).",
     "agents": [
       {
         "name": "field-recon",
@@ -13,7 +13,18 @@
         "purpose": "Web survey of current real-world knowledge about the technology under test — post-training-cutoff platform changes, quotas, deprecations, known failure modes"
       }
     ],
-    "methodology_tools": [],
+    "methodology_tools": [
+      {
+        "name": "gate_log",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --gate risk-spike --slice slice-NNN --verdict <verdict> --findings-count <N> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "Emit + SVW-1-append one gate-outcome row to gate-log.json (measurement spine, roadmap Theme 8 / plan Phase 0)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "SVW-1 locked append of the gate-outcome row to gate-log.json (Phase 0)"
+      }
+    ],
     "external_tools": [
       {
         "name": "code-review-graph",
@@ -149,10 +160,25 @@
         ],
         "format": "json",
         "purpose": "Record each assumption's spike_status (proven/failed), spike_ref, spike_evidence; on FAILED set candidate status=blocked + fallback; on all-proven set status=active, progress=design."
+      },
+      {
+        "path": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append one gate-outcome row per slice (measurement spine, roadmap Theme 8 / plan Phase 0)"
       }
     ],
     "hands_off_to": [
-      "design-slice"
+      "design-slice",
+      "critique"
     ],
     "source": "temp/skills/risk-spike/SKILL.md"
   },
@@ -591,6 +617,20 @@
         ],
         "format": "json",
         "purpose": "Surface the live candidate backlog (counts, top-priority, blocked-on-spike) in the macro-state summary."
+      },
+      {
+        "path": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Per-gate outcome log — read fully to compute the per-gate hit-rate in /pulse (Phase 0.3)"
       }
     ],
     "hands_off_to": [],

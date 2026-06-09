@@ -23,6 +23,16 @@
         "name": "triage_audit",
         "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/triage_audit.py\" <vault>/slices/slice-NNN-<name>",
         "purpose": "Validates critique.md Triage section for required fields, valid verdict, complete disposition rows, and non-empty rationale on OVERRIDDEN/DEFERRED/ESCALATED"
+      },
+      {
+        "name": "gate_log",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --gate critique --slice slice-NNN --verdict <verdict> --findings-count <N> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "Emit + SVW-1-append one gate-outcome row to gate-log.json (measurement spine, roadmap Theme 8 / plan Phase 0)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "SVW-1 locked append of the gate-outcome row to gate-log.json (Phase 0)"
       }
     ],
     "external_tools": [],
@@ -179,6 +189,20 @@
         ],
         "format": "json",
         "purpose": "Specific archived reflections when semantic query or register points to a direct match"
+      },
+      {
+        "path": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append one gate-outcome row per slice (measurement spine, roadmap Theme 8 / plan Phase 0)"
       }
     ],
     "hands_off_to": [
@@ -211,6 +235,16 @@
         "name": "critique_review_audit",
         "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py\" <vault>/slices/slice-NNN-<name>",
         "purpose": "Validates critique-review.md structure: 4 required sections, dual-review verdict in {ACCEPT,ADJUST,EXTEND}, Reviewed-by and Date fields"
+      },
+      {
+        "name": "gate_log",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --gate critique-review --slice slice-NNN --verdict <verdict> --findings-count <N> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "Emit + SVW-1-append one gate-outcome row to gate-log.json (measurement spine, roadmap Theme 8 / plan Phase 0)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "SVW-1 locked append of the gate-outcome row to gate-log.json (Phase 0)"
       }
     ],
     "external_tools": [],
@@ -303,6 +337,20 @@
         ],
         "format": "json",
         "purpose": "Meta-Critic findings: VALID/SUSPICIOUS/SEVERITY-WRONG per finding plus missed findings"
+      },
+      {
+        "path": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append one gate-outcome row per slice (measurement spine, roadmap Theme 8 / plan Phase 0)"
       }
     ],
     "hands_off_to": [
@@ -324,7 +372,18 @@
         "purpose": "Adversarial code-Critic review of the slice diff along 9 dimensions with path:line specificity"
       }
     ],
-    "methodology_tools": [],
+    "methodology_tools": [
+      {
+        "name": "gate_log",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --gate code-review --slice slice-NNN --verdict <verdict> --findings-count <N> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "Emit + SVW-1-append one gate-outcome row to gate-log.json (measurement spine, roadmap Theme 8 / plan Phase 0)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "SVW-1 locked append of the gate-outcome row to gate-log.json (Phase 0)"
+      }
+    ],
     "external_tools": [],
     "local_scripts": [],
     "harness_tools": [
@@ -479,6 +538,20 @@
         ],
         "format": "json",
         "purpose": "Post-build artifact in scope for code-review diff per ADR-066 M5 INCLUDE direction"
+      },
+      {
+        "path": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append one gate-outcome row per slice (measurement spine, roadmap Theme 8 / plan Phase 0)"
       }
     ],
     "hands_off_to": [
@@ -492,7 +565,7 @@
     "requires_full_context": false,
     "runs_in": "delegable-to-subagent",
     "context_rationale": "Analytical maintenance pass — all inputs are on disk (archived reflections, agents/critique.md, the calibration log) and the heavy analysis runs in a fresh-context 'critic-calibrate' subagent; nothing depends on the main thread's current slice state (requires_full_context: false). Classified delegable like its interactive peers (commit-slice, drift-check, supersede-slice, slice-candidates); it STAYS INLINE at runtime only because of the per-proposal AskUserQuestion review gates (Step 3) — a forked subagent cannot run AskUserQuestion (the fork caveat), so it gets no context:fork.",
-    "summary": "Cross-slice meta-skill that mines 'Missed by Critic' and 'Critic calibration' entries from the last N (default 15) archived reflections to identify blind-spot patterns in the Critic prompt. Spawns a 'critic-calibrate' subagent that classifies patterns, applies a >=3-distinct-slices threshold, and produces 0-3 evidence-backed proposals. Proposals are presented one-at-a-time to the user for accept/modify/reject; this skill never auto-applies edits to the Critic agent prompt. Logs every run to critic-calibration-log.json for longitudinal effectiveness tracking.",
+    "summary": "Cross-slice meta-skill that calibrates the Critic in BOTH directions. ADD: mines 'Missed by Critic' + 'Critic calibration' entries from the last N (default 15) archived reflections (>=3-distinct-slices threshold) for 0-3 evidence-backed prompt-addition proposals. LIGHTEN (Phase 4.1 / Theme 5): mines the gate-log precision/quiet-rate + reflection FALSE-ALARM data for 0-2 proposals to lighten a low-value model-on-model gate/dimension (a calibration_notes[] entry /critique + /code-review read) or retire a noisy project active_check — the reality spine (risk-spike/validate-slice) is NEVER lightened. Spawns a 'critic-calibrate' subagent; proposals are presented one-at-a-time for accept/modify/reject; this skill never auto-applies edits to the plugin's Critic prompt. Logs every run to critic-calibration-log.json (@3) for longitudinal effectiveness tracking.",
     "agents": [
       {
         "name": "critic-calibrate",
@@ -580,7 +653,7 @@
           "heavy"
         ],
         "format": "json",
-        "purpose": "Read active_checks[] (dedup new proposals against the live overlay) and runs[] (effectiveness pass) before proposing"
+        "purpose": "Read active_checks[] + calibration_notes[] (dedup new ADD/LIGHTEN proposals against the live overlay) and runs[] (effectiveness pass) before proposing"
       },
       {
         "path": "<vault>/critic-calibration-log.json",
@@ -594,7 +667,21 @@
           "heavy"
         ],
         "format": "json",
-        "purpose": "Append the run to runs[] (audit history, never overwritten) and upsert accepted proposals into active_checks[] (the deduped project overlay /critique reads). NEVER edits the plugin's agents/critique.md."
+        "purpose": "Append the run to runs[]; upsert accepted ADD proposals into active_checks[] and confirmed LIGHTEN proposals into calibration_notes[] (or retire a noisy active_check) — the deduped project overlay /critique + /code-review read. NEVER edits the plugin's agents/critique.md."
+      },
+      {
+        "path": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read recent rows for the model-on-model gates (critique/critique-review/code-review) to compute precision + quiet-rate — the LIGHTEN signal (Phase 4.1). The reality gates (risk-spike/validate-slice) are excluded by the skill's filter and are never lighten candidates."
       }
     ],
     "hands_off_to": [],

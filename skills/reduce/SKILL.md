@@ -1,6 +1,6 @@
 ---
 name: reduce
-description: "Complexity budget enforcer. Audits the vault and codebase for over-engineering, dead claims, speculative generality, and god-nodes against mode-specific thresholds. Produces a ranked reduction-candidate report and — if confirmed — proposes a simplification slice. Appends an over-engineering pattern lesson to lessons-learned.json after a reduction slice ships."
+description: "Complexity budget enforcer. Audits the vault and codebase for over-engineering, dead claims, speculative generality, god-nodes, and cross-slice incoherence (the same idea solved N ways across slices) against mode-specific thresholds. Produces a ranked reduction-candidate report and — if confirmed — proposes a simplification slice. Appends an over-engineering pattern lesson to lessons-learned.json after a reduction slice ships."
 when_to_use: "Trigger phrases: /reduce, 'reduce complexity', 'simplify the design', 'check for over-engineering', 'complexity audit'. Run when vault exceeds component-count threshold (auto-suggested by /reflect), before major releases, when drift-log accumulates >5 unresolved entries, or periodically in Heavy mode (every ~5 slices)."
 argument-hint: "[--force]"
 context: fork
@@ -98,11 +98,38 @@ Walk vault + code for:
 | Speculative generality: abstracted with 1 impl + 1 caller "for future flexibility" | REDUCE-NEXT |
 | Duplicate pattern across 3+ identical vault sections | WATCH |
 | ADR count climbing >2/slice over last 3 slices | WATCH |
+| Same concept implemented across ≥2 slices with divergent abstractions (cross-slice incoherence) | REDUCE-NEXT — see Step 4b |
 
 ### Severity definitions
 - **REDUCE-NOW** — clear win, low/no risk; can delete or inline without a design discussion
 - **REDUCE-NEXT** — needs a small refactor slice; design review required
 - **WATCH** — at threshold; flag but don't act yet
+
+## Step 4b — cross-slice coherence audit (Theme 4: the same idea solved N ways)
+
+Slicing trades within-task error (visible) for **between-slice incoherence** (invisible) — the same concept
+implemented differently across slices, divergent abstractions, the same problem solved three ways. The per-slice
+gates can't see this; it only shows up when you look ACROSS slices. This audit is that periodic look. Walk the
+SHIPPED slices and hunt three patterns:
+
+- **Concept duplication** — two+ slices that each introduced their OWN version of the same capability (two retry
+  helpers, two date formatters, two "current user" resolvers, two cache layers). Read `slices/archive/slice-*/mission-brief.json`
+  intents + `reflection.json` discovered-items, cluster by concept (lexical overlap of intent), then confirm with
+  CRG `search` for same-named / same-shaped functions across the slices' touched files.
+- **Divergent abstractions** — the same concept modeled inconsistently (one slice uses a class, another a dict; one
+  returns a Result, another raises; one is sync, another async). Use CRG `search` on the concept's symbols to compare
+  shapes — divergence is the finding, not mere duplication.
+- **Same idea solved 3 ways** — three+ implementations of one pattern. Threshold for a finding: a concept appears in
+  **≥2 slices with materially different implementations** (3+ is the strongest signal).
+
+For each, file a **COHERENCE-DEDUP** candidate at severity **REDUCE-NEXT** (unifying divergent abstractions is a
+refactor — design review required, never an auto-delete). Cite the slices + the divergent symbols (path:line via CRG).
+
+**Guard against false positives (the Healthy-patterns rule applies here too):** genuinely separate concerns that
+merely look alike are NOT duplication. Two "validators" for different domains, two endpoints with different SLAs, the
+same word in different bounded contexts — leave alone. A coherence finding requires the implementations to be doing
+the *same job*, not just sharing a name. If CRG is unavailable, run this audit lexically and mark each finding
+`(unconfirmed — CRG absent)` so it reads as a lead, not a verdict.
 
 ## Step 5 — present audit
 
@@ -127,10 +154,14 @@ REDUCE-NEXT (refactor needed):
   N. <path> — <one-line justification>
   ...
 
+CROSS-SLICE COHERENCE (same idea solved N ways — REDUCE-NEXT, refactor; Step 4b):
+  N. <concept> — solved in slice-AAA (<symbol>) and slice-BBB (<divergent symbol>); unify
+  ...
+
 WATCH:
   N+1. <pattern> — <threshold note>
 
-Summary: <N> REDUCE-NOW, <N> REDUCE-NEXT, <N> WATCH
+Summary: <N> REDUCE-NOW, <N> REDUCE-NEXT, <N> cross-slice-coherence, <N> WATCH
 ```
 
 If all metrics are within thresholds and no candidates found: output "No reduction candidates found — complexity is within budget." and stop (do not propose a slice).

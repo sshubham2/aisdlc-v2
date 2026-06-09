@@ -4,7 +4,7 @@
   "requires_full_context": false,
   "runs_in": "delegable-to-subagent",
   "context_rationale": "Drift-check compares vault files against code reality using file inputs and code-review-graph queries with no dependency on the current session's conversational state, making it fully mechanically runnable as a pre-commit hook or fresh-context subagent.",
-  "summary": "Audits vault claims against code reality and flags divergence across three categories: DRIFT (blocker), UNSPECIFIED CODE (major), and STALE CLAIM (major). Runs in fast mode for pre-commit hooks or full mode for on-demand audits. Appends findings to drift-log.json via the R-32 safe channel and supports interactive --resolve mode. Designed as the detect-only, all-modes counterpart to the Heavy-mode-only /sync skill.",
+  "summary": "Audits vault claims against code reality and flags divergence across four categories: DRIFT (blocker), UNSPECIFIED CODE (major), STALE CLAIM (major), and STALE DOC (major — a /product-doc-generated doc that no longer matches the code surface it documented, detected against the doc-manifest.json provenance anchor; skipped when no manifest exists). Runs in fast mode for pre-commit hooks or full mode for on-demand audits. Appends findings to drift-log.json via the R-32 safe channel and supports interactive --resolve mode. Designed as the detect-only, all-modes counterpart to the Heavy-mode-only /sync skill.",
   "reads": [
     {
       "path": "<vault>/decisions/ADR-*.json",
@@ -42,6 +42,14 @@
         "slice"
       ],
       "purpose": "Active slices only: check must-not-defer items are implemented"
+    },
+    {
+      "path": "<vault>/doc-manifest.json",
+      "kind": "content-file",
+      "produced_by": [
+        "product-doc"
+      ],
+      "purpose": "Read when present (written by /product-doc): drives the STALE DOC check — each tracked doc's grounded_in CRG surface is re-resolved against current code; vanished symbols => stale-doc finding"
     },
     {
       "path": "<vault>/components/*.json",
@@ -99,6 +107,40 @@
       "purpose": "Append full-mode audit entry with findings and resolutions (R-32 seam-routed, ADR-103)",
       "example_schema": "aisdlc/drift-log@1",
       "example": "examples/drift-log.json"
+    },
+    {
+      "path": "<vault>/gate-log.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [],
+      "edited_by": [
+        "code-review",
+        "critique",
+        "critique-review",
+        "drift-check",
+        "reflect",
+        "risk-spike",
+        "validate-slice"
+      ],
+      "read_by": [
+        "critic-calibrate",
+        "pulse"
+      ],
+      "validated_by": [
+        "gate_log",
+        "vault_edit"
+      ],
+      "purpose": "Append one gate-outcome row per slice (measurement spine, roadmap Theme 8 / plan Phase 0)",
+      "example_schema": "aisdlc/gate-log@1",
+      "example": "examples/gate-log.json"
     }
   ],
   "agents": [],
@@ -118,6 +160,14 @@
       "purpose": "Heavy-mode only: validate cross-spec Implementation/Verification references in threat-model.md/requirements.md/nfrs.md (CSP-1)",
       "found": true,
       "path": "scripts/lib/cross_spec_parity_audit.py"
+    },
+    {
+      "name": "gate_log",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --gate drift-check --slice slice-NNN --verdict <verdict> --findings-count <N> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+      "purpose": "Emit + SVW-1-append one gate-outcome row to gate-log.json (measurement spine, roadmap Theme 8 / plan Phase 0)",
+      "found": true,
+      "path": "scripts/lib/gate_log.py"
     },
     {
       "name": "code-review-graph",
