@@ -2,8 +2,10 @@
 
 Single-skill injection tool for `/slice` Step "Live state". Reads the unified
 `<vault>/candidates.json` backlog and prints the top-N PICKABLE candidates, ranked
-by priority, with blocked-on-spike + unmet-dependency flags — so /slice can
-"recommend the next cut" without re-running a multi-source fan-out (rollout #3: the
+by priority, with blocked-on-spike + unmet-dependency flags + blast-radius **coupling**
+(other live candidates touching the same code area — surfaced at pick time, not just in
+the DAG topo-sort; overlap with an in-flight slice is a conflict risk; roadmap Theme 4) —
+so /slice can "recommend the next cut" without re-running a multi-source fan-out (rollout #3: the
 single candidates.json IS the pre-ranked, pre-materialized source of truth, replacing
 v1's scattered backlog.md / risk-register-as-candidate-source / slice-queue.md).
 
@@ -32,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import sys
 from pathlib import Path
 
@@ -79,6 +82,39 @@ def _blast(cand: dict) -> str:
     return str(_priority(cand).get("blast_radius") or "").strip()
 
 
+def _blast_segments(cand: dict) -> set[str]:
+    """Normalized blast-radius directory segments. build_backlog joins touched dirs with
+    ', ' (e.g. 'src/api, src/db'); two candidates sharing a segment touch the same code area.
+    Used to surface file-overlap coupling at slice-pick time (roadmap Theme 4)."""
+    out: set[str] = set()
+    for seg in re.split(r"\s*,\s*", _blast(cand)):
+        s = seg.strip().strip("/").replace("\\", "/").lower()
+        if s and s not in ("(isolated)", "isolated"):
+            out.add(s)
+    return out
+
+
+def _coupling(cand: dict, all_live: list[dict]) -> list[dict]:
+    """Other LIVE candidates that share a blast-radius segment with ``cand`` — file-overlap
+    coupling the DAG topo-sort hid. An overlap with an IN-FLIGHT candidate is a parallel-slice
+    conflict risk (same files, two worktrees); surface it first. Read-only, candidates.json-only
+    (no CRG re-query — reuses the coupling build_backlog already computed into blast_radius)."""
+    mine = _blast_segments(cand)
+    if not mine:
+        return []
+    cid = cand.get("id")
+    out: list[dict] = []
+    for other in all_live:
+        if other is cand or other.get("id") == cid:
+            continue
+        shared = mine & _blast_segments(other)
+        if shared:
+            out.append({"id": other.get("id"), "shared": sorted(shared),
+                        "in_flight": _classify(other) == "in_flight"})
+    out.sort(key=lambda d: (not d["in_flight"], str(d["id"])))  # in-flight (conflict risk) first
+    return out
+
+
 def _failed_blocking_assumption(cand: dict) -> dict | None:
     """The first blocking assumption whose spike has FAILED (None if none)."""
     for a in cand.get("assumptions") or []:
@@ -107,7 +143,8 @@ def _unmet_deps(cand: dict, live_ids: set[str]) -> list[str]:
 # ── formatting ───────────────────────────────────────────────────────────────────
 
 def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
-              blocked: list[dict], in_flight: list[dict], top: int) -> str:
+              blocked: list[dict], in_flight: list[dict], top: int,
+              all_live: list[dict]) -> str:
     lines: list[str] = []
     lines.append(
         f"CANDIDATES (live backlog: {project}) — "
@@ -133,6 +170,14 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
                 lines.append(f"       {cand['description']}")
             if cand.get("user_visible_outcome"):
                 lines.append(f"       -> {cand['user_visible_outcome']}")
+            coup = _coupling(cand, all_live)
+            if coup:
+                shown_coup = [
+                    f"{c['id']} ({', '.join(c['shared'])})"
+                    + (" [IN-FLIGHT: conflict risk]" if c["in_flight"] else "")
+                    for c in coup[:5]
+                ]
+                lines.append(f"       couples-with: {'; '.join(shown_coup)}")
     else:
         lines.append("No pickable candidates (none in {candidate, deferred}).")
 
@@ -164,7 +209,8 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
 
 
 def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
-              blocked: list[dict], in_flight: list[dict], top: int) -> str:
+              blocked: list[dict], in_flight: list[dict], top: int,
+              all_live: list[dict]) -> str:
     shown = ranked[:top] if top > 0 else ranked
     payload = {
         "action": "candidates-top",
@@ -182,6 +228,7 @@ def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
                 "effort": _effort(c) or None,
                 "blast_radius": _blast(c) or None,
                 "deps_unmet": unmet,
+                "couples_with": _coupling(c, all_live),
             }
             for c, unmet in shown
         ],
@@ -290,8 +337,9 @@ def main(argv: list[str] | None = None) -> int:
     blocked.sort(key=lambda c: str(c.get("id")))
     in_flight.sort(key=lambda c: str(c.get("id")))
 
+    all_live = pickable + blocked + in_flight  # coupling spans every live candidate
     fmt = _fmt_json if args.json else _fmt_text
-    sys.stdout.write(fmt(project, ranked, blocked, in_flight, args.top))
+    sys.stdout.write(fmt(project, ranked, blocked, in_flight, args.top, all_live))
     return 0
 
 
