@@ -232,6 +232,14 @@ Critic findings for slice-NNN <name>:
 
 OVERRIDDEN / DEFERRED / ESCALATED MUST carry a non-empty rationale (triage audit refuses empty).
 
+**Anti-alert-fatigue (Theme 5) — surface the novel, batch the routine.** A gate that makes the user ratify ten
+look-alike findings one-by-one trains the rubber-stamp reflex, and a rubber-stamped gate is theater. So shape the
+presentation by signal, not by uniform list:
+- **Blockers + majors: individually**, each with its own ratify line (above). These are never batched.
+- **Minors: batched.** Present them as ONE group — *"N minors, all drafted `<disposition>` — accept all as drafted? (Enter = yes, or name any id to review/override)."* Don't force a keystroke per minor.
+- **Tag each finding NOVEL vs RECURRING.** A finding is RECURRING if this dimension+claim shape was already raised-and-accepted in a recent slice (check `<vault>/critic-calibration-log.json` `active_checks[]`/`runs[]` + the recent reflections' calibration). **Lead with the NOVEL findings** — that is where the user's attention is worth spending; recurring ones can ride the batch.
+- **Rubber-stamp awareness.** If the user ratifies *every* draft disposition unchanged (no override / no severity change), that wholesale-accept is itself a signal — note it in the triage `notes`. It feeds `/critic-calibrate`'s lighten analysis: a model-on-model gate whose findings are always accepted-as-drafted with zero pushback over several slices is a candidate to lighten (never the reality spine). This is descriptive, not a block — the user still owns the verdict.
+
 Once the user ratifies, compute **final verdict** mechanically:
 - Any `escalated` → **BLOCKED**
 - Else any `accepted-pending` → **NEEDS-FIXES**

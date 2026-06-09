@@ -194,6 +194,16 @@ Standard / Minimal: skip. Heavy only:
 - Update `<vault>/cost-estimation.json` if it changes the infrastructure footprint.
 - Update `<vault>/components/<name>.json` + `<vault>/contracts/<name>.json` for substantively changed
   components/contracts (schema: `examples/component.json`, `examples/contract.json`).
+- **Expert-lens vocabulary annotation (audit-tier toggle — roadmap Theme 7; strictly OFF the generation path).**
+  The design was generated freely (the tournament) and selected against reality (Step 2) — that is **settled and
+  is NOT revisited here**. For a regulated / audit-grade slice ONLY, additionally *describe* the chosen decisions in
+  a recognized vocabulary so a human auditor can follow the reasoning in familiar terms: name the pattern ("this is
+  the Outbox pattern", "optimistic concurrency", "a CQRS read-model"), and cite any standard/clause it satisfies, in
+  a `design.json.vocabulary_annotation[]` block — `[{decision_ref, named_as, source, note}]`. This is **describe-
+  after, never constrain-before**: it annotates what was already chosen, it does NOT change the choice, and it must
+  **never** become a reason to reject a sound design for not matching a textbook label (that would re-introduce the
+  authority-grounding the pipeline rejects — see CLAUDE.md philosophy). Generate freely → select against reality →
+  *then* annotate for legibility. Omit entirely unless the slice is audit-tier; it is a Heavy toggle, not a default.
 
 Do NOT produce component/contract files in Standard or Minimal mode — code is the source of truth.
 
