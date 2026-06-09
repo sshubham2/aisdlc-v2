@@ -113,6 +113,19 @@ Slices commonly fail not in their own logic but in conformance to upstream const
 
 **Bonus — weak graph edges:** if the code graph is available, use `code-review-graph` MCP tools (search / impact-radius) to surface INFERRED/AMBIGUOUS edges the design depends on — low-confidence inferences are assumptions to challenge.
 
+## Source/fact verification (HIGH-tier & audit-tier slices only — roadmap Theme 3)
+
+On a **high-tier slice** (`Risk tier: high`) or an **audit-tier / regulated** one (Heavy mode), the design's load-bearing *factual* premises must be checked against **real sources** — not taken on the model's word. A hallucinated dependency, a non-existent API method, or a misquoted regulation is the classic way an AI design rests on something that simply isn't there, and it sails through a dimensional read because every dimension *assumes the premise*. This pass verifies the premise is even **true**.
+
+Crucial distinction: this is **grounding in reality (check the source), NOT grounding in authority (cite an expert).** Verify the *fact* against a primary source; never resolve it by deferring to a famous name. Extract every externally-checkable claim the design depends on and verify each via **WebSearch**, citing **URL + date**:
+
+- **Package / library exists AND has the API used** — check the registry (PyPI / npm) + official docs at the pinned version. An `import` or call of a package/method that doesn't exist (or was removed) is a **Blocker** (phantom dependency — the #1 AI-design failure).
+- **Platform / API actually supports the operation** — does the cited endpoint / method / parameter exist at the version the design pins? An assumed capability the API lacks is a **Blocker**.
+- **Quotas / limits are as assumed** — the rate limit, payload cap, or concurrency ceiling the design leans on, from official docs (not memory).
+- **Regulation / standard says what's claimed** (audit-tier) — the cited clause of GDPR / PCI-DSS / HIPAA / SOC2 / etc. actually requires what the design asserts. A misquoted obligation in a compliance design is a **Blocker**.
+
+If WebSearch is unavailable, state "Source/fact verification skipped — WebSearch unavailable" and file the unverified premises as explicit assumptions to confirm. On **low/medium-tier** slices this pass is optional — don't burn the budget verifying a typo fix's premises. This is distinct from Dim 8 (web-known *issues* — what's known to go *wrong*): here you confirm the premise is **true** before asking whether it's wise. Route each confirmed-false premise into the dimension it breaks (usually Dim 1 unfounded-assumptions or Dim 5 contract-gaps) so it lands in the 9-dimension finding set — this pass is a tier-gated lens, not a tenth dimension.
+
 ## Specificity rule
 Every finding cites a specific `path/to/file:line`, function, ADR id, or endpoint. ❌ "Missing error handling" → ✅ "POST /receipts has no 413 handler for files >10MB (mission-brief AC #5 says 413; design.json endpoints section omits it)." If you can't make it specific, don't file it.
 
