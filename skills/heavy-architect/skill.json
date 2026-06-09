@@ -121,7 +121,9 @@
         "design-slice"
       ],
       "validated_by": [],
-      "purpose": "Per-component infrastructure cost at 1K/10K/100K users (Step 6)"
+      "purpose": "Per-component infrastructure cost at 1K/10K/100K users (Step 6)",
+      "example_schema": "aisdlc/cost-estimation@1",
+      "example": "examples/cost-estimation.json"
     },
     {
       "path": "<vault>/requirements.json",
@@ -185,7 +187,9 @@
       "edited_by": [],
       "read_by": [],
       "validated_by": [],
-      "purpose": "Mermaid system overview and sequence diagrams — human design intent"
+      "purpose": "Mermaid system overview and sequence diagrams — human design intent",
+      "example_schema": "aisdlc/diagrams@1",
+      "example": "examples/diagrams.json"
     },
     {
       "path": "<vault>/actors/*.json",

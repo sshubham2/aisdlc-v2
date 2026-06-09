@@ -243,7 +243,9 @@
         "design-slice"
       ],
       "validated_by": [],
-      "purpose": "Heavy mode only: update when the slice changes the infrastructure footprint."
+      "purpose": "Heavy mode only: update when the slice changes the infrastructure footprint.",
+      "example_schema": "aisdlc/cost-estimation@1",
+      "example": "examples/cost-estimation.json"
     }
   ],
   "agents": [

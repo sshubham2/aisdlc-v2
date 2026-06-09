@@ -473,7 +473,9 @@
         "design-slice"
       ],
       "validated_by": [],
-      "purpose": "Cost estimation placeholder, flagged for user population (Heavy mode only)"
+      "purpose": "Cost estimation placeholder, flagged for user population (Heavy mode only)",
+      "example_schema": "aisdlc/cost-estimation@1",
+      "example": "examples/cost-estimation.json"
     },
     {
       "path": "<vault>/diagrams.json",
@@ -492,7 +494,9 @@
       "edited_by": [],
       "read_by": [],
       "validated_by": [],
-      "purpose": "Architecture diagrams generated from code-review-graph code graph (Heavy mode only)"
+      "purpose": "Architecture diagrams generated from code-review-graph code graph (Heavy mode only)",
+      "example_schema": "aisdlc/diagrams@1",
+      "example": "examples/diagrams.json"
     }
   ],
   "agents": [],

@@ -141,9 +141,13 @@ def _find_acs(data: dict) -> list[str]:
 
 
 def _normalize_ac_label(raw: str) -> str:
-    """Normalize AC labels: 'AC#1', 'AC 1', 'ac1', '1' all -> '1'."""
-    s = raw.strip().lower()
-    return s.replace("ac", "").replace("#", "").replace(" ", "")
+    """Normalize AC labels: 'AC#1', 'AC 1', 'AC-1', 'ac1', '1' all -> '1'. The 'ac' prefix
+    is stripped only when LEADING (then any '-'/'_' separator), NOT anywhere in the string —
+    so text labels like 'place-order' / 'backend-auth' are not corrupted to 'ple-order'/'bkend-auth'."""
+    s = raw.strip().lower().replace("#", "").replace(" ", "")
+    if s.startswith("ac"):
+        s = s[2:].lstrip("-_")
+    return s
 
 
 def _resolve_test_path(test_path: str, repo_root: Path) -> Path | None:

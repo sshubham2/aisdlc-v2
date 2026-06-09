@@ -114,7 +114,8 @@ Report what was written (repo doc paths + the vault manifest), the `ungrounded_c
 ## Pipeline position
 
 - predecessor: none — out-of-loop, user-invokable any time, all modes.
-- successor: none (`hands_off_to: []`). NOT auto-wired into the slice loop (auto-maintain-on-ship is deferred,
-  roadmap Theme 6 [P3]). `/drift-check` consumes the manifest this writes.
+- successor: none (`hands_off_to: []`). Not auto-wired into the auto-advancing slice loop — but `/commit-slice`
+  Step 4.6 now **offers** a `/product-doc --docs changelog` refresh on ship when a `doc-manifest.json` exists
+  (roadmap Theme 6 [P3], landed as a non-blocking reminder, not an auto-run). `/drift-check` `stale-doc` consumes the manifest this writes.
 - auto-advance: false.
 - user-input gates: Step 3 overwrite confirmation for any existing hand-written doc.
