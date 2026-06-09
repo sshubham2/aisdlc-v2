@@ -2,10 +2,17 @@
 
 > Spec-driven AI SDLC pipeline, packaged as a single [Claude Code](https://code.claude.com/docs/en/claude-code) plugin.
 
-`ai-sdlc` turns "build this feature" into a disciplined, reviewable pipeline: risk-first **slicing** with an
-in-loop **spike gate**, two-persona **adversarial review** (a Builder and a forked Critic), machine-queryable
-**JSON vault artifacts**, and one unified **candidate backlog**. It ships 28 skills, named review agents, a
-shared Python tooling library, and a SessionStart hook — all as one plugin.
+`ai-sdlc` turns "build this feature" into a disciplined, reviewable pipeline built on one rule —
+**diverse at generation · reality-grounded at selection · independent at review.** It gives you: risk-first
+**slicing** with an in-loop **spike gate**; a tier-gated **design tournament** (blind designers generate, then
+reality selects); **method-heterogeneous adversarial review** (a Builder plus forked Critics that decorrelate by
+*method*, not just persona); a per-gate **measurement spine** (precision + recall, ranked by reality-contact);
+machine-queryable **JSON vault artifacts**; and one unified **candidate backlog**. It ships **30 skills**, named
+review + designer agents, a shared Python tooling library, and a SessionStart hook — all as one plugin.
+
+The guiding philosophy: ground the model in **executable reality** (the code graph, throwaway spikes on the real
+environment, tests, drift-checks) — never in external authority. Generate freely, then *prove against reality*; and
+trust a gate exactly as much as it touches something that is **not the model** (reality > code-graph > model-critic).
 
 The pipeline writes its artifacts to an **external vault** (outside your code repo) so the design record never
 pollutes your source tree, and every project gets its own isolated, worktree-shared vault.
@@ -171,10 +178,11 @@ triage / adopt  →  discover  →  (user-test)
         ┌──────────────────────────┘   per-slice loop
         ▼
    slice (pick candidate)
-     → risk-spike     (in-loop BLOCKING spike gate: prove the candidate's assumptions, or block)
-     → design-slice
+     → risk-spike                (FEASIBILITY — in-loop BLOCKING step-0: prove the candidate's assumptions, or block)
+     → design-slice              (tier-gated design tournament: 2–3 blind designers generate → reality-grounded synthesis)
+     → risk-spike --mode design  (post-synthesis: reality adjudicates the tournament's empirically-decidable disagreements)
      → critique  (+ critique-review)
-     → slice-story    (plain-language report of the slice, delivered straight to you — phone included)
+     → slice-story               (plain-language report of the slice, delivered straight to you — phone included)
      → build-slice
      → code-review
      → validate-slice
@@ -182,9 +190,14 @@ triage / adopt  →  discover  →  (user-test)
                                    commit-slice finalizes a slice
 ```
 
-- **Brownfield entry:** `diagnose` (forensic, owner-facing HTML report) → `slice-candidates` (annotated report → backlog).
+- **Measurement spine:** every gate logs one row to `<vault>/gate-log.json` ranked by **reality-contact**
+  (real env/device/data > code-graph > model-on-model), so per-gate **precision + recall** is measurable and a
+  reality-approval is never rendered the same green as a model-approval. `/pulse` surfaces it.
+- **Brownfield entry:** `diagnose` (forensic, owner-facing HTML report) → `slice-candidates` (annotated report →
+  backlog); `bug-hunt` (whole-codebase correctness + security defect sweep).
 - **Orientation:** `pulse`, `query-design`.
-- **Maintenance:** `drift-check`, `reduce`, `archive`, `sync`, `supersede-slice`, `critic-calibrate`.
+- **Maintenance:** `drift-check`, `reduce`, `archive`, `sync`, `supersede-slice`, `critic-calibrate`,
+  `product-doc` (grounded README / CHANGELOG / API-ref / user-guide).
 - **Heavy-mode only:** `heavy-architect`, `sync`.
 
 Backlog of work lives in `<vault>/candidates.json` (live) and `<vault>/archive/candidates.json` (shipped); the
@@ -216,7 +229,7 @@ requirements.txt       runtime Python deps (PyYAML; optional code-review-graph)
 
 ### Development
 
-`skill.json` (×28), each skill's `examples/`, and `skill-graph.json` are **generated** from the source manifests
+`skill.json` (×30), each skill's `examples/`, and `skill-graph.json` are **generated** from the source manifests
 in `.build/manifests/` — they are the diffable *design record*, not hand-maintained. `SKILL.md` and `scripts/`
 are hand-authored. To change a skill's design metadata, edit its `.build/manifests/batch*.json` entry and
 regenerate:
@@ -235,4 +248,4 @@ python3 .build/cross_block_audit.py skills/*/SKILL.md
 
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.5.0
+Shubhendu Shubham · plugin `ai-sdlc` v2.18.3
