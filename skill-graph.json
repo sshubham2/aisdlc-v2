@@ -8,7 +8,7 @@
     "named_agents_used": 11,
     "tools": 54,
     "file_nodes": 90,
-    "edges": 601,
+    "edges": 602,
     "md_to_json_targets": 43
   },
   "nodes": {
@@ -1129,7 +1129,8 @@
         ],
         "edited_by": [],
         "read_by": [
-          "slice-story"
+          "slice-story",
+          "validate-slice"
         ],
         "validated_by": []
       },
@@ -2828,6 +2829,11 @@
     {
       "from": "validate-slice",
       "to": "<vault>/slices/slice-NNN/build-log.json",
+      "type": "reads"
+    },
+    {
+      "from": "validate-slice",
+      "to": "<vault>/slices/slice-NNN/code-review.json",
       "type": "reads"
     },
     {

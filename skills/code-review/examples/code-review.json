@@ -1,6 +1,6 @@
 {
   "_schema": "aisdlc/code-review@1",
-  "_note": "Adversarial code-Critic on the slice diff (CRSI-1). Advisory in v1.",
+  "_note": "Adversarial code-Critic on the slice diff (CRSI-1). Advisory in v1. A perf/complexity finding is a HYPOTHESIS, not an asserted Big-O (model complexity reasoning is hallucination-prone) — mark it measure_at_validate:true so /validate-slice Step 1b benchmarks it on real data (Theme 8: reason→flag here, measure→verdict there).",
   "slice": "slice-021",
   "reviewed_by": "code-review agent",
   "findings": [
@@ -11,6 +11,15 @@
       "file": "src/presence.ts:42",
       "claim": "no backoff cap on SSE retry",
       "fix": "cap retry at 30s"
+    },
+    {
+      "id": "CR2",
+      "dimension": "edge-case",
+      "severity": "major",
+      "file": "src/feed.ts:88",
+      "claim": "renderFeed does a .find() per item inside the render loop — hypothesised O(n^2), bites ~>2k items",
+      "fix": "index by id into a Map once before the loop; /validate-slice to benchmark at 1x/10x/100x",
+      "measure_at_validate": true
     }
   ],
   "dimensions_checked": [

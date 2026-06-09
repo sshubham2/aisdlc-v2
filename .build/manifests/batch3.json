@@ -431,6 +431,20 @@
         "purpose": "Confirm the slice was SHIPPED and interpret deviations during AC validation."
       },
       {
+        "path": "<vault>/slices/slice-NNN-<name>/code-review.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Step 1b (Theme 8): read findings with measure_at_validate:true (code-review complexity/perf hypotheses) to profile/benchmark on real data — reason→flag at code-review, measure→verdict here."
+      },
+      {
         "path": "<vault>/slices/slice-NNN-<name>/validation.json",
         "kind": "content-file",
         "access": "create",

@@ -85,7 +85,8 @@
       ],
       "edited_by": [],
       "read_by": [
-        "slice-story"
+        "slice-story",
+        "validate-slice"
       ],
       "validated_by": [],
       "purpose": "Code-Critic findings (advisory in v1): blockers/majors/minors with path:line refs, dimensions checked",

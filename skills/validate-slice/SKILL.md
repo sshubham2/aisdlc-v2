@@ -24,6 +24,7 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py" --vault "$AI_SDLC_VAULT_R
 Read from the active slice folder:
 - `mission-brief.json` — acceptance criteria, verification plan, walking-skeleton/exploratory-charter flags
 - `build-log.json` — what was actually built; interpret deviations during AC validation
+- `code-review.json` (if present) — for any finding with `measure_at_validate: true` (a complexity/perf hypothesis the code-Critic deliberately did NOT assert), Step 1b benchmarks it on real data
 
 **Prerequisite gate**: if `build-log.json` is missing OR `result != "shipped"` → STOP and surface. The slice
 is not ready to validate.
@@ -40,6 +41,27 @@ For each AC in `mission-brief.json`, execute the check described in its verifica
 
 Early projects without a deployment target: run locally with real sample data or demonstrate in user-facing
 form (terminal, screenshot, recording). "We'll really test this later" is NOT acceptable.
+
+## Step 1b — measure code-review complexity candidates (Theme 8: reason → flag, measure → verdict)
+
+`/code-review` flags performance/complexity concerns as **hypotheses** (`measure_at_validate: true`), never asserted
+Big-O — because the model's complexity *reasoning* is hallucination-prone. You own the **verdict**: measure them.
+
+Read `code-review.json` (skip this step if absent or no finding carries `measure_at_validate: true`). For each such
+finding, working against the built slice code (the worktree `$wt`, as in Steps 5–6):
+
+1. Build a **realistic** input at the scale the finding names — the largest real sample available, NOT a toy.
+2. **Profile / benchmark** the flagged path on it (`time` / `timeit` / `hyperfine`; count ops or DB queries; watch
+   memory — whatever the hypothesis predicts). Scale the input 1× → 10× → 100× and observe how cost actually grows.
+3. Record a MEASURED verdict, numbers as evidence:
+   - **CONFIRMED** — cost grows as feared at real scale → a real defect. If it breaks an AC's performance bar, that
+     AC is FAIL/PARTIAL; otherwise log a `reality_surprise` (→ candidate).
+   - **REFUTED** — flat / acceptable at real scale → the candidate was a code-review false-alarm; record it (with the
+     measurement) so the model-gate's over-reach is visible, not silently dropped.
+   - **INCONCLUSIVE** — no real input buildable this slice → say so explicitly; do NOT pass it off as measured.
+
+Put the measurement (command + numbers) in the relevant AC's `evidence`, and any CONFIRMED/REFUTED outcome in
+`reality_surprises`. A benchmarked number is a reality sign-off; a re-asserted Big-O is not.
 
 ## Step 2 — capture evidence per criterion
 
