@@ -4,7 +4,7 @@
   "requires_full_context": false,
   "runs_in": "delegable-to-subagent",
   "context_rationale": "Analytical maintenance pass — all inputs are on disk (archived reflections, agents/critique.md, the calibration log) and the heavy analysis runs in a fresh-context 'critic-calibrate' subagent; nothing depends on the main thread's current slice state (requires_full_context: false). Classified delegable like its interactive peers (commit-slice, drift-check, supersede-slice, slice-candidates); it STAYS INLINE at runtime only because of the per-proposal AskUserQuestion review gates (Step 3) — a forked subagent cannot run AskUserQuestion (the fork caveat), so it gets no context:fork.",
-  "summary": "Cross-slice meta-skill that mines 'Missed by Critic' and 'Critic calibration' entries from the last N (default 15) archived reflections to identify blind-spot patterns in the Critic prompt. Spawns a 'critic-calibrate' subagent that classifies patterns, applies a >=3-distinct-slices threshold, and produces 0-3 evidence-backed proposals. Proposals are presented one-at-a-time to the user for accept/modify/reject; this skill never auto-applies edits to the Critic agent prompt. Logs every run to critic-calibration-log.json for longitudinal effectiveness tracking.",
+  "summary": "Cross-slice meta-skill that calibrates the Critic in BOTH directions. ADD: mines 'Missed by Critic' + 'Critic calibration' entries from the last N (default 15) archived reflections (>=3-distinct-slices threshold) for 0-3 evidence-backed prompt-addition proposals. LIGHTEN (Phase 4.1 / Theme 5): mines the gate-log precision/quiet-rate + reflection FALSE-ALARM data for 0-2 proposals to lighten a low-value model-on-model gate/dimension (a calibration_notes[] entry /critique + /code-review read) or retire a noisy project active_check — the reality spine (risk-spike/validate-slice) is NEVER lightened. Spawns a 'critic-calibrate' subagent; proposals are presented one-at-a-time for accept/modify/reject; this skill never auto-applies edits to the plugin's Critic prompt. Logs every run to critic-calibration-log.json (@3) for longitudinal effectiveness tracking.",
   "reads": [
     {
       "path": "<vault>/slices/archive/",
@@ -32,7 +32,13 @@
       "path": "<vault>/critic-calibration-log.json",
       "kind": "content-file",
       "produced_by": [],
-      "purpose": "Read active_checks[] (dedup new proposals against the live overlay) and runs[] (effectiveness pass) before proposing"
+      "purpose": "Read active_checks[] + calibration_notes[] (dedup new ADD/LIGHTEN proposals against the live overlay) and runs[] (effectiveness pass) before proposing"
+    },
+    {
+      "path": "<vault>/gate-log.json",
+      "kind": "content-file",
+      "produced_by": [],
+      "purpose": "Read recent rows for the model-on-model gates (critique/critique-review/code-review) to compute precision + quiet-rate — the LIGHTEN signal (Phase 4.1). The reality gates (risk-spike/validate-slice) are excluded by the skill's filter and are never lighten candidates."
     }
   ],
   "outputs": [
@@ -58,8 +64,8 @@
         "pulse"
       ],
       "validated_by": [],
-      "purpose": "Append the run to runs[] (audit history, never overwritten) and upsert accepted proposals into active_checks[] (the deduped project overlay /critique reads). NEVER edits the plugin's agents/critique.md.",
-      "example_schema": "aisdlc/critic-calibration-log@2",
+      "purpose": "Append the run to runs[]; upsert accepted ADD proposals into active_checks[] and confirmed LIGHTEN proposals into calibration_notes[] (or retire a noisy active_check) — the deduped project overlay /critique + /code-review read. NEVER edits the plugin's agents/critique.md.",
+      "example_schema": "aisdlc/critic-calibration-log@3",
       "example": "examples/critic-calibration-log.json"
     }
   ],

@@ -44,11 +44,12 @@ VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vau
 $PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/slices/_index.json'; print(open(f).read() if os.path.exists(f) else '{}')" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
-Project-calibrated checks — `active_checks` ONLY (learned from THIS project's past Critic misses via `/critic-calibrate`;
-this is the project overlay layered on the base `agents/critique.md`). Loads only this small section, never `runs[]`:
+Project-calibrated overlay (learned from THIS project via `/critic-calibrate`; layered on the base `agents/critique.md`).
+Loads two small sections only, never `runs[]`: `active_checks` (extra checks to APPLY — the Critic was missing these)
+and `calibration_notes` (dimensions to LIGHTEN — they've been low-signal here; weight lower, never a reality sign-off):
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/critic-calibration-log.json'; d=json.load(open(f)) if os.path.exists(f) else {}; print(json.dumps(d.get('active_checks',[]),indent=2))" "$VAULT" 2>/dev/null || echo "[]"
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/critic-calibration-log.json'; d=json.load(open(f,encoding='utf-8')) if os.path.exists(f) else {}; print(json.dumps({'active_checks':d.get('active_checks',[]),'calibration_notes':d.get('calibration_notes',[])},indent=2))" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
 ## Mode/tier gating
@@ -91,9 +92,11 @@ Read (all from the active slice folder):
 Pattern-recognition inputs (query JSON vault directly; use code-review-graph / CRG for code-graph queries):
 - `<vault>/slices/action-points.json` — curated cross-slice action-points register
 - `<vault>/slices/_index.json` — most-recent-10 slice table
-- `<vault>/critic-calibration-log.json` → **`active_checks[]` ONLY** — this project's calibrated Critic checks (injected
-  above). Hand them to the Critic in Step 2 as extra dimensions. NEVER read `runs[]` (it grows unboundedly; the overlay
-  is the small `active_checks` section). Absent file/key → no extra checks (silent no-op).
+- `<vault>/critic-calibration-log.json` → **`active_checks[]` + `calibration_notes[]` ONLY** (both injected above).
+  `active_checks` are extra dimensions to APPLY; `calibration_notes` (Phase 4.1) are dimensions this project found
+  low-signal — hand them to the Critic in Step 2 to weight LIGHTER (never to skip). NEVER read `runs[]` (it grows
+  unboundedly). Absent file/keys → no overlay (silent no-op). Note: a calibration_note can only ever lighten a
+  model-on-model dimension — it can NEVER touch the reality gates.
 - Open individual `reflection.json` files **only** when action-points or _index point to a specific match.
 
 Project-frame (PFS-1): run via Bash and capture stdout:
@@ -148,6 +151,12 @@ the tournament left open (boundary placement, naming, layering) as legitimate de
 
 # Project-calibrated checks (apply IN ADDITION to your 9 fixed dimensions — learned from THIS project's past Critic misses)
 <active_checks[] from critic-calibration-log.json, or "none">
+
+# Project calibration notes — LIGHTEN (Phase 4.1; this project found these dimensions low-signal — weight them LIGHTER, do NOT inflate)
+<calibration_notes[] from critic-calibration-log.json, or "none">
+For each note, treat the named dimension as lower-yield FOR THIS PROJECT (it has been FALSE-ALARM / quiet over the
+cited window): hold a higher bar before filing in it, and do not pad severity. This NEVER suppresses a real issue —
+file it if you see one — and it NEVER applies to the reality gates. It only counters this project's measured over-firing.
 
 # Specific archived reflections (only if directly relevant)
 <contents, or "none">

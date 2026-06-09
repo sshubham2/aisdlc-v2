@@ -1,0 +1,97 @@
+[
+  {
+    "name": "product-doc",
+    "user_invokable": true,
+    "requires_full_context": true,
+    "runs_in": "main-agent",
+    "context_rationale": "Inline orchestrator: it has an interactive overwrite gate (AskUserQuestion before clobbering a hand-written doc), writes deliverables into the live code repo, and spawns the forked product-doc agent for the narrative drafting (keeping the parent context lean). The repo writes + the overwrite gate + the vault-manifest write all need the parent conversation's tool access, so the orchestrator stays main-agent and only the README/API-ref/user-guide drafting is forked. CHANGELOG is generated deterministically by a bundled script (no model).",
+    "summary": "Generates + maintains product documentation grounded in code reality. CHANGELOG.md is assembled deterministically from the per-slice changelog.json records /commit-slice writes (assemble_changelog.py); README / API-reference / user-guide are drafted by a forked product-doc agent from the code-review-graph public surface + the vault (concept, slices), with every interface fact grounded in a real CRG node — unverifiable claims are omitted, never invented. Docs are markdown DELIVERABLES written to the code repo; a doc-manifest.json provenance record is written to the vault so /drift-check can flag docs that drift from code (the stale-doc category). Out-of-loop, user-invokable, all modes. NEVER modifies source code; gates before overwriting a hand-written doc.",
+    "agents": [
+      {
+        "name": "product-doc",
+        "when": "Step 2, after the CRG public surface + vault context are gathered (skipped if only --docs changelog requested)",
+        "purpose": "Forked author: drafts README / API-reference / user-guide markdown from the handed CRG surface + vault context, grounding every interface fact in a real CRG node (omits, never invents, what it cannot verify) and returns structured product-doc-draft JSON; writes no files"
+      }
+    ],
+    "methodology_tools": [
+      {
+        "name": "assemble_changelog",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/assemble_changelog.py\" --vault <vault> --out <repo>/CHANGELOG.md",
+        "purpose": "Deterministic, dependency-free CHANGELOG generator: aggregates the per-slice changelog.json records (<vault>/slices/archive/*/changelog.json) into a Keep-a-Changelog-style CHANGELOG.md grouped by conventional-commit type (feat->Added, fix->Fixed, rest->Changed), newest-slice first. Single-skill script; no model, so the changelog never hallucinates."
+      }
+    ],
+    "external_tools": [
+      {
+        "name": "code-review-graph",
+        "purpose": "Harvest the public surface (entry points / exports / CLI / endpoints) that grounds the README + API reference, and the snapshot recorded in doc-manifest.json for the drift loop. External pip package (never bundled)."
+      }
+    ],
+    "local_scripts": [],
+    "harness_tools": [
+      { "name": "Read", "purpose": "Read the vault (concept.json, triage.json, slices/_index.json), existing README/docs, and CRG-cited source files for grounding" },
+      { "name": "Write", "purpose": "Write the agent-drafted README/API-reference/user-guide to the repo and the doc-manifest.json to the vault" },
+      { "name": "Edit", "purpose": "Refresh an existing hand-written doc in place when the user chooses merge over overwrite" },
+      { "name": "Bash", "purpose": "Resolve repo + vault roots, query code-review-graph for the public surface, and run assemble_changelog.py" },
+      { "name": "Agent", "purpose": "Spawn the named product-doc author subagent (subagent_type: product-doc) for the forked narrative drafting" },
+      { "name": "AskUserQuestion", "purpose": "The overwrite gate — confirm before clobbering a hand-written doc not previously produced by /product-doc" }
+    ],
+    "file_access": [
+      {
+        "path": "<vault>/concept.json",
+        "kind": "content-file", "access": "read", "mechanism": "read", "safety_marker": null,
+        "modes": ["minimal", "standard", "heavy"], "format": "json",
+        "purpose": "What the product is, the actors + their top actions, scope/non-goals — anchors the README narrative + the user-guide tasks"
+      },
+      {
+        "path": "<vault>/triage.json",
+        "kind": "content-file", "access": "read", "mechanism": "read", "safety_marker": null,
+        "modes": ["minimal", "standard", "heavy"], "format": "json",
+        "purpose": "Pipeline mode (minimal/standard/heavy) — context for how much doc surface to expect"
+      },
+      {
+        "path": "<vault>/slices/_index.json",
+        "kind": "content-file", "access": "read", "mechanism": "read", "safety_marker": null,
+        "modes": ["minimal", "standard", "heavy"], "format": "json",
+        "purpose": "Shipped capabilities — document what exists, not aspirational features"
+      },
+      {
+        "path": "<vault>/slices/archive/slice-NNN-<name>/changelog.json",
+        "kind": "content-file", "access": "read", "mechanism": "read", "safety_marker": null,
+        "modes": ["minimal", "standard", "heavy"], "format": "json",
+        "purpose": "Per-slice audit records (written by /commit-slice) — the deterministic source for CHANGELOG.md"
+      },
+      {
+        "path": "README.md",
+        "kind": "doc-deliverable", "access": "create", "mechanism": "raw-write", "safety_marker": null,
+        "modes": ["minimal", "standard", "heavy"], "format": "markdown",
+        "purpose": "Project README written to the CODE REPO (not the vault) — overwrite-gated if hand-written"
+      },
+      {
+        "path": "CHANGELOG.md",
+        "kind": "doc-deliverable", "access": "create", "mechanism": "raw-write", "safety_marker": null,
+        "modes": ["minimal", "standard", "heavy"], "format": "markdown",
+        "purpose": "CHANGELOG written to the CODE REPO, regenerated wholesale from changelog.json (generated artifact — no overwrite gate)"
+      },
+      {
+        "path": "docs/api-reference.md",
+        "kind": "doc-deliverable", "access": "create", "mechanism": "raw-write", "safety_marker": null,
+        "modes": ["minimal", "standard", "heavy"], "format": "markdown",
+        "purpose": "Public-surface API reference written to the CODE REPO, grounded in the CRG export list — overwrite-gated if hand-written"
+      },
+      {
+        "path": "docs/user-guide.md",
+        "kind": "doc-deliverable", "access": "create", "mechanism": "raw-write", "safety_marker": null,
+        "modes": ["minimal", "standard", "heavy"], "format": "markdown",
+        "purpose": "Task-oriented user guide written to the CODE REPO, organized around concept.json actors/actions — overwrite-gated if hand-written"
+      },
+      {
+        "path": "<vault>/doc-manifest.json",
+        "kind": "content-file", "access": "create", "mechanism": "raw-write", "safety_marker": "project-open-single-shot",
+        "modes": ["minimal", "standard", "heavy"], "format": "json",
+        "purpose": "Provenance anchor: which docs were generated, the CRG public-surface snapshot each was grounded in, and the source commit — read by /drift-check to flag stale-doc. Single-shot full rewrite each run (not an append-mutated shared aggregate), so raw-write is correct."
+      }
+    ],
+    "hands_off_to": [],
+    "source": "skills/product-doc/SKILL.md (new in v2 — grounded product-documentation authoring; spawns the product-doc agent for README/API-ref/user-guide, assembles CHANGELOG from changelog.json deterministically, writes docs to the repo + a doc-manifest.json drift anchor to the vault; out-of-loop, user-invokable)"
+  }
+]

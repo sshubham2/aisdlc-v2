@@ -137,7 +137,9 @@
         "commit-slice"
       ],
       "edited_by": [],
-      "read_by": [],
+      "read_by": [
+        "product-doc"
+      ],
       "validated_by": [],
       "purpose": "Per-slice audit record of what the slice changed (JSON twin of the commit message); written in no-flag/--merge/--push via write_changelog.py (Step 4.5). Never written to the code repo root.",
       "example_schema": "aisdlc/changelog@1",

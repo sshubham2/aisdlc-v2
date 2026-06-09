@@ -43,7 +43,9 @@
     {
       "path": "README.md",
       "kind": "content-file",
-      "produced_by": [],
+      "produced_by": [
+        "product-doc"
+      ],
       "purpose": "Read as hypothesis only; not trusted over code observations"
     },
     {
@@ -118,6 +120,7 @@
         "build-slice",
         "discover",
         "heavy-architect",
+        "product-doc",
         "pulse",
         "reduce",
         "slice",
@@ -151,6 +154,7 @@
       "read_by": [
         "archive",
         "heavy-architect",
+        "product-doc",
         "pulse",
         "reduce",
         "reflect",

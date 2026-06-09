@@ -215,6 +215,7 @@
       "read_by": [
         "archive",
         "heavy-architect",
+        "product-doc",
         "pulse",
         "reduce",
         "reflect",
@@ -405,6 +406,7 @@
         "code-review",
         "critic-calibrate",
         "critique",
+        "product-doc",
         "pulse",
         "reflect",
         "slice",

@@ -1,6 +1,6 @@
 ---
 name: drift-check
-description: "Audits vault claims against code reality and flags divergence in three categories: DRIFT (blocker), UNSPECIFIED CODE (major), and STALE CLAIM (major). Runs in fast mode (<2s, pre-commit) or full mode (on-demand audit). Appends findings to drift-log.json via the SVW-1 safe channel. Detect-only, all-modes counterpart to the Heavy-mode-only /sync skill."
+description: "Audits vault claims against code reality and flags divergence in four categories: DRIFT (blocker), UNSPECIFIED CODE (major), STALE CLAIM (major), and STALE DOC (major — a /product-doc-generated doc that no longer matches the code surface it documented, via the doc-manifest.json provenance anchor). Runs in fast mode (<2s, pre-commit) or full mode (on-demand audit). Appends findings to drift-log.json via the SVW-1 safe channel. Detect-only, all-modes counterpart to the Heavy-mode-only /sync skill."
 when_to_use: "Trigger phrases: /drift-check, 'check for drift', 'vault sync check', 'is the vault still accurate', 'audit vault vs code'. Use as pre-commit hook (auto, --fast), as the /build-slice pre-finish gate, or on-demand before starting a new slice or after external changes."
 argument-hint: "[--fast] [--resolve] [path]"
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion, Skill
@@ -39,6 +39,7 @@ Read only the live-claim surfaces. Always included:
 - `<vault>/risk-register.json` — risks with `status: retired`; verify retirement is real.
 - `<vault>/slices/*/mission-brief.json` — active slices only; check `must_not_defer` items are implemented.
 - `<vault>/slices/*/design.json` — active slices only; verify referenced file paths exist and components are touched.
+- `<vault>/doc-manifest.json` — **if it exists** (written by `/product-doc`, all modes): the generated docs + the CRG public-surface snapshot each was grounded in. Drives the STALE DOC check (Step 3). Absent → skip the doc audit entirely (no-op for projects that never ran `/product-doc`).
 
 **Skip**: `slices/archive/*` (historical, not live assertions), `slices/_index.json` (metadata), any folder that doesn't exist.
 
@@ -57,8 +58,16 @@ For each vault claim, check against code reality. Prefer CRG MCP tools when avai
 | Must-not-defer item (e.g. auth on POST /X) | CRG search for auth middleware on the route; fallback: Grep route handler |
 | Heavy: contract endpoint signature | CRG search for the handler; compare param/return types |
 | Heavy: schema field | Grep model/schema definition for field name |
+| Doc-manifest tracked doc | doc file still exists; each `grounded_in` CRG node still resolves; `public_surface` snapshot still matches current CRG |
 
 For each mismatch capture: vault file path, vault claim text, code evidence, severity.
+
+**Doc-vs-code (STALE DOC).** If `<vault>/doc-manifest.json` exists, for each entry in its `docs[]`: (a) confirm the
+doc file still exists on disk; (b) re-resolve each `grounded_in` CRG node — a documented command / endpoint / export
+that no longer resolves means the doc describes something gone; (c) diff the manifest's `public_surface` snapshot
+against the current CRG surface — a removed/renamed public symbol means the README / API-reference likely document a
+vanished interface. Each mismatch → a **STALE DOC** finding citing the doc path + the specific vanished symbol, with
+`Resolve: regenerate via /product-doc`. No manifest → skip this check (no-op).
 
 In `--fast` mode: only check claims in files touched by the injected diff. Skip deep graph traversal.
 
@@ -67,6 +76,7 @@ In `--fast` mode: only check claims in files touched by the injected diff. Skip 
 - **DRIFT (blocker)** — vault says X, code does Y. Must pick one: update vault or fix code.
 - **UNSPECIFIED CODE (major)** — code does X, vault doesn't mention it. Either scope creep or missing ADR.
 - **STALE CLAIM (major)** — vault mentions a removed feature/library/file. Delete or supersede.
+- **STALE DOC (major)** — a `/product-doc`-generated doc (README / API-reference / user-guide, per `doc-manifest.json`) documents a code surface that no longer matches reality. Regenerate via `/product-doc`. (Skipped when no `doc-manifest.json` exists.)
 
 ## Step 5 — Output
 
@@ -99,7 +109,7 @@ whole-file overwrite):
 
 ```bash
 $PY "${CLAUDE_SKILL_DIR}/scripts/build_entry.py" \
-    --category <drift|unspecified-code|stale-claim> \
+    --category <drift|unspecified-code|stale-claim|stale-doc> \
     --finding "<finding>" --trigger slice-NNN [--resolution "<how resolved>"] \
   | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
         --file drift-log.json --array entries --stdin
@@ -115,7 +125,7 @@ standalone with no active slice (a slice-less audit has no per-slice precision t
 is a **medium** reality-contact gate (claims vs real code); `gate_log.py` stamps that:
 
 ```bash
-# verdict: clean | drift (any BLOCKER) | warn (warns only); findings-count = drift + unspecified-code + stale-claim
+# verdict: clean | drift (any BLOCKER) | warn (warns only); findings-count = drift + unspecified-code + stale-claim + stale-doc
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate drift-check --slice slice-NNN \
     --verdict <clean|drift|warn> --findings-count <N> \

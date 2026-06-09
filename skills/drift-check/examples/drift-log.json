@@ -1,6 +1,6 @@
 {
   "_schema": "aisdlc/drift-log@1",
-  "_note": "Append-only audit (R-32). Categories: drift | unspecified-code | stale-claim.",
+  "_note": "Append-only audit (R-32). Categories: drift | unspecified-code | stale-claim | stale-doc (stale-doc = a /product-doc-generated doc drifted from code, via doc-manifest.json).",
   "entries": [
     {
       "at": "<ts>",

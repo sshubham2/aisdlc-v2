@@ -90,6 +90,7 @@
       "read_by": [
         "archive",
         "heavy-architect",
+        "product-doc",
         "pulse",
         "reduce",
         "reflect",

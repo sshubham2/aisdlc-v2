@@ -24,6 +24,17 @@ must match — drift from them is Dimension 7):
 - `design.json` — what's new, components touched, contracts, wiring matrix, ADR refs
 - `decisions/ADR-*.json` referenced by the slice, and `build-log.json` (verify `result: shipped`)
 
+## Project calibration overlay — injected (Phase 4.1)
+
+Dimensions this project found low-signal via `/critic-calibrate` (weight them LIGHTER — never skip, never reality gates):
+```!
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/critic-calibration-log.json'; d=json.load(open(f,encoding='utf-8')) if os.path.exists(f) else {}; print(json.dumps([n for n in d.get('calibration_notes',[]) if n.get('target_gate') in ('code-review','critique')],indent=2))" "$VAULT" 2>/dev/null || echo "[]"
+```
+For each note, treat the named dimension as lower-yield FOR THIS PROJECT (it has been FALSE-ALARM / quiet over the
+cited window): hold a higher bar before filing in it, and do not pad severity. This NEVER suppresses a real issue
+(file it if you see one) and NEVER applies to a reality gate — it only counters this project's measured over-firing.
+
 ## Slice diff (in-scope only) — injected
 
 **WT-ROOT-1:** the diff and any targeted Reads come from the slice WORKTREE `$wt` (HEAD = the slice branch),

@@ -152,6 +152,7 @@
         "validate-slice"
       ],
       "read_by": [
+        "critic-calibrate",
         "pulse"
       ],
       "validated_by": [

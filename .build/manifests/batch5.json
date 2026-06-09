@@ -558,7 +558,7 @@
     "requires_full_context": false,
     "runs_in": "delegable-to-subagent",
     "context_rationale": "Drift-check compares vault files against code reality using file inputs and code-review-graph queries with no dependency on the current session's conversational state, making it fully mechanically runnable as a pre-commit hook or fresh-context subagent.",
-    "summary": "Audits vault claims against code reality and flags divergence across three categories: DRIFT (blocker), UNSPECIFIED CODE (major), and STALE CLAIM (major). Runs in fast mode for pre-commit hooks or full mode for on-demand audits. Appends findings to drift-log.json via the R-32 safe channel and supports interactive --resolve mode. Designed as the detect-only, all-modes counterpart to the Heavy-mode-only /sync skill.",
+    "summary": "Audits vault claims against code reality and flags divergence across four categories: DRIFT (blocker), UNSPECIFIED CODE (major), STALE CLAIM (major), and STALE DOC (major — a /product-doc-generated doc that no longer matches the code surface it documented, detected against the doc-manifest.json provenance anchor; skipped when no manifest exists). Runs in fast mode for pre-commit hooks or full mode for on-demand audits. Appends findings to drift-log.json via the R-32 safe channel and supports interactive --resolve mode. Designed as the detect-only, all-modes counterpart to the Heavy-mode-only /sync skill.",
     "agents": [],
     "methodology_tools": [
       {
@@ -676,6 +676,20 @@
         ],
         "format": "json",
         "purpose": "Append full-mode audit entry with findings and resolutions (R-32 seam-routed, ADR-103)"
+      },
+      {
+        "path": "<vault>/doc-manifest.json",
+        "kind": "content-file",
+        "access": "read",
+        "mechanism": "read",
+        "safety_marker": null,
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Read when present (written by /product-doc): drives the STALE DOC check — each tracked doc's grounded_in CRG surface is re-resolved against current code; vanished symbols => stale-doc finding"
       },
       {
         "path": "<vault>/components/*.json",
