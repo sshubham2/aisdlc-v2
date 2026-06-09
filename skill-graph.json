@@ -8,7 +8,7 @@
     "named_agents_used": 11,
     "tools": 54,
     "file_nodes": 90,
-    "edges": 599,
+    "edges": 601,
     "md_to_json_targets": 43
   },
   "nodes": {
@@ -846,6 +846,7 @@
           "critique",
           "critique-review",
           "drift-check",
+          "reflect",
           "risk-spike",
           "validate-slice"
         ],
@@ -3271,6 +3272,11 @@
     },
     {
       "from": "reflect",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "reflect",
       "to": "code-review-graph",
       "type": "uses_tool"
     },
@@ -3367,6 +3373,11 @@
     {
       "from": "reflect",
       "to": "<vault>/lessons-learned.json",
+      "type": "appends"
+    },
+    {
+      "from": "reflect",
+      "to": "<vault>/gate-log.json",
       "type": "appends"
     },
     {

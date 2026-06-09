@@ -69,13 +69,29 @@ model-on-model gates/checks that have added no value. Hand the agent the recent 
 **model-on-model gates ONLY** — it computes precision and quiet-rate and proposes any lightening:
 
 ```bash
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; M={'critique','critique-review','code-review'}; print(json.dumps([e for e in rows if e.get('gate') in M],indent=2))" "$AI_SDLC_VAULT_ROOT"
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; M={'critique','critique-review','code-review'}; print(json.dumps([e for e in rows if e.get('gate') in M and e.get('kind') != 'miss'],indent=2))" "$AI_SDLC_VAULT_ROOT"
 ```
 
 **HARD RULE — the reality spine never lightens.** The filter passes ONLY `critique` / `critique-review` /
 `code-review`. `risk-spike` and `validate-slice` are HIGH reality-contact (real environments; they can say a hard
 *no*) and are **never** lighten candidates regardless of their numbers — they are excluded by the filter and must
 never be re-introduced. Missing/empty gate-log → pass `"no gate-log data"` (lighten analysis simply produces nothing).
+The filter also excludes `kind == "miss"` rows: those are **recall** rows (a gate MISSED something), the opposite
+signal — a miss is evidence to **tighten/ADD**, never to lighten, and it carries no `findings_count` so it would
+otherwise distort precision/quiet. The misses feed the ADD side via 1f.
+
+**1f. Gate-log misses — structured ADD corroboration (Phase 0.2 recall half / Theme 8)**
+
+The recall rows `/reflect` appended (`kind == "miss"`) are structured "Missed by Critic" data that corroborates the
+reflection mining in 1a–1d — a *post-ship* miss (`caught_by` in `post-ship`/`bug-hunt`/`user`/`repro`) is a laundered
+error that passed every gate, the **highest-signal ADD evidence** there is. Extract them for the agent prompt:
+
+```bash
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; print(json.dumps([e for e in rows if e.get('kind')=='miss'],indent=2))" "$AI_SDLC_VAULT_ROOT"
+```
+
+The agent weighs these alongside the reflection misses when proposing ADD checks (the `>=3-distinct-slices` threshold
+still applies); a single post-ship escape is a strong prior but still needs the pattern to cross the bar.
 
 ## Step 2 — invoke the critic-calibrate subagent
 
@@ -102,6 +118,9 @@ Slice range: slice-<first> through slice-<last>
 
 # Gate precision — model-on-model gates only (LIGHTEN candidates; reality gates excluded by construction)
 <the filtered gate-log rows from 1e, or "no gate-log data">
+
+# Gate-log misses — recall rows, ADD corroboration (post-ship = laundered errors, highest signal)
+<the kind=="miss" rows from 1f, or "no gate-log misses">
 
 # Active calibration notes already in this project's overlay (do not re-propose a lighten already recorded)
 <contents of calibration_notes[] from critic-calibration-log.json, or "none">

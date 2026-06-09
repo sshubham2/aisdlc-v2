@@ -94,6 +94,26 @@ Pattern observations feed `/critic-calibrate` every 10–20 slices.
 
 ---
 
+## Step 3b — Emit recall rows to the gate-log (measurement spine, Phase 0.2 recall half)
+
+Step 3's `MISSED` verdicts are the **recall** signal — a real issue a Critic gate should have caught but didn't (it surfaced in build/validate, or post-ship). Precision already lands in the gate-log at `/critique` TRI-1; recall lands HERE, so per-gate **recall = catches / (catches + misses)** becomes computable (catches = the gate's confirmed-real findings; misses = these rows). Emit **one miss row per `MISSED` finding** — skip this whole step if Step 3 produced none.
+
+For each `MISSED` finding, pick the **owning gate** (the gate whose scope should have caught it: `critique` for a design-level gap, `code-review` for a code defect, `critique-review` only if the meta-pass also should have flagged it), its `severity` (`blocker`/`major`/`minor`), and where it was finally caught (`build` or `validate`), then append via the SVW-1 channel:
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" --kind miss \
+    --gate <critique|code-review|critique-review> --slice slice-NNN \
+    --severity <blocker|major|minor> --caught-by <build|validate> --ref "<one line: what was missed>" \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --file gate-log.json --array entries --stdin
+```
+
+**Post-ship escape (laundered error — Theme 8, optional but highest-signal):** if this slice FIXES a bug that escaped a *previously shipped* slice (you ran `/repro`, a shippability regression fired, or a user reported it), also emit a miss against the **introducing** slice: `--slice slice-MMM` (the one that shipped the bug), the owning gate, and `--caught-by post-ship|bug-hunt|user|repro`. That is the bug class that passed EVERY gate including validate — the most valuable calibration data `/critic-calibrate` consumes.
+
+`kind:"miss"` rows are recall-only: `/pulse` and `/critic-calibrate` filter them OUT of the precision/raised math, so they never distort the existing gate hit-rate.
+
+---
+
 ## Step 4 — Write reflection.json
 
 Write `<vault>/slices/slice-NNN/reflection.json` (schema: `examples/reflection.json`).

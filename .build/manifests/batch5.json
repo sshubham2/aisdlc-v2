@@ -52,6 +52,11 @@
         "name": "build_checks_integrity",
         "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/build_checks_integrity.py\"",
         "purpose": "Post-write integrity gate ensuring build-checks.md matches canonical fixture (BCI-1)"
+      },
+      {
+        "name": "gate_log",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --kind miss --gate <owning-gate> --slice slice-NNN --severity <sev> --caught-by build|validate|post-ship --ref <note> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "Emit + SVW-1-append one RECALL miss row per MISSED Critic finding (Step 3b; per-gate recall = catches/(catches+misses), measurement spine Phase 0.2 recall half / Theme 8)"
       }
     ],
     "external_tools": [
@@ -283,6 +288,20 @@
         ],
         "format": "json",
         "purpose": "Append chronological slice lessons entry (Step 5, SVW-1/ADR-087)"
+      },
+      {
+        "path": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append one RECALL miss row per MISSED Critic finding (Step 3b) — the recall half of the measurement spine (Phase 0.2 / Theme 8); kind:\"miss\" rows are filtered OUT of precision/raised math by /pulse + /critic-calibrate"
       },
       {
         "path": "<vault>/build-checks.json",

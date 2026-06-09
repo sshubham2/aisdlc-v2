@@ -24,6 +24,7 @@ The /critic-calibrate skill will hand you:
 - **Past calibration log** — `<vault>/critic-calibration-log.json` if it exists (`@3`: `active_checks[]`, `calibration_notes[]`, `runs[]`), so you can see what was previously proposed and whether it reduced misses
 - **Effectiveness data** — for any prior accepted proposals, the count of misses in that category in the window since the proposal was applied
 - **Gate-precision block** — recent gate-log rows for the **model-on-model gates only** (`critique`/`critique-review`/`code-review`). Used for the LIGHTEN direction (Step 6). The reality gates `risk-spike`/`validate-slice` are excluded by construction and are never lighten candidates.
+- **Gate-log misses block** — the `kind == "miss"` recall rows (any gate), each with owning gate / `severity` / `caught_by`. Structured ADD corroboration for Step 1 (post-ship escapes are the highest-signal evidence). These are the recall complement of the precision block — never a lighten signal.
 - **Active calibration notes** — `calibration_notes[]` already in the overlay, so you never re-propose a lighten that's already in effect
 
 If the window has fewer than 5 reflections, return:
@@ -41,6 +42,8 @@ If `agents/critique.md` is missing or empty, return an error — you can't propo
 For each `reflection.json` in the window, parse:
 - The "Missed by Critic" entries (specific things that surfaced during build/validate the Critic should have caught)
 - The "Critic calibration" entries (VALIDATED / FALSE ALARM / NOT YET counts per finding)
+
+Also parse the **Gate-log misses block** (`kind == "miss"` rows): these are the same misses recorded as structured measurement data, with the **owning gate**, `severity`, and `caught_by`. They corroborate the reflection misses (cross-check: a miss in both is high-confidence). Weight a **post-ship escape** (`caught_by` in `post-ship`/`bug-hunt`/`user`/`repro`) heavily — it passed *every* gate including validate, so it is the highest-signal ADD evidence; but a single escape still needs its pattern to reach the `≥3-distinct-slices` bar before it warrants a proposal.
 
 Record each miss with: slice number, slice name, miss text, the design area it touched. Skip reflections with no "Missed by Critic" content — those slices are clean signal that the Critic worked.
 

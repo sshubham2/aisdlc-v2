@@ -125,13 +125,20 @@ Do NOT read individual slice design/mission files (active slice excepted). Do NO
 - Count of `blocked-on-spike` candidates.
 
 **Gate hit-rate (GATE-LOG — Phase 0 measurement spine):** From the FULL `<vault>/gate-log.json` `entries[]`
-(skip this whole metric if the file is absent or empty), group rows by `gate` and compute per gate:
-- `runs` = number of rows.
-- `raised` = rows with `findings_count > 0`; `raised_rate` = `raised / runs`.
-- `precision` = `Σ findings_real / (Σ findings_real + Σ findings_noise)` — ONLY when those fields are present
-  on the rows (today: `critique`). Omit `precision` entirely when no row carries them (do NOT show 0%).
+(skip this whole metric if the file is absent or empty), **first split rows by kind**: a row is a RECALL row
+when `kind == "miss"` (Phase 0.2 recall half), otherwise it is a VERDICT row (one gate-run). **Only VERDICT
+rows feed runs/raised/precision** — a miss row carries no `findings_count` and counting it as a run would
+deflate `raised_rate`. Group by `gate` and compute per gate:
+- `runs` = number of **verdict** rows.
+- `raised` = verdict rows with `findings_count > 0`; `raised_rate` = `raised / runs`.
+- `precision` = `Σ findings_real / (Σ findings_real + Σ findings_noise)` over verdict rows — ONLY when those
+  fields are present (today: `critique`). Omit `precision` entirely when no row carries them (do NOT show 0%).
+- `misses` = number of **recall** (`kind == "miss"`) rows for this gate; `recall` = `Σ findings_real /
+  (Σ findings_real + misses)` — i.e. catches / (catches + misses) — ONLY when `findings_real` is present AND
+  `(catches + misses) > 0`. Omit `recall` when uncomputable; still show `missed <misses>` whenever `misses > 0`
+  (a miss is real signal even before recall is computable for that gate).
 - `reality_contact` = the rows' `reality_contact` (constant per gate): `high` / `medium` / `low`.
-- `last` = the most-recent row's `verdict` (+ `slice`).
+- `last` = the most-recent **verdict** row's `verdict` (+ `slice`).
 Order the gates by `reality_contact` **high → medium → low** (reality-touching gates read first — Theme 2
 seed). Mark a gate `(quiet)` when `runs >= 5` AND `raised_rate == 0` — it has flagged nothing for many slices
 (a future lighten candidate, Phase 4/5). This is descriptive only — pulse changes nothing.
@@ -260,7 +267,7 @@ The Haiku agent fills the template and returns the summary text. Main thread pri
 ## Gate hit-rate (measurement spine)
 [From gate-log.json; OMIT this whole section if the file is absent/empty. One line per gate, ordered
 high → low reality-contact:]
-- <gate> [<reality_contact>]: <runs> runs · raised <raised>/<runs> (<raised_rate as %>)[· precision <p>%][ · quiet]
+- <gate> [<reality_contact>]: <runs> runs · raised <raised>/<runs> (<raised_rate as %>)[· precision <p>%][· recall <r>%][· missed <misses>][ · quiet]
 - ...
 [If gate-log.json absent:] - not yet recorded — no gate has run since the measurement spine was added.
 
@@ -304,7 +311,7 @@ Balanced view plus:
 - Full shippability catalog listing
 - Critic calibration history (all past runs)
 - Stranded slice branches in detail (every `halt: true` entry with its class)
-- Full gate-log history: every row (gate · slice · verdict · findings_count · reality_contact), newest first
+- Full gate-log history: every row, newest first — verdict rows (gate · slice · verdict · findings_count · reality_contact) and recall rows (gate · slice · `miss` · severity · caught_by)
 
 ## Critical rules
 

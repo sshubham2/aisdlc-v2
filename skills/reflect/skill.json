@@ -293,6 +293,40 @@
       "example": "examples/lessons-learned.json"
     },
     {
+      "path": "<vault>/gate-log.json",
+      "kind": "content-file",
+      "v1_format": "json",
+      "v2_format": "json",
+      "write_semantics": "append",
+      "write_mechanism": "vault_edit-append",
+      "modes": [
+        "minimal",
+        "standard",
+        "heavy"
+      ],
+      "created_by": [],
+      "edited_by": [
+        "code-review",
+        "critique",
+        "critique-review",
+        "drift-check",
+        "reflect",
+        "risk-spike",
+        "validate-slice"
+      ],
+      "read_by": [
+        "critic-calibrate",
+        "pulse"
+      ],
+      "validated_by": [
+        "gate_log",
+        "vault_edit"
+      ],
+      "purpose": "Append one RECALL miss row per MISSED Critic finding (Step 3b) — the recall half of the measurement spine (Phase 0.2 / Theme 8); kind:\"miss\" rows are filtered OUT of precision/raised math by /pulse + /critic-calibrate",
+      "example_schema": "aisdlc/gate-log@1",
+      "example": "examples/gate-log.json"
+    },
+    {
       "path": "<vault>/build-checks.json",
       "kind": "content-file",
       "v1_format": "json",
@@ -525,6 +559,14 @@
       "purpose": "Post-write integrity gate ensuring build-checks.md matches canonical fixture (BCI-1)",
       "found": true,
       "path": "scripts/lib/build_checks_integrity.py"
+    },
+    {
+      "name": "gate_log",
+      "type": "methodology-tool",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --kind miss --gate <owning-gate> --slice slice-NNN --severity <sev> --caught-by build|validate|post-ship --ref <note> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+      "purpose": "Emit + SVW-1-append one RECALL miss row per MISSED Critic finding (Step 3b; per-gate recall = catches/(catches+misses), measurement spine Phase 0.2 recall half / Theme 8)",
+      "found": true,
+      "path": "scripts/lib/gate_log.py"
     },
     {
       "name": "code-review-graph",

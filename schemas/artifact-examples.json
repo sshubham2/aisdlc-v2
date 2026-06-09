@@ -218,11 +218,13 @@
   },
   "gate-log": {
     "_schema": "aisdlc/gate-log@1",
-    "_note": "Append-only per-gate outcome log (roadmap Theme 8 / plan Phase 0 — the measurement spine). ONE row per GATE per slice, appended via gate_log.py | vault_edit append (SVW-1 locked). reality_contact ranks the gate by what it touches that is NOT the model: high = real env/device/data (risk-spike, validate-slice); medium = real code graph (drift-check); low = the model grading the model (critique, critique-review, code-review). findings_real/findings_noise (present where the gate triages its own findings — today critique, from the TRI-1 dispositions) make per-gate PRECISION computable. mode/tier are optional analysis context. Surfaced as the per-gate hit-rate line in /pulse.",
+    "_note": "Append-only per-gate outcome log (roadmap Theme 8 measurement spine). Two row kinds. VERDICT rows (default; ONE per GATE per slice, appended via gate_log.py | vault_edit append, SVW-1 locked) carry findings_count/_real/_noise → PRECISION. reality_contact ranks the gate by what it touches that is NOT the model: high = real env/device/data (risk-spike, validate-slice); medium = real code graph (drift-check); low = the model grading the model (critique, critique-review, code-review). RECALL rows (kind:\"miss\", emitted by /reflect Step 3b) record a real issue the owning gate SHOULD have caught but MISSED — surfaced in build/validate or post-ship; they carry severity + caught_by, NO verdict/findings_count. Per-gate recall = catches/(catches+misses), catches = Σ findings_real on that gate's verdict rows. Readers (/pulse, /critic-calibrate) MUST filter kind:\"miss\" OUT of the precision/raised math. mode/tier optional. Surfaced as the per-gate hit-rate line in /pulse.",
     "entries": [
       { "at": "<ts>", "slice": "slice-021", "gate": "risk-spike", "verdict": "go", "findings_count": 0, "reality_contact": "high" },
       { "at": "<ts>", "slice": "slice-021", "gate": "critique", "verdict": "needs-fixes", "findings_count": 4, "reality_contact": "low", "findings_real": 3, "findings_noise": 1, "mode": "standard", "tier": "medium" },
-      { "at": "<ts>", "slice": "slice-021", "gate": "validate-slice", "verdict": "pass", "findings_count": 0, "reality_contact": "high" }
+      { "at": "<ts>", "slice": "slice-021", "gate": "validate-slice", "verdict": "pass", "findings_count": 0, "reality_contact": "high" },
+      { "at": "<ts>", "slice": "slice-021", "gate": "critique", "kind": "miss", "reality_contact": "low", "severity": "major", "caught_by": "validate", "ref": "AC4 concurrent-writer race — design assumed single writer" },
+      { "at": "<ts>", "slice": "slice-017", "gate": "code-review", "kind": "miss", "reality_contact": "low", "severity": "blocker", "caught_by": "post-ship", "ref": "IDOR on GET /receipts/{id} — escaped to prod, fixed by slice-021 via /repro" }
     ]
   },
   "parallel-conflict-resolution-log": {
