@@ -124,6 +124,18 @@ Forced: <true | false>
 For each `must-verify` invariant, attack whether the borrowed pattern's precondition ACTUALLY holds here — a
 cross-domain transfer is a high-ceiling, high-variance move, and the design may have imported the pattern's
 surface without its preconditions. A clean transfer survives; an invariant-blind one is a finding.
+NOTE: if a post-synthesis design spike already ran, the cross_domain_transfer invariants will read `holds`/`fails`
+(not `must-verify`) and `tournament.decidable_disagreements` will carry spike verdicts — reality already
+adjudicated those; do NOT re-litigate a spike-settled question. Focus on what the spike could NOT decide.
+
+# Tournament provenance + EXPERT INDEPENDENCE (Phase 3.5; present only if design.json has a `tournament` block)
+<the design's `tournament` block, or "none">
+Designer C channeled these experts: <tournament.channeled_experts names, or "none">.
+You MUST reason as a DIFFERENT expert — you did not write this design; attack it. If your sharpest critique lens
+would BE one of the channeled experts, deliberately switch to a different authority: a Critic who shares the
+designer's expert shares the designer's blind spots, and stacked same-mind scrutiny launders errors into false
+confidence. Your expert lens is ONE voice among the 9 dimensions, NEVER a trump card. Attack the `taste_disagreements`
+the tournament left open (boundary placement, naming, layering) as legitimate design forks for the user to weigh.
 
 # project-frame
 <stdout of project_frame_synth, or "(project-frame unavailable)">
@@ -309,7 +321,7 @@ On BLOCKED: do NOT invoke any successor — HALT and surface instructions to the
 
 ## Pipeline position
 
-- predecessor: `/design-slice`
+- predecessor: `/design-slice` (or `/risk-spike --mode design` when a post-synthesis design spike ran — the spike already settled the empirically-decidable tournament disagreements; you attack the taste forks + the rest)
 - successor: `/slice-story` (the plain-language pre-build report; it then prompts `/build-slice`. The `/critique-review` meta-review runs IN-LOOP at Step 3.5, before triage)
 - auto-advance: true (CLEAN/NEEDS-FIXES only)
 - user-input gates (halt auto-advance):

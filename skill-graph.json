@@ -5,10 +5,10 @@
     "skills": 29,
     "skills_main_agent": 20,
     "skills_delegable": 9,
-    "named_agents_used": 7,
+    "named_agents_used": 10,
     "tools": 53,
     "file_nodes": 86,
-    "edges": 574,
+    "edges": 579,
     "md_to_json_targets": 48
   },
   "nodes": {
@@ -229,6 +229,15 @@
       },
       {
         "id": "critique-review"
+      },
+      {
+        "id": "designer-crossdomain"
+      },
+      {
+        "id": "designer-expert"
+      },
+      {
+        "id": "designer-practice"
       },
       {
         "id": "diagnose-narrator"
@@ -2311,6 +2320,21 @@
     },
     {
       "from": "design-slice",
+      "to": "designer-practice",
+      "type": "spawns"
+    },
+    {
+      "from": "design-slice",
+      "to": "designer-crossdomain",
+      "type": "spawns"
+    },
+    {
+      "from": "design-slice",
+      "to": "designer-expert",
+      "type": "spawns"
+    },
+    {
+      "from": "design-slice",
       "to": "project_frame_synth",
       "type": "uses_tool"
     },
@@ -2408,6 +2432,11 @@
       "from": "design-slice",
       "to": "<vault>/cost-estimation.json",
       "type": "updates"
+    },
+    {
+      "from": "design-slice",
+      "to": "risk-spike",
+      "type": "hands_off_to"
     },
     {
       "from": "design-slice",
@@ -4192,6 +4221,11 @@
     {
       "from": "risk-spike",
       "to": "design-slice",
+      "type": "hands_off_to"
+    },
+    {
+      "from": "risk-spike",
+      "to": "critique",
       "type": "hands_off_to"
     },
     {

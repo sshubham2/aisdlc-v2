@@ -11,7 +11,7 @@ MAN  = os.path.join(ROOT, ".build", "manifests")
 SKILLS_DIR = os.path.join(ROOT, "skills")
 GRAPH_OUT = os.path.join(ROOT, "skill-graph.json")
 
-VALID_AGENTS = {"critique","critic-calibrate","critique-review","diagnose-narrator","field-recon","code-review","slice-story"}
+VALID_AGENTS = {"critique","critic-calibrate","critique-review","diagnose-narrator","field-recon","code-review","slice-story","designer-practice","designer-crossdomain","designer-expert"}
 # v2 tool locations: shared scripts/lib/ (invoked $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/X.py")
 # + each skill's own scripts/ (single-skill, $PY "${CLAUDE_SKILL_DIR}/scripts/X.py"). Replaces the
 # v1 temp/tools/ location: a methodology tool is "found" iff it exists in the v2 tree.

@@ -49,5 +49,46 @@
       }
     ]
   },
+  "tournament": {
+    "_note": "Optional (Phase 3). Present only when the tier-gated multi-designer tournament ran (omit on low/mechanical single-flight slices). selected: core|partial|none. decidable_disagreements (verdict pending here) are adjudicated by the post-synthesis /risk-spike --mode design (reality fills go/no-go); taste_disagreements fall through to /critique + the user. channeled_experts feeds the /critique expert-independence guard (the Critic must be a DIFFERENT expert).",
+    "tier": "high",
+    "designers": [
+      "designer-practice",
+      "designer-crossdomain",
+      "designer-expert"
+    ],
+    "proposals": [
+      {
+        "designer": "designer-practice",
+        "approach": "managed pub/sub (Pusher/Ably) WebSocket presence channel",
+        "selected": "partial"
+      },
+      {
+        "designer": "designer-crossdomain",
+        "approach": "CRDT-style convergent replica over SSE — presence as an eventually-consistent set",
+        "selected": "core"
+      },
+      {
+        "designer": "designer-expert",
+        "approach": "channeled Kleppmann — CRDT presence with an explicit causal-order log",
+        "selected": "partial"
+      }
+    ],
+    "channeled_experts": [
+      "Martin Kleppmann"
+    ],
+    "selection_rationale": "SSE over managed pub/sub — CRG shows doc-view already holds an EventSource (CRG-fit); CRDT convergence is spike-able + reversible; dropped the causal-order log as YAGNI (simplest-that-works).",
+    "coherence_check": "all chosen pieces assume eventual consistency + server-assigned sequence ordering — no contradictory consistency model.",
+    "decidable_disagreements": [
+      {
+        "question": "can one SSE server fan out to the expected concurrent viewers, or is managed pub/sub required above N?",
+        "spike": "pending",
+        "verdict": "pending"
+      }
+    ],
+    "taste_disagreements": [
+      "presence set keyed by userId vs sessionId — boundary choice deferred to /critique + user"
+    ]
+  },
   "at": "<ts>"
 }

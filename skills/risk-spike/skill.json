@@ -4,7 +4,7 @@
   "requires_full_context": true,
   "runs_in": "main-agent",
   "context_rationale": "Interactive blocking gate: writes and runs throwaway proof code, needs credentials/device access, and on failure requires a human discussion of a risk-free fallback before re-spiking — depends on the live slice session.",
-  "summary": "First step of the slice loop (slice step-0 gate). Reads the picked candidate's blocking assumptions from candidates.json and proves each with throwaway code on real environments; spawns the field-recon subagent to survey current platform reality first. All assumptions proven -> advances to /design-slice; any FAILED -> marks the candidate blocked and halts the slice until a risk-free fallback is discussed and re-spiked. Records spike verdicts back into candidates.json and the risk ledger.",
+  "summary": "In-loop spike gate with TWO modes (the crown jewel is split, not diluted). FEASIBILITY (default, step-0, before /design-slice): reads the picked candidate's blocking assumptions from candidates.json and proves each with throwaway code on real environments; spawns the field-recon subagent to survey current platform reality first; all proven -> /design-slice, any FAILED -> candidate blocked until a fallback is re-spiked; verdicts recorded back into candidates.json + the risk ledger. DESIGN (--mode design, post-synthesis, after /design-slice's tournament): reads the synthesized design.json's pending decidable_disagreements + must-verify cross-domain invariants and lets REALITY adjudicate the tournament, writing verdicts back into design.json; all GO -> /critique, any NO-GO -> back to /design-slice to re-synthesize (the premise already passed feasibility).",
   "reads": [
     {
       "path": "<vault>/risk-register.json",
@@ -262,7 +262,8 @@
     }
   ],
   "hands_off_to": [
-    "design-slice"
+    "design-slice",
+    "critique"
   ],
   "source": "temp/skills/risk-spike/SKILL.md",
   "missing_references": [
