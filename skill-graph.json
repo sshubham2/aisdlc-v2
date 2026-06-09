@@ -6,10 +6,10 @@
     "skills_main_agent": 20,
     "skills_delegable": 9,
     "named_agents_used": 7,
-    "tools": 52,
-    "file_nodes": 85,
-    "edges": 556,
-    "md_to_json_targets": 47
+    "tools": 53,
+    "file_nodes": 86,
+    "edges": 574,
+    "md_to_json_targets": 48
   },
   "nodes": {
     "skills": [
@@ -363,6 +363,11 @@
       },
       {
         "id": "finding_dedup",
+        "type": "methodology-tool",
+        "found": true
+      },
+      {
+        "id": "gate_log",
         "type": "methodology-tool",
         "found": true
       },
@@ -790,6 +795,27 @@
           "pulse"
         ],
         "validated_by": [
+          "vault_edit"
+        ]
+      },
+      {
+        "id": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "v2_format": "json",
+        "created_by": [],
+        "edited_by": [
+          "code-review",
+          "critique",
+          "critique-review",
+          "drift-check",
+          "risk-spike",
+          "validate-slice"
+        ],
+        "read_by": [
+          "pulse"
+        ],
+        "validated_by": [
+          "gate_log",
           "vault_edit"
         ]
       },
@@ -2665,6 +2691,16 @@
     },
     {
       "from": "validate-slice",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "validate-slice",
+      "to": "vault_edit",
+      "type": "uses_tool"
+    },
+    {
+      "from": "validate-slice",
       "to": "Read",
       "type": "uses_harness"
     },
@@ -2725,6 +2761,11 @@
     },
     {
       "from": "validate-slice",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
+    },
+    {
+      "from": "validate-slice",
       "to": "reflect",
       "type": "hands_off_to"
     },
@@ -2741,6 +2782,16 @@
     {
       "from": "critique",
       "to": "triage_audit",
+      "type": "uses_tool"
+    },
+    {
+      "from": "critique",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "critique",
+      "to": "vault_edit",
       "type": "uses_tool"
     },
     {
@@ -2820,6 +2871,11 @@
     },
     {
       "from": "critique",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
+    },
+    {
+      "from": "critique",
       "to": "critique-review",
       "type": "hands_off_to"
     },
@@ -2841,6 +2897,16 @@
     {
       "from": "critique-review",
       "to": "critique_review_audit",
+      "type": "uses_tool"
+    },
+    {
+      "from": "critique-review",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "critique-review",
+      "to": "vault_edit",
       "type": "uses_tool"
     },
     {
@@ -2890,6 +2956,11 @@
     },
     {
       "from": "critique-review",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
+    },
+    {
+      "from": "critique-review",
       "to": "critique",
       "type": "hands_off_to"
     },
@@ -2897,6 +2968,16 @@
       "from": "code-review",
       "to": "code-review",
       "type": "spawns"
+    },
+    {
+      "from": "code-review",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "code-review",
+      "to": "vault_edit",
+      "type": "uses_tool"
     },
     {
       "from": "code-review",
@@ -2972,6 +3053,11 @@
       "from": "code-review",
       "to": "<vault>/slices/slice-NNN/reflection.json",
       "type": "reads"
+    },
+    {
+      "from": "code-review",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
     },
     {
       "from": "code-review",
@@ -3310,6 +3396,11 @@
     },
     {
       "from": "drift-check",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "drift-check",
       "to": "code-review-graph",
       "type": "uses_tool"
     },
@@ -3372,6 +3463,11 @@
       "from": "drift-check",
       "to": "<vault>/schemas/*.json",
       "type": "reads"
+    },
+    {
+      "from": "drift-check",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
     },
     {
       "from": "supersede-slice",
@@ -4010,6 +4106,16 @@
     },
     {
       "from": "risk-spike",
+      "to": "gate_log",
+      "type": "uses_tool"
+    },
+    {
+      "from": "risk-spike",
+      "to": "vault_edit",
+      "type": "uses_tool"
+    },
+    {
+      "from": "risk-spike",
       "to": "code-review-graph",
       "type": "uses_tool"
     },
@@ -4077,6 +4183,11 @@
       "from": "risk-spike",
       "to": "<vault>/candidates.json",
       "type": "updates"
+    },
+    {
+      "from": "risk-spike",
+      "to": "<vault>/gate-log.json",
+      "type": "appends"
     },
     {
       "from": "risk-spike",
@@ -4301,6 +4412,11 @@
     {
       "from": "pulse",
       "to": "<vault>/candidates.json",
+      "type": "reads"
+    },
+    {
+      "from": "pulse",
+      "to": "<vault>/gate-log.json",
       "type": "reads"
     },
     {

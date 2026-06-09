@@ -26,5 +26,28 @@
   ],
   "auth_model": "session cookie",
   "error_model": "SSE retry w/ backoff",
+  "cross_domain_transfer": {
+    "_note": "Optional (Phase 2.1). Present only when this design imports a pattern from another domain. Tier-gated: omit on low/mechanical slices. status per invariant: holds (reasoned true here) | must-verify (empirically decidable, not yet proven -> a /critique focus + re-spike candidate) | fails (precondition does not hold here -> that part of the analogy dropped).",
+    "source_domain": "distributed systems / lattice theory",
+    "pattern": "CRDT-style convergent replica: each client view is an eventually-consistent set of who-is-here",
+    "rationale": "Presence is a converging-replica problem, not a request/response one — importing CRDT convergence avoids a brittle hand-rolled sync.",
+    "invariants": [
+      {
+        "precondition": "join/leave updates are commutative + idempotent (order-independent)",
+        "status": "holds",
+        "evidence": "events carry a server-assigned sequence; replaying in any order converges"
+      },
+      {
+        "precondition": "one SSE server can fan out to the expected concurrent viewers",
+        "status": "must-verify",
+        "evidence": "spiked at R-27 — held to ~120 conns, fallback to managed pub/sub above that"
+      },
+      {
+        "precondition": "client clocks are synced within the staleness tolerance",
+        "status": "fails",
+        "evidence": "clients have no synced clock — dropped; use the server-assigned sequence instead of client timestamps"
+      }
+    ]
+  },
   "at": "<ts>"
 }

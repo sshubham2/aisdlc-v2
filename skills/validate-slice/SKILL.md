@@ -193,6 +193,7 @@ Write `<vault>/slices/slice-NNN-<name>/validation.json` (schema by example: `exa
   "_schema": "aisdlc/validation@1",
   "slice": "slice-NNN",
   "result": "pass|fail|partial",
+  "reality_contact": "high",
   "criteria": [
     {
       "id": "AC1",
@@ -218,13 +219,19 @@ Write `<vault>/slices/slice-NNN-<name>/validation.json` (schema by example: `exa
 Top-level `"result"` is computed as `"pass"` only when ALL criteria are `"pass"` AND all audits and
 shippability checks are green. Any criterion `"fail"` or `"partial"` → aggregate `"fail"` or `"partial"`.
 
+`reality_contact` is always `"high"` for this gate (Phase 1): validation runs against the **real** environment
+(real device / real user / real data), so a `pass` here is a **reality sign-off** — the strongest kind of
+green, categorically distinct from the model-approvals (`/critique`, `/code-review`) earlier in the loop. The
+gate-log row this skill writes (Step 9b) already carries `reality_contact: high`; say "reality-approved" — not
+just "passed" — when you summarize a clean result.
+
 ## Step 8 — update milestone.json
 
 Edit `<vault>/slices/slice-NNN-<name>/milestone.json` (schema by example: `examples/milestone.json`):
 - `stage: "validate"`
 - mark `validate` step `done: true`
 - `next_action`: `/reflect` (clean) or `fix regression then re-run /validate-slice` (blocked)
-- `current_focus`: validation summary (N/M ACs passed, shippability status)
+- `current_focus`: validation summary — on PASS, **reality-approved** (N/M ACs passed on the real env, shippability status); on FAIL/PARTIAL, what reality rejected
 - `updated_by: "validate-slice"`, `at: <ts>`
 
 ## Step 9 — append reality surprises to shared files (SVW-1)
@@ -245,6 +252,26 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
   --json '{"id":"SC-NNN","title":"...","status":"candidate","source":[{"type":"reality-surprise","ref":"R-NN"}],...}'
 ```
 
+## Step 9b — record gate outcome (measurement spine)
+
+One row per slice into `<vault>/gate-log.json` (roadmap Theme 8 / plan Phase 0). **Runs ALWAYS, even on a
+clean pass.** `validate-slice` is a **high** reality-contact gate (real device / real user / real data) —
+`gate_log.py` stamps that. Run in-fork (shared vault + `vault_edit` lock make it write-safe; this skill
+already appends to shared files in Step 9):
+
+```bash
+# verdict = aggregate result: pass|partial|fail; findings-count = number of FAIL + PARTIAL criteria
+# --cross-domain (Phase 2.3): set when this slice's design imported a cross-domain pattern — this reality
+# verdict is the PRIMARY signal for the cross-domain validity ratio (did reality confirm the borrowed pattern?).
+SLICE_DIR="$AI_SDLC_VAULT_ROOT/slices/<slice-NNN-name>"
+CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate validate-slice --slice <slice-NNN-name> \
+    --verdict <pass|partial|fail> --findings-count <N fail+partial> $CD \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
 ## Critical rules
 
 - USE REAL ENVIRONMENTS. No mocks or simulators when real is possible.
@@ -256,6 +283,9 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
 - Shared-aggregate vault files (risk-register.json, candidates.json) mutate ONLY via vault_edit append.
 - Heavy mode: produce compliance-grade records — reproducible commands, timestamped evidence, sign-off field,
   cross-reference to test-plan IDs.
+- **Reality spine (Phase 1.3).** HIGH reality-contact — a `pass` is **reality-approved** (real device / user /
+  data), the strongest kind of green and categorically above any model-approval. Mandatory at every tier; no
+  model-on-model gate (`/critique`, `/code-review`) can wave through a reality FAIL/PARTIAL.
 
 ## Pipeline position
 

@@ -23,6 +23,16 @@
         "name": "triage_audit",
         "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/triage_audit.py\" <vault>/slices/slice-NNN-<name>",
         "purpose": "Validates critique.md Triage section for required fields, valid verdict, complete disposition rows, and non-empty rationale on OVERRIDDEN/DEFERRED/ESCALATED"
+      },
+      {
+        "name": "gate_log",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --gate critique --slice slice-NNN --verdict <verdict> --findings-count <N> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "Emit + SVW-1-append one gate-outcome row to gate-log.json (measurement spine, roadmap Theme 8 / plan Phase 0)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "SVW-1 locked append of the gate-outcome row to gate-log.json (Phase 0)"
       }
     ],
     "external_tools": [],
@@ -179,6 +189,20 @@
         ],
         "format": "json",
         "purpose": "Specific archived reflections when semantic query or register points to a direct match"
+      },
+      {
+        "path": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append one gate-outcome row per slice (measurement spine, roadmap Theme 8 / plan Phase 0)"
       }
     ],
     "hands_off_to": [
@@ -211,6 +235,16 @@
         "name": "critique_review_audit",
         "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py\" <vault>/slices/slice-NNN-<name>",
         "purpose": "Validates critique-review.md structure: 4 required sections, dual-review verdict in {ACCEPT,ADJUST,EXTEND}, Reviewed-by and Date fields"
+      },
+      {
+        "name": "gate_log",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --gate critique-review --slice slice-NNN --verdict <verdict> --findings-count <N> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "Emit + SVW-1-append one gate-outcome row to gate-log.json (measurement spine, roadmap Theme 8 / plan Phase 0)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "SVW-1 locked append of the gate-outcome row to gate-log.json (Phase 0)"
       }
     ],
     "external_tools": [],
@@ -303,6 +337,20 @@
         ],
         "format": "json",
         "purpose": "Meta-Critic findings: VALID/SUSPICIOUS/SEVERITY-WRONG per finding plus missed findings"
+      },
+      {
+        "path": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append one gate-outcome row per slice (measurement spine, roadmap Theme 8 / plan Phase 0)"
       }
     ],
     "hands_off_to": [
@@ -324,7 +372,18 @@
         "purpose": "Adversarial code-Critic review of the slice diff along 9 dimensions with path:line specificity"
       }
     ],
-    "methodology_tools": [],
+    "methodology_tools": [
+      {
+        "name": "gate_log",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py\" --gate code-review --slice slice-NNN --verdict <verdict> --findings-count <N> | $PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "Emit + SVW-1-append one gate-outcome row to gate-log.json (measurement spine, roadmap Theme 8 / plan Phase 0)"
+      },
+      {
+        "name": "vault_edit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py\" append --file gate-log.json --array entries --stdin",
+        "purpose": "SVW-1 locked append of the gate-outcome row to gate-log.json (Phase 0)"
+      }
+    ],
     "external_tools": [],
     "local_scripts": [],
     "harness_tools": [
@@ -479,6 +538,20 @@
         ],
         "format": "json",
         "purpose": "Post-build artifact in scope for code-review diff per ADR-066 M5 INCLUDE direction"
+      },
+      {
+        "path": "<vault>/gate-log.json",
+        "kind": "content-file",
+        "access": "append",
+        "mechanism": "vault_edit-append",
+        "safety_marker": "<!-- route: scripts.lib.vault_edit append -->",
+        "modes": [
+          "minimal",
+          "standard",
+          "heavy"
+        ],
+        "format": "json",
+        "purpose": "Append one gate-outcome row per slice (measurement spine, roadmap Theme 8 / plan Phase 0)"
       }
     ],
     "hands_off_to": [

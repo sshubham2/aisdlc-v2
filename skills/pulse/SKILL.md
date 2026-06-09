@@ -1,6 +1,6 @@
 ---
 name: pulse
-description: "Scan the AI SDLC vault and produce a compact macro-state summary: active slice stage + next action, risk exposure, regression health, Critic calibration status, top lessons, candidate backlog snapshot, and recommended next action. Three modes: default (~60 lines), --brief (~20 lines), --full (~150 lines). Read-only — never modifies vault files."
+description: "Scan the AI SDLC vault and produce a compact macro-state summary: active slice stage + next action, risk exposure, regression health, Critic calibration status, per-gate hit-rate (measurement spine), top lessons, candidate backlog snapshot, and recommended next action. Three modes: default (~60 lines), --brief (~20 lines), --full (~150 lines). Read-only — never modifies vault files."
 when_to_use: "Trigger phrases: /pulse, 'where are we?', 'macro state', 'vault scan'. Use at session start, after time away, before major decisions, or when handing off. Replaces reading 5-6 vault files manually."
 argument-hint: "[--brief | --full]"
 context: fork
@@ -89,6 +89,7 @@ Read the following JSON files if not fully covered by the injections above (skip
 | `<vault>/critic-calibration-log.json` | last calibration date, slices since |
 | `<vault>/lessons-learned.json` | last 3-5 lessons |
 | `<vault>/drift-log.json` | unresolved drift count |
+| `<vault>/gate-log.json` | per-gate outcome log (Phase 0 measurement spine) — **read the file FULLY** here (do NOT rely on a truncated snapshot); aggregate per gate in Step 2 |
 | `<vault>/threat-model.json` · `requirements.json` · `non-functional.json` · `cost-estimation.json` · `diagrams.json` · `actors/` | **Heavy-mode upfront architecture** — presence-probed above (existence + counts, not full-read). Their existence = `/heavy-architect` has run; their absence in Heavy mode = it has not. |
 
 **Active slice:** Read `<vault>/slices/slice-NNN-<name>/milestone.json` first (primary source: `stage`, `next_action`, progress checkboxes, `on_resume`). If `stage` is `build` or later and `build-log.json` exists, read the last ~15 lines of its `events` array — the events trace is the durable record; compare its latest timestamp to `milestone.json.updated_at`. If events are newer, milestone is stale — flag it.
@@ -122,6 +123,40 @@ Do NOT read individual slice design/mission files (active slice excepted). Do NO
 - Count of `not-started` + `in-flight` candidates from `candidates.json`.
 - Top-priority candidate (highest `priority.score`, not blocked-on-spike).
 - Count of `blocked-on-spike` candidates.
+
+**Gate hit-rate (GATE-LOG — Phase 0 measurement spine):** From the FULL `<vault>/gate-log.json` `entries[]`
+(skip this whole metric if the file is absent or empty), group rows by `gate` and compute per gate:
+- `runs` = number of rows.
+- `raised` = rows with `findings_count > 0`; `raised_rate` = `raised / runs`.
+- `precision` = `Σ findings_real / (Σ findings_real + Σ findings_noise)` — ONLY when those fields are present
+  on the rows (today: `critique`). Omit `precision` entirely when no row carries them (do NOT show 0%).
+- `reality_contact` = the rows' `reality_contact` (constant per gate): `high` / `medium` / `low`.
+- `last` = the most-recent row's `verdict` (+ `slice`).
+Order the gates by `reality_contact` **high → medium → low** (reality-touching gates read first — Theme 2
+seed). Mark a gate `(quiet)` when `runs >= 5` AND `raised_rate == 0` — it has flagged nothing for many slices
+(a future lighten candidate, Phase 4/5). This is descriptive only — pulse changes nothing.
+
+**Reality-approved vs model-approved (active slice — Phase 1.2):** From the active slice's gate-log rows
+(filter on the **canonical** `slice == slice-NNN` — gate-log rows store the canonical id, NOT the
+`slice-NNN-<name>` folder name, so match on the `slice-NNN` prefix), split the gates that returned a
+**passing** verdict by what signed off:
+- **Reality-approved** — `reality_contact` in {high, medium} with a pass-class verdict (`go`/`conditional`,
+  `pass`, or drift `clean`): the spike / real-device validation / code-vs-claims check said yes against
+  something that is *not the model*.
+- **Model-approved** — `reality_contact == low` with a pass-class verdict (`clean`/`accept`, or code-review
+  `clean`): a review signed off, but reality has not.
+- **Pending reality** — reality gates (risk-spike, validate-slice) this slice has **not yet** recorded a pass
+  (e.g. `validate-slice` absent pre-build). Name them so it is clear reality has not signed off yet.
+Trust a green exactly as much as it touches something that is not the model — so a slice with only
+model-approvals is NOT the same as one reality has signed off on, even if every box is checked.
+
+**Cross-domain transfer validity ratio (Phase 2.3 — the number that decides the Phase 3 tournament):** From
+`gate-log.json` rows with `cross_domain == true`, restricted to **reality gates** (`reality_contact` in
+{high, medium}): `held` = rows with a pass-class verdict (`go`/`conditional`, `pass`); `total` = all such rows.
+Ratio = `held / total` — "when a design imported a borrowed pattern, how often did REALITY confirm its
+preconditions held?" (Part I §6's empirical measure of how much to trust the latent space). Report it WITH the
+sample size (`held/total`); it is a **soft, model-tagged signal** (a row is tagged only when the slice's design
+self-declared a transfer), so present it as directional evidence, not a hard metric. Omit when `total == 0`.
 
 **Recommended next action — override precedence (resolve HERE; pass resolved value to Step 3):**
 
@@ -222,6 +257,21 @@ The Haiku agent fills the template and returns the summary text. Main thread pri
 - Unresolved drift: <N>
 [Stranded branches: WARN per entry with halt: true]
 
+## Gate hit-rate (measurement spine)
+[From gate-log.json; OMIT this whole section if the file is absent/empty. One line per gate, ordered
+high → low reality-contact:]
+- <gate> [<reality_contact>]: <runs> runs · raised <raised>/<runs> (<raised_rate as %>)[· precision <p>%][ · quiet]
+- ...
+[If gate-log.json absent:] - not yet recorded — no gate has run since the measurement spine was added.
+
+[Active-slice sign-off (Phase 1.2) — from this slice's gate-log rows; omit if the slice has no rows yet:]
+- **Reality-approved**: <gates passed at high/med contact, e.g. `risk-spike (go)`>  | _none yet_
+- **Model-approved**: <gates passed at low contact, e.g. `critique (clean), code-review (clean)`>  | _none yet_
+- **Pending reality**: <reality gates not yet passed, e.g. `validate-slice (not run — pre-build)`>
+
+[Cross-domain transfer validity (Phase 2.3) — omit if no cross-domain slice has reached a reality gate yet:]
+- Cross-domain transfers confirmed by reality: <held>/<total> (<ratio %>) — soft signal; the number that decides whether the design tournament (Phase 3) is worth building.
+
 ## Top lessons (last 5)
 - <lesson>
 - ...
@@ -254,6 +304,7 @@ Balanced view plus:
 - Full shippability catalog listing
 - Critic calibration history (all past runs)
 - Stranded slice branches in detail (every `halt: true` entry with its class)
+- Full gate-log history: every row (gate · slice · verdict · findings_count · reality_contact), newest first
 
 ## Critical rules
 

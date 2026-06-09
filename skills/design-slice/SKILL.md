@@ -56,6 +56,36 @@ At this point `design.json` does not exist yet; the Impact section will be missi
 
 Use Trajectory to sanity-check design choices against the deliberate project direction. Carry tension into decisions.
 
+## Step 0.7 — cross-domain transfer + invariant check (medium/high/novel slices only)
+
+**Skip this step on low-tier / mechanical slices** (typo, config, rename, obvious CRUD) — forcing a cross-domain
+hunt on a trivial cut is noise. Run it when `risk_tier` is medium/high, or the slice is genuinely novel.
+
+The model's strongest capability is **cross-domain pattern transfer** — seeing that this slice's problem shares an
+*abstract structure* with a solved problem in a *different* domain, and importing that solution. Before settling on
+the obvious / most-blogged approach, generate diversely:
+
+1. **Transfer prompt.** Ask: *what problem in a DIFFERENT domain has the same abstract structure as this slice?*
+   (converging replicas ← CRDTs / lattice theory · flow control ← queueing theory · autoscaling ← control theory ·
+   rumor spread ← epidemiology · rate limiting ← token buckets.) If a borrowed pattern genuinely fits, name it and
+   why. If the obvious approach is clearly right, **skip — do NOT force an analogy** (a forced transfer is worse
+   than none). The **nearest prior slice + past reflections injected above** tell you if this was solved here
+   before — prefer consistency with that approach unless this slice has a concrete reason to diverge.
+2. **Invariant check (the load-bearing half).** Every analogy carries **preconditions** that make it valid — a CRDT
+   works ONLY because its operations commute / are associative / idempotent. The model recognizes the *surface* of
+   an analogy far better than whether its *preconditions hold here*; that gap is where a seductive-but-wrong
+   transfer hides. So for the borrowed pattern, list its invariants and classify each:
+   - **holds** — reasoned to be true in this domain (state *why*).
+   - **must-verify** — empirically decidable and not yet proven → record it as a **`/critique` focus** (the expert
+     critic checks "do the preconditions hold here?"), and if it is high-stakes + decidable, re-spike it now via
+     `/risk-spike <assumption>` before continuing. Do NOT silently assume it.
+   - **fails** — the precondition does NOT hold here → drop that part of the analogy and say what you use instead.
+3. **Record it** in `design.json.cross_domain_transfer` (Step 4 schema). If no transfer applies, omit the field.
+
+This is **generate diversely, then check the invariants** — the cheap seed of the design tournament (roadmap
+Theme 1). It raises the ceiling (a borrowed pattern can be the jackpot) while the invariant check + the downstream
+reality gates keep the floor (an invariant-blind transfer is caught against reality, never shipped on trust).
+
 ## Step 1 — identify what's new for this slice
 
 Compare mission-brief.json to existing vault + code-graph output. List only what this slice introduces:
@@ -114,6 +144,10 @@ Key fields to populate:
 - `wiring_matrix` — see WIRE-1 below
 - `adrs` — list of ADR ids locked by this slice
 - `auth_model`, `error_model` — authorization approach and new error codes introduced
+- `cross_domain_transfer` — **only if Step 0.7 produced one** (medium/high/novel slices): `source_domain`,
+  `pattern`, `rationale`, and `invariants[]` (each `{precondition, status: holds|must-verify|fails, evidence}`).
+  Omit the field entirely when this slice imports no cross-domain pattern. The `must-verify` invariants are what
+  `/critique` and the downstream reality gates check — they are the seed of the Phase 2.3 validity measurement.
 - `at` — ISO-8601 timestamp
 
 **Thin vault discipline** — reference code locations, do not duplicate them. Request/response schemas live in code

@@ -155,6 +155,25 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --vault "$AI_SD
 - Present `AskUserQuestion`: "Assumption <A-id> failed. What fallback should we try? Options: (a) propose an alternative approach and re-spike, (b) deprioritize this candidate and pick a different one via /slice."
 - On fallback selected: record `fallback` in candidates.json, await re-spike or `/slice`.
 
+## Step 6b — record gate outcome (measurement spine)
+
+One row per slice into `<vault>/gate-log.json` (roadmap Theme 8 / plan Phase 0). `risk-spike` is a
+**high** reality-contact gate (throwaway code on the real environment) — `gate_log.py` stamps that:
+
+```bash
+# verdict: go = all proven · no-go = any FAILED · conditional = any CONDITIONAL with none failed
+# findings-count: number of assumptions that came back NO-GO (FAILED)
+# --cross-domain (Phase 2.3): set ONLY when re-spiking a cross-domain-transfer invariant — i.e. design.json
+# already exists and carries a cross_domain_transfer (absent on the normal step-0 spike, before any design).
+SLICE_DIR="$AI_SDLC_VAULT_ROOT/slices/<slice-NNN-name>"
+CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate risk-spike --slice <slice-NNN-name> \
+    --verdict <go|no-go|conditional> --findings-count <N failed> $CD \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
 ## Critical rules
 
 - **NEVER fabricate spike results.** If you can't run it, say so and stop.
@@ -164,6 +183,10 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --vault "$AI_SD
 - **OAuth / cross-account scopes**: test with TWO different accounts on the actual scope. Most failures appear only in the second account.
 - **Payment gateways**: use real sandbox, not mocked.
 - **Push notifications**: test actual delivery, not mock dispatch.
+- **Reality spine (Phase 1.3).** This is a HIGH reality-contact gate — it proves assumptions with throwaway code
+  on the real environment, so it can say a hard *no*. It is **mandatory at every tier** (it never gets lightened
+  for low-tier slices), and no model-on-model gate (`/critique`, `/code-review`) may override a NO-GO here.
+  Reality > code-graph > model-critic.
 
 ## Pipeline position
 

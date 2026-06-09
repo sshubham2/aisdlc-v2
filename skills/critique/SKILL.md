@@ -119,6 +119,12 @@ Forced: <true | false>
 # design.json
 <full JSON contents>
 
+# Cross-domain transfer — invariants to attack (Phase 2.1; present only if design.json has cross_domain_transfer)
+<the design's cross_domain_transfer block, or "none">
+For each `must-verify` invariant, attack whether the borrowed pattern's precondition ACTUALLY holds here — a
+cross-domain transfer is a high-ceiling, high-variance move, and the design may have imported the pattern's
+surface without its preconditions. A clean transfer survives; an invariant-blind one is a finding.
+
 # project-frame
 <stdout of project_frame_synth, or "(project-frame unavailable)">
 
@@ -235,6 +241,31 @@ correct, re-run. Do NOT bypass.
 NFR-1 carry-over: slices with `mission-brief.json` mtime before 2026-05-06 are exempt
 (`carry_over_exempt: true`; audit returns zero violations).
 
+### Record the gate outcome (measurement spine — Phase 0.1 + 0.2)
+
+After the triage is ratified, append one row for the **first Critic** to `<vault>/gate-log.json`. The TRI-1
+dispositions make per-gate **precision** computable (Phase 0.2): derive from the ratified dispositions —
+
+- `findings-count` = total first-Critic findings
+- `findings-real` = dispositions in {`accepted-fixed`, `accepted-pending`, `deferred`, `escalated`} — a real
+  issue, even if deferred or blocking
+- `findings-noise` = dispositions in {`overridden`} — the user judged it NOT a real issue (a false positive)
+
+`critique` is a **low** reality-contact gate (the model grading the model); `gate_log.py` stamps that.
+
+```bash
+# mode from triage.json; tier = slice risk_tier from mission-brief.json
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate critique --slice <slice-NNN-name> \
+    --verdict <clean|needs-fixes|blocked> --findings-count <N> \
+    --findings-real <R> --findings-noise <noise> \
+    --mode <minimal|standard|heavy> --tier <low|medium|high> \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
+(The `/critique-review` meta-Critic logs its OWN row when it runs at Step 3.5 — this row is the first Critic's.)
+
 ## Step 5 — gate decision + milestone update
 
 After verdict:
@@ -271,6 +302,10 @@ On BLOCKED: do NOT invoke any successor — HALT and surface instructions to the
 - Do NOT bypass the TRI-1 gate (Step 4.5) — even in auto-advance mode.
 - TRACK Critic accuracy in `/reflect`. Every 10–20 slices, run `/critic-calibrate`.
 - "No issues found" on 3+ slices in a row is a smell — re-read more aggressively or escalate.
+- **Model-on-model gate (Phase 1.3).** This is LOW reality-contact — the model grading the model. It is advisory
+  and lighter on low-tier slices (see Mode/tier gating: skippable on Standard-low / Minimal-low with no mandatory
+  triggers) and NEVER overrides a reality gate (`/risk-spike`, `/validate-slice`). A clean critique is a
+  model-approval, not a reality sign-off — trust it less than a spike.
 
 ## Pipeline position
 

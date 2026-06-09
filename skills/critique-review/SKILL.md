@@ -102,6 +102,20 @@ Write `<vault>/slices/slice-NNN-<name>/critique-review.json`
 Update `<vault>/slices/slice-NNN-<name>/milestone.json`: `stage: "critique-review"`,
 `next_action: "/critique Step 4.5 TRI-1"`.
 
+### Step 5b — record gate outcome (measurement spine)
+
+One row per slice into `<vault>/gate-log.json` (roadmap Theme 8 / plan Phase 0). The meta-Critic is a
+**low** reality-contact gate (the model grading the model); `gate_log.py` stamps that:
+
+```bash
+# verdict = accept|adjust|extend; findings-count = number of missed[] findings (issues the meta-Critic surfaced)
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate critique-review --slice <slice-NNN-name> \
+    --verdict <accept|adjust|extend> --findings-count <len(missed[])> \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
 ## Return
 
 Return a 3-line summary:
@@ -121,6 +135,9 @@ The full review lives in `critique-review.json`.
 - **No generic missed findings.** "The first Critic could be more thorough" is not a missed finding.
   Link to a specific design section or AC or drop it.
 - **Project frame is advisory.** An unavailable project frame does not block this step.
+- **Model-on-model gate (Phase 1.3).** LOW reality-contact — a model reviewing a model's review. Advisory, and
+  optional on low-tier slices (see the Step 1 prerequisite). Never overrides a reality gate (`/risk-spike`,
+  `/validate-slice`); it sharpens the first Critic, it does not sign off against reality.
 
 ## Pipeline position
 

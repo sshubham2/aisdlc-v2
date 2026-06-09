@@ -55,10 +55,27 @@ stop. Read any `NEW-UNTRACKED:` files from `"$wt/<path>"` for review (new files 
    and INFERRED edges the new code depends on.
 4. Write `<vault>/slices/slice-NNN-<name>/code-review.json` (schema by example: `examples/code-review.json`).
 5. Update `<vault>/slices/slice-NNN-<name>/milestone.json`: `stage: "code-review"`.
+6. **Record the gate outcome** — one row per slice into `<vault>/gate-log.json` (measurement spine, roadmap
+   Theme 8 / plan Phase 0). `code-review` is a **low** reality-contact gate (the model grading a diff);
+   `gate_log.py` stamps that. Run this in-fork (the shared vault + `vault_edit` lock make it write-safe):
+
+```bash
+# verdict: no-code-changes | clean (0 findings) | findings (>=1); findings-count = blocker+major+minor
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate code-review --slice <slice-NNN-name> \
+    --verdict <no-code-changes|clean|findings> --findings-count <N> \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
 
 ## Return
 A 2-line summary to the main thread: `Result` + blocker/major/minor counts. The full review lives in
 `code-review.json`. Findings are **advisory in v1** (they do not block `/validate-slice`).
+
+**Model-on-model gate (Phase 1.3).** This is LOW reality-contact — the model grading a diff (the CRG cross-check
+reads real code, but the verdict is still the model's judgment). It is advisory by design; the gate that can
+actually say *no* against reality is `/validate-slice` (real device/data). Never present a clean code-review as
+a reality sign-off, and never let it override a reality gate.
 
 ## Pipeline position
 - predecessor: `/build-slice` · successor: `/validate-slice` · auto-advance: true

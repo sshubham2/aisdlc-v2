@@ -109,6 +109,20 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/build_entry.py" \
 omits empty fields. (Prefer `build_entry.py … --out <file>` + `vault_edit append
 --content-file <file>` if you want a temp file instead of the pipe.)
 
+**Record the gate outcome (measurement spine — one row per slice, roadmap Theme 8 / plan Phase 0).**
+Full mode ONLY — `--fast` writes nothing (stdout-only, no side effects; do NOT log there). Skip when run
+standalone with no active slice (a slice-less audit has no per-slice precision to record). `drift-check`
+is a **medium** reality-contact gate (claims vs real code); `gate_log.py` stamps that:
+
+```bash
+# verdict: clean | drift (any BLOCKER) | warn (warns only); findings-count = drift + unspecified-code + stale-claim
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate drift-check --slice slice-NNN \
+    --verdict <clean|drift|warn> --findings-count <N> \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
 Print a 2-line summary: finding counts + whether the audit is clean.
 
 ### `--resolve` mode (interactive)

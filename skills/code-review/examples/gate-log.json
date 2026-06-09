@@ -1,0 +1,34 @@
+{
+  "_schema": "aisdlc/gate-log@1",
+  "_note": "Append-only per-gate outcome log (roadmap Theme 8 / plan Phase 0 — the measurement spine). ONE row per GATE per slice, appended via gate_log.py | vault_edit append (SVW-1 locked). reality_contact ranks the gate by what it touches that is NOT the model: high = real env/device/data (risk-spike, validate-slice); medium = real code graph (drift-check); low = the model grading the model (critique, critique-review, code-review). findings_real/findings_noise (present where the gate triages its own findings — today critique, from the TRI-1 dispositions) make per-gate PRECISION computable. mode/tier are optional analysis context. Surfaced as the per-gate hit-rate line in /pulse.",
+  "entries": [
+    {
+      "at": "<ts>",
+      "slice": "slice-021",
+      "gate": "risk-spike",
+      "verdict": "go",
+      "findings_count": 0,
+      "reality_contact": "high"
+    },
+    {
+      "at": "<ts>",
+      "slice": "slice-021",
+      "gate": "critique",
+      "verdict": "needs-fixes",
+      "findings_count": 4,
+      "reality_contact": "low",
+      "findings_real": 3,
+      "findings_noise": 1,
+      "mode": "standard",
+      "tier": "medium"
+    },
+    {
+      "at": "<ts>",
+      "slice": "slice-021",
+      "gate": "validate-slice",
+      "verdict": "pass",
+      "findings_count": 0,
+      "reality_contact": "high"
+    }
+  ]
+}
