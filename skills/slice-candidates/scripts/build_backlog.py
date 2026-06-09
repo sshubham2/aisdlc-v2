@@ -4,10 +4,15 @@ Single-skill tool for `/slice-candidates`. Reads an owner-annotated `diagnosis.h
 (the embedded `<script id="diagnose-data">` JSON; falls back to `findings/*.yaml`),
 keeps only `confirmed == "yes"` findings, couples them (shared evidence files +
 best-effort code-review-graph blast-radius), groups coupled findings into
-"must-do-together" clusters, orders by priority, and **atomically appends** one
+"must-do-together" clusters, applies the **thickness heuristic** (a coupled cluster
+whose members are each thin — small effort, non-large blast — is over-sliced; flag it
+for MERGE, roadmap Theme 4), orders by priority, and **atomically appends** one
 candidate per confirmed finding to `<vault>/candidates.json` via the SVW-1 locked
 read-modify-write (`_vault_write.safe_mutate_text`) — assigning `SC-NNN` ids and
 de-duplicating against findings already turned into candidates, all inside the lock.
+The thickness flag is ADVISORY (rationale note + a `merge_recommendations` summary
+field); candidates are never auto-consolidated — Hard Rule #5 keeps one finding → one
+candidate and the DAG intact.
 
 v2 changes from v1 (`temp/skills/slice-candidates/build_backlog.py`):
   - OUTPUT is `<vault>/candidates.json` (JSON candidate objects), NOT `backlog.md`.
@@ -186,6 +191,15 @@ def _effort(f: dict) -> str:
     return str(f.get("effort_estimate") or "medium").strip().lower()
 
 
+def _is_thin(proto: dict) -> bool:
+    """A cut so small that slicing it OUT as its own slice costs more overhead (context
+    rebuild + separate critique/review/validate) than the reliability it buys: small effort
+    AND not a large blast radius (roadmap Theme 4 thickness heuristic — "as small as possible
+    is a bug"). A large-blast cut is never "thin" however small the diff — wide impact earns
+    its own careful slice."""
+    return proto["effort"] == "small" and proto["blast"] != "large"
+
+
 # ── batch build ──────────────────────────────────────────────────────────────────
 
 def _relnorm(p: str) -> str:
@@ -315,12 +329,23 @@ def _blast_area(evidence: list[str]) -> str:
     return ", ".join(dirs[:4]) if dirs else "(isolated)"
 
 
-def _candidate_from(proto: dict, sc_id: str, mate_ids: list[str], ts: str) -> dict:
+def _candidate_from(proto: dict, sc_id: str, mate_ids: list[str], ts: str,
+                    merge_group: bool = False, group_size: int = 1) -> dict:
     f = proto["finding"]
     sev, blast, effort = proto["sev"], proto["blast"], proto["effort"]
     note = ""
     if mate_ids:
         note = f" Must do together with {', '.join(mate_ids)} (coupled via shared/adjacent code)."
+        if merge_group:
+            # thickness heuristic (Theme 4): all members of this coupled cluster are thin
+            if group_size >= 4:
+                note += (f" THIN+COUPLED: all {group_size} are small-effort coupled cuts - over-sliced; "
+                         f"consider GROUPING into fewer slices ({group_size}x the context-rebuild + "
+                         f"critique/review/validate overhead for one shared code seam).")
+            else:
+                note += (f" THIN+COUPLED: all {group_size} are small-effort coupled cuts - consider MERGING "
+                         f"into one slice rather than {group_size} (slicing this thin pays {group_size}x the "
+                         f"context-rebuild + critique/review/validate overhead for a shared code seam).")
     desc = (f.get("suggested_action") or f.get("description") or proto["title"]).strip()
     return {
         "id": sc_id,
@@ -391,6 +416,15 @@ def cmd_build(args: argparse.Namespace) -> int:
     ordered_idx = [i for cl in clusters for i in cl]
     cluster_of = {i: cl for cl in clusters for i in cl}
 
+    # Thickness heuristic (roadmap Theme 4): a COUPLED cluster whose members are EACH thin
+    # (small effort, non-large blast) is over-sliced — N separate slices pay N× the
+    # context-rebuild + critique/review/validate overhead for one shared code seam. Flag such
+    # clusters for MERGE. Advisory ONLY: we never auto-consolidate (Hard Rule #5 keeps
+    # one-finding→one-candidate + the DAG intact); the recommendation rides in the candidate
+    # rationale + the stdout summary for the user to act on at /slice time.
+    merge_groups = [cl for cl in clusters if len(cl) >= 2 and all(_is_thin(protos[i]) for i in cl)]
+    merge_idx = {i for cl in merge_groups for i in cl}
+
     project = args.project or diagnose_out.parent.name
     # archive refs/max read OUTSIDE the lock (archive is low-churn, read-only here)
     archive_refs, archive_max = _archive_scan(_root(args.vault))
@@ -442,7 +476,9 @@ def cmd_build(args: argparse.Namespace) -> int:
             mates = [fid_to_sc.get(protos[j]["finding_id"])
                      for j in cluster_of[i] if j != i and protos[j]["finding_id"] in fid_to_sc]
             mates = [m for m in mates if m]
-            new_cands.append(_candidate_from(protos[i], assigned[i], mates, ts))
+            new_cands.append(_candidate_from(protos[i], assigned[i], mates, ts,
+                                             merge_group=(i in merge_idx),
+                                             group_size=len(cluster_of[i])))
 
         cands.extend(new_cands)
         data["updated"] = ts
@@ -455,6 +491,17 @@ def cmd_build(args: argparse.Namespace) -> int:
             sorted(fid_to_sc.get(protos[j]["finding_id"]) for j in cl
                    if fid_to_sc.get(protos[j]["finding_id"]))
             for cl in clusters if len(cl) > 1
+        ]
+        # thickness heuristic (Theme 4): coupled clusters that are entirely thin → merge recs.
+        # ids span new ∪ existing cluster mates (the recommendation is about the group, not
+        # just the rows this run appended).
+        result["merge_recommendations"] = [
+            {"ids": ids, "size": len(ids),
+             "action": "group" if len(ids) >= 4 else "merge"}
+            for cl in merge_groups
+            for ids in [sorted(fid_to_sc.get(protos[j]["finding_id"]) for j in cl
+                               if fid_to_sc.get(protos[j]["finding_id"]))]
+            if len(ids) >= 2
         ]
         result["order"] = [assigned[i] for i in ordered_idx if i in assigned]
         result["top"] = ({"id": new_cands[0]["id"], "title": new_cands[0]["title"],
@@ -479,6 +526,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         "appended_ids": result["appended"],
         "skipped_existing": result["skipped"],
         "clusters": result["clusters"],
+        "merge_recommendations": result["merge_recommendations"],
         "crg": crg_state["mode"],
         "order": result["order"],
         "top": result["top"],
