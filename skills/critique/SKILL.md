@@ -302,9 +302,6 @@ Audit refusal codes: `no-section`, `missing-field`, `invalid-verdict`, `missing-
 `invalid-disposition`, `missing-rationale`, `verdict-mismatch`. On any violation: surface to user,
 correct, re-run. Do NOT bypass.
 
-NFR-1 carry-over: slices with `mission-brief.json` mtime before 2026-05-06 are exempt
-(`carry_over_exempt: true`; audit returns zero violations).
-
 ### Record the gate outcome (measurement spine — Phase 0.1 + 0.2)
 
 After the triage is ratified, append one row for the **first Critic** to `<vault>/gate-log.json`. The TRI-1

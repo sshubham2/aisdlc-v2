@@ -47,8 +47,8 @@ BCSG-1 strict gate (ADR-072): under `--strict`, each applicable Critical rule
 whose id is NOT in `--ack-critical` becomes an `unacknowledged-critical`
 violation, so the exit code (`1 if violations else 0`) gates the slice.
 
-NFR-1 carry-over: slices whose mission-brief.json mtime predates the rule's
-release date (_BC_1_RELEASE_DATE) are exempt automatically.
+NFR-1 mtime carry-over was REMOVED (3.9 — it was dead for every post-install user).
+`--no-carry-over` is still accepted as a no-op for CLI compatibility.
 
 Usage:
     python build_checks_audit.py --slice <slice-folder> [options]
@@ -83,9 +83,6 @@ from typing import Any
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
 
-# Date this rule shipped. Slices with mission-brief.json mtime BEFORE this date
-# are carry-over exempt automatically. NFR-1 pattern.
-_BC_1_RELEASE_DATE: date = date(2026, 5, 6)
 
 # Required fields per rule
 _REQUIRED_FIELDS: frozenset[str] = frozenset({"id", "severity", "rule"})
@@ -163,15 +160,6 @@ class AuditResult:
                 ),
             },
         }
-
-
-def _slice_is_carry_over(slice_folder: Path) -> bool:
-    """True if the slice was authored before BC-1 (mtime carry-over)."""
-    brief = slice_folder / "mission-brief.json"
-    if not brief.exists():
-        return False
-    mtime_date = datetime.fromtimestamp(brief.stat().st_mtime).date()
-    return mtime_date < _BC_1_RELEASE_DATE
 
 
 def _matches_glob(path: str, pattern: str) -> bool:
@@ -472,10 +460,6 @@ def audit_slice(
     result = AuditResult()
     changed_files = changed_files or []
 
-    if skip_if_carry_over and _slice_is_carry_over(slice_folder):
-        result.carry_over_exempt = True
-        return result
-
     slice_text = _read_slice_text(slice_folder)
 
     if project_checks is None:
@@ -512,7 +496,6 @@ def audit_slice(
 
     # BCSG-1 (ADR-072): under --strict, an applicable Critical rule that is NOT
     # acknowledged via --ack-critical becomes a violation (gate-failure exit 1).
-    # Unreachable on carry-over-exempt slices (early-returned above).
     if strict:
         acked = set(ack_critical)
         for r in result.applicable:

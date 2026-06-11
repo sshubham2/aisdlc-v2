@@ -29,8 +29,8 @@ each `assessments[].finding` should reference a finding id that exists in
 `critique.json.findings[]` (a dangling assessment is a `dangling-assessment`
 violation).
 
-NFR-1 carry-over: slices whose mission-brief.json mtime predates
-`_DR_1_RELEASE_DATE` are exempt automatically.
+NFR-1 mtime carry-over was REMOVED (3.9 — it was dead for every post-install user).
+`--no-carry-over` is still accepted as a no-op for CLI compatibility.
 
 v2 shape (schema by example `skills/critique-review/examples/critique-review.json`):
 
@@ -51,7 +51,7 @@ Usage:
     python critique_review_audit.py --no-carry-over <slice-folder>
 
 Exit codes:
-    0  clean (or carry-over exempt)
+    0  clean
     1  violations
     2  usage error
 """
@@ -71,9 +71,6 @@ from datetime import date, datetime
 from pathlib import Path
 
 from scripts.lib import _stdout
-
-# Date this rule shipped. NFR-1 carry-over.
-_DR_1_RELEASE_DATE: date = date(2026, 5, 6)
 
 # Required structural fields. `assessments`/`missed` are validated as arrays.
 _REQUIRED_FIELDS: tuple[str, ...] = (
@@ -129,15 +126,6 @@ class AuditResult:
         }
 
 
-def _slice_is_carry_over(slice_folder: Path) -> bool:
-    """True if the slice was authored before DR-1 (mtime carry-over)."""
-    brief = slice_folder / "mission-brief.json"
-    if not brief.exists():
-        return False
-    mtime_date = datetime.fromtimestamp(brief.stat().st_mtime).date()
-    return mtime_date < _DR_1_RELEASE_DATE
-
-
 def _load_critique_finding_ids(slice_folder: Path) -> set[str] | None:
     """Finding ids declared in the sibling critique.json, or None if absent/unreadable.
 
@@ -175,10 +163,6 @@ def audit_review_file(
             path=str(review_path), kind="no-file", severity="Important",
             message=f"critique-review.json not found: {review_path}",
         ))
-        return result
-
-    if skip_if_carry_over and _slice_is_carry_over(review_path.parent):
-        result.carry_over_exempt = True
         return result
 
     try:

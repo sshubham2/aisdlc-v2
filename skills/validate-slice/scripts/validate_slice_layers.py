@@ -18,11 +18,11 @@ Layer B — Dependency hallucination check (Python)
 
 Per VAL-1.
 
-**v2 change from v1.** The carry-over (NFR-1) mtime check reads
-`mission-brief.json` (v1: `mission-brief.md`); the secrets-allowlist default
-routes through the EXTERNAL `VAULT_ROOT` (`<vault>/.secrets-allowlist`). Layer
-logic, secret patterns, import resolution, exit codes, and CLI are otherwise
-preserved verbatim.
+**v2 change from v1.** The NFR-1 mtime carry-over exemption is REMOVED (3.9 — it was
+dead for every post-install user; `--no-carry-over` is accepted as a no-op for CLI
+compat). The secrets-allowlist default routes through the EXTERNAL `VAULT_ROOT`
+(`<vault>/.secrets-allowlist`). Layer logic, secret patterns, import resolution, exit
+codes, and CLI are otherwise preserved verbatim.
 
 Usage:
     python validate_slice_layers.py --slice <slice-folder> --changed-files <files...>
@@ -31,7 +31,7 @@ Usage:
     python validate_slice_layers.py --slice <slice-folder> --changed-files <files...> --imports-allowlist tests
 
 Exit codes:
-    0  clean (or carry-over exempt; or no changed files)
+    0  clean (or no changed files)
     1  findings (Critical or Important)
     2  usage error
 """
@@ -59,9 +59,6 @@ try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore
-
-# Date this rule shipped. NFR-1 carry-over.
-_VAL_1_RELEASE_DATE: date = date(2026, 5, 6)
 
 # Standard library module names — frozenset(stdlib) in Python 3.10+.
 _STDLIB: frozenset[str] = getattr(_sys_module, "stdlib_module_names", frozenset())
@@ -167,14 +164,6 @@ class LayersResult:
                 ),
             },
         }
-
-
-def _slice_is_carry_over(slice_folder: Path) -> bool:
-    brief = slice_folder / "mission-brief.json"
-    if not brief.exists():
-        return False
-    mtime_date = datetime.fromtimestamp(brief.stat().st_mtime).date()
-    return mtime_date < _VAL_1_RELEASE_DATE
 
 
 def _read_allowlist(path: Path | None) -> list[re.Pattern[str]]:
@@ -411,10 +400,6 @@ def run_layers(
     silently skipped (the CLI is the strict boundary that rejects empties).
     """
     result = LayersResult()
-
-    if skip_if_carry_over and _slice_is_carry_over(slice_folder):
-        result.carry_over_exempt = True
-        return result
 
     if not skip_secrets:
         allowlist = _read_allowlist(secrets_allowlist)

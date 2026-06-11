@@ -24,9 +24,10 @@ unaffected. ETC-1 is opt-in per slice.
 line); the 5-column markdown table `# | Mission | Timebox | Status | Findings`
 becomes the `exploratory_charters[]` array of objects. Statuses are lowercase
 JSON tokens (`pending` / `in-progress` / `completed` / `deferred`) rather than
-UPPER markdown cells. The NFR-1 carry-over mtime exemption now keys on
-`mission-brief.json`. Audit semantics, violation kinds, exit codes, and
-`--strict-pre-finish` are otherwise preserved.
+UPPER markdown cells. The NFR-1 mtime carry-over exemption is REMOVED (3.9 — it was
+dead for every post-install user; `--no-carry-over` is accepted as a no-op for CLI
+compat). Audit semantics, violation kinds, exit codes, and `--strict-pre-finish` are
+otherwise preserved.
 
 v2 brief shape (the relevant fields of `mission-brief.json`):
 
@@ -46,7 +47,7 @@ Usage:
     python exploratory_charter_audit.py <slice-folder> --no-carry-over
 
 Exit codes:
-    0  clean (or default-off / carry-over exempt)
+    0  clean (or default-off)
     1  violations
     2  usage error
 """
@@ -65,9 +66,6 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from scripts.lib import _stdout
-
-# Date this rule shipped. NFR-1 carry-over.
-_ETC_1_RELEASE_DATE: date = date(2026, 5, 6)
 
 # Allowed statuses (lowercase JSON tokens; v1 markdown cells were UPPER).
 _ALLOWED_STATUSES: frozenset[str] = frozenset({
@@ -134,13 +132,6 @@ class AuditResult:
         }
 
 
-def _slice_is_carry_over(brief_path: Path) -> bool:
-    if not brief_path.exists():
-        return False
-    mtime_date = datetime.fromtimestamp(brief_path.stat().st_mtime).date()
-    return mtime_date < _ETC_1_RELEASE_DATE
-
-
 def _cell_is_empty(cell: str) -> bool:
     return cell.strip().lower() in _EMPTY_SENTINELS
 
@@ -154,10 +145,6 @@ def audit_brief_file(
     result = AuditResult()
 
     if not brief_path.exists():
-        return result
-
-    if skip_if_carry_over and _slice_is_carry_over(brief_path):
-        result.carry_over_exempt = True
         return result
 
     try:
