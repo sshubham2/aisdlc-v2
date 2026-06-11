@@ -33,7 +33,7 @@ absolute-path idea: `$PY "${CLAUDE_SKILL_DIR}/scripts/<x>.py"` + a `parents[3]` 
 | `pulse_worktree_resolver` | pulse | worktree state classification |
 | `build_checks_integrity` | build-slice, reflect | BC-1 canonical-fixture integrity |
 | `cross_spec_parity_audit` | sync, drift-check | CSP-1 Heavy parity |
-| `skill_vault_write_safety_audit` | build-slice, validate-slice | SVW-1 enforcement |
+| `skill_vault_write_safety_audit` | CI only (`.build/plugin_self_audits.py`) | SVW-1 **advisory** raw-write tripwire over SKILL.md/agents prose (3.11 shrank 733→~150 lines + demoted from the per-slice gate; was build-slice/validate-slice) |
 | `vault_flip_prose_inventory` | build-slice, validate-slice | vault op-gate |
 | forward-sync gates (`methodology_changelog_forward_sync`, `ai_sdlc_version_forward_sync`, `ai_sdlc_tools_version_forward_sync`) | build-slice, reflect | installed==repo parity |
 | `finding_dedup` | diagnose, bug-hunt | cross-pass / cross-finder finding de-dup — merge same-location findings into one `F-MRG-*` (category-independent). The single dedup seam for both forensic skills. |

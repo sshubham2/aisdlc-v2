@@ -198,11 +198,10 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_path_audit.py" <vault>/shippabilit
 ```
 Non-zero → STOP: report the phantom test-file citation (the repro test must live in `$wt/tests/bugs/`) and fix it.
 
-**SVW-1** — verifies no SKILL.md prescribes an unrouted mutation of a shared-aggregate vault file:
-```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/skill_vault_write_safety_audit.py"
-```
-Non-zero → STOP: route the directive through `vault_edit append` or add a sanctioned exemption.
+_(SVW-1 — the skill-vault-write-safety scan — is no longer run here. With no `--root` it audited the **plugin's
+own** `SKILL.md` prose (a constant per plugin version, zero per-slice user value — same 1.5 reasoning that evicted
+the other self-audits), and 3.11 demoted it to a CI-only **advisory** check via `.build/plugin_self_audits.py`. The
+real per-slice control against raw shared-file writes is the `vault_edit` wrapper itself, used in Step 9 below.)_
 
 ### Run the catalog (SRSC-1)
 
