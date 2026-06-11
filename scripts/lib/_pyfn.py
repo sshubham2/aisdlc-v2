@@ -6,8 +6,8 @@ shippability `Machine-cmd` pytest selector may not cite a test *function* that
 does not exist in an otherwise-present test file.
 
 This module is the single source of truth for the three primitives both
-enforcing audits (`tools/test_first_audit.py`, `tools/shippability_path_audit.py`)
-need:
+enforcing audits (`scripts/lib/brief_variants_audit.py` [TF-1 hook],
+`skills/validate-slice/scripts/shippability_path_audit.py`) need:
 
 - `is_checkable_function_name(s)` — the B2 discriminator. Returns True ONLY for
   a strict Python-identifier shape (optionally with a trailing `[param-id]`),
@@ -41,7 +41,7 @@ import ast
 import re
 from pathlib import Path
 
-# Mirrors tools/test_first_audit.py:_EMPTY_SENTINELS (kept in sync by the
+# Mirrors brief_variants_audit.py:_EMPTY_SENTINELS (kept in sync by the
 # PTFFD-1 tests). A value in this set means "no function to check".
 _EMPTY_SENTINELS: frozenset[str] = frozenset(
     {"", "—", "-", "n/a", "none", "(none)"}

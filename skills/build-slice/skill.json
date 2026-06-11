@@ -275,12 +275,12 @@
       "path": "skills/build-slice/scripts/new_agent_warning_audit.py"
     },
     {
-      "name": "test_first_audit",
+      "name": "brief_variants_audit",
       "type": "methodology-tool",
-      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/test_first_audit.py\" <vault>/slices/slice-NNN-<name> --strict-pre-finish",
-      "purpose": "TF-1 gate: verifies every AC maps to a PASSING test when Test-first is declared.",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/brief_variants_audit.py\" <vault>/slices/slice-NNN-<name> --variant test_first --strict-pre-finish",
+      "purpose": "TF-1 gate (merged variant audit, 3.7): verifies every AC maps to a PASSING test when Test-first is declared.",
       "found": true,
-      "path": "skills/build-slice/scripts/test_first_audit.py"
+      "path": "scripts/lib/brief_variants_audit.py"
     },
     {
       "name": "build_checks_audit",

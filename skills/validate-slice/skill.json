@@ -242,20 +242,12 @@
       "path": "skills/validate-slice/scripts/validate_slice_layers.py"
     },
     {
-      "name": "walking_skeleton_audit",
+      "name": "brief_variants_audit",
       "type": "methodology-tool",
-      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/walking_skeleton_audit.py\" <vault>/slices/slice-NNN-<name> --strict-pre-finish",
-      "purpose": "WS-1 gate: verifies every architectural layer was EXERCISED at runtime when Walking-skeleton declared.",
+      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/brief_variants_audit.py\" <vault>/slices/slice-NNN-<name> --variant walking_skeleton --execute --repo-root \"$wt\"  ·  --variant exploratory_charter --strict-pre-finish",
+      "purpose": "WS-1 + ETC-1 gates (merged variant audit, 3.7): WS-1 RUNS each architectural layer's verification (--execute reality run) when Walking-skeleton declared; ETC-1 verifies every charter is COMPLETED or DEFERRED with findings recorded.",
       "found": true,
-      "path": "skills/validate-slice/scripts/walking_skeleton_audit.py"
-    },
-    {
-      "name": "exploratory_charter_audit",
-      "type": "methodology-tool",
-      "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/exploratory_charter_audit.py\" <vault>/slices/slice-NNN-<name> --strict-pre-finish",
-      "purpose": "ETC-1 gate: verifies every charter is COMPLETED or DEFERRED with findings recorded.",
-      "found": true,
-      "path": "skills/validate-slice/scripts/exploratory_charter_audit.py"
+      "path": "scripts/lib/brief_variants_audit.py"
     },
     {
       "name": "shippability_decoupling_audit",

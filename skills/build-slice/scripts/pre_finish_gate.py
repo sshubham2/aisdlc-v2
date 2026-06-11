@@ -19,7 +19,7 @@ LINT-MOCK with no changed test files):
   LINT-MOCK  mock_budget_lint      <changed-test-files> [--seam-allowlist] [--strict]
   WIRE-1     wiring_matrix_audit   <slice>
   BC-1       build_checks_audit    --slice <slice> --changed-files ... --strict --ack-critical ...
-  TF-1       test_first_audit      <slice> --strict-pre-finish      (only with --test-first)
+  TF-1       brief_variants_audit  <slice> --variant test_first --strict-pre-finish  (only with --test-first)
   BRANCH-1   branch_workflow_audit <slice>
   ARTIFACT-LINT artifact_lint      --dir <slice> --skip-unknown     (3.18.7 schema-by-example)
 
@@ -146,7 +146,8 @@ def run_gate(args: argparse.Namespace) -> tuple[str, list[CheckResult]]:
     if args.test_first:
         results.append(_run(
             "TF-1",
-            [_PY, str(_SCRIPTS / "test_first_audit.py"), slice_folder, "--strict-pre-finish"],
+            [_PY, str(_LIB / "brief_variants_audit.py"), slice_folder,
+             "--variant", "test_first", "--strict-pre-finish"],
             cwd,
         ))
     else:

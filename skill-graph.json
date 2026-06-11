@@ -6,9 +6,9 @@
     "skills_main_agent": 21,
     "skills_delegable": 9,
     "named_agents_used": 11,
-    "tools": 54,
+    "tools": 52,
     "file_nodes": 90,
-    "edges": 602,
+    "edges": 601,
     "md_to_json_targets": 43
   },
   "nodes": {
@@ -336,6 +336,11 @@
         "found": true
       },
       {
+        "id": "brief_variants_audit",
+        "type": "methodology-tool",
+        "found": true
+      },
+      {
         "id": "build_checks_audit",
         "type": "methodology-tool",
         "found": true
@@ -377,11 +382,6 @@
       },
       {
         "id": "drift_check_audit",
-        "type": "methodology-tool",
-        "found": true
-      },
-      {
-        "id": "exploratory_charter_audit",
         "type": "methodology-tool",
         "found": true
       },
@@ -481,11 +481,6 @@
         "found": true
       },
       {
-        "id": "test_first_audit",
-        "type": "methodology-tool",
-        "found": true
-      },
-      {
         "id": "triage_audit",
         "type": "methodology-tool",
         "found": true
@@ -502,11 +497,6 @@
       },
       {
         "id": "vault_edit",
-        "type": "methodology-tool",
-        "found": true
-      },
-      {
-        "id": "walking_skeleton_audit",
         "type": "methodology-tool",
         "found": true
       },
@@ -2618,7 +2608,7 @@
     },
     {
       "from": "build-slice",
-      "to": "test_first_audit",
+      "to": "brief_variants_audit",
       "type": "uses_tool"
     },
     {
@@ -2763,12 +2753,7 @@
     },
     {
       "from": "validate-slice",
-      "to": "walking_skeleton_audit",
-      "type": "uses_tool"
-    },
-    {
-      "from": "validate-slice",
-      "to": "exploratory_charter_audit",
+      "to": "brief_variants_audit",
       "type": "uses_tool"
     },
     {

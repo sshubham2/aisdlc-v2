@@ -148,7 +148,7 @@ Only when `mission-brief.json` sets `variants.walking_skeleton: true`:
 repo_root="$(git rev-parse --show-toplevel)"
 slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"   # WT-ROOT-1: re-resolve $wt (fresh shell)
-$PY "${CLAUDE_SKILL_DIR}/scripts/walking_skeleton_audit.py" <vault>/slices/slice-NNN-<name> --execute --repo-root "$wt"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/brief_variants_audit.py" <vault>/slices/slice-NNN-<name> --variant walking_skeleton --execute --repo-root "$wt"
 ```
 
 `--execute` (implies `--strict-pre-finish`) actually **runs** each layer's `verification` command from the slice
@@ -163,7 +163,7 @@ shippability `machine_cmd`), not a prose sentence. Every layer must still be `st
 Only when `mission-brief.json` sets `variants.exploratory_charter: true`:
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/scripts/exploratory_charter_audit.py" <vault>/slices/slice-NNN-<name> --strict-pre-finish
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/brief_variants_audit.py" <vault>/slices/slice-NNN-<name> --variant exploratory_charter --strict-pre-finish
 ```
 
 Every charter must be `COMPLETED` (with findings) or `DEFERRED` (with rationale). Any `non-final-pre-finish`
