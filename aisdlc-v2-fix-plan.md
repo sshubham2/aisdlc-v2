@@ -6,6 +6,31 @@
 
 ---
 
+## ⏳ EXECUTION STATUS (as of 2026-06-11 — read FIRST on resume)
+
+All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.19.1**.
+
+- **Phase 1 — ✅ DONE (8/8, tested)** · commit `2ed5500` (v2.18.4)
+- **Phase 2 — ✅ DONE (10/11, tested)** · commit `b381bcc` (v2.19.0)
+  - **2.1 was implemented as TIER-ONLY** (user decision, *not* the plan's mode-column): in-loop cost keys on
+    `risk_tier` + `critic_required` alone; mode only sets the default tier (Minimal→low, Standard/Heavy→medium)
+    + Heavy's compliance floor. **Honor this in any later item that touches gating.**
+  - **2.11 DEFERRED** (optional; tier-only already cuts Minimal gate writes).
+- **Phase 3 — 🔶 PARTIAL (5/19)** · commit `c2285d2` (v2.19.1) — done: **3.4, 3.6, 3.14, 3.15, 3.16**.
+  - **REMAINING:** 3.1, 3.2, 3.3, 3.5, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, 3.17, 3.18, 3.19
+    (mostly multi-file script refactors — merge variant audits, shrink SVW-1, WS-1 execute, artifact_lint, etc.).
+  - **Re-scope note for 3.8:** CRP-1 was already rewritten in **2.3** (tier-driven; no longer a DCE-1 byte-clone),
+    so 3.8 now = the hyphen-tolerance fix + the DCE-1 side only, not a CRP-1/DCE-1 merge.
+  - New helpers a later item should know about: `.build/plugin_self_audits.py` (the six evicted self-audits, for
+    CI — item 4.4), `skills/build-slice/scripts/pre_finish_gate.py` (the 2.5 gate orchestrator), and
+    `active_slice.py --folder-only`.
+- **Phase 4 — ⬜ NOT STARTED.** Needs **USER DECISIONS**: 4.1 (license choice) and 4.10 (ship-vs-demote the
+  generated design record); 4.4 (tests + CI) is the high-value root-cause fix.
+
+Resume by reading this file + `git log --stat` on `fix/remediation-plan`.
+
+---
+
 ## 0. Ground rules for the executing session (read first)
 
 These come from the repo's own conventions — violating them breaks the build or the install:
