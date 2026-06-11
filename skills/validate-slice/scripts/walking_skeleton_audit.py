@@ -10,6 +10,12 @@ Reads a slice's `mission-brief.json` and validates:
   - Each layer's `status` is one of {pending, exercised}
   - With --strict-pre-finish, any non-`exercised` layer is a violation
     (used at /validate-slice Step 5 WS-1 gate)
+  - With --execute (3.1 — "add reality or demote"), each layer's `verification`
+    is actually RUN as a command (subprocess, like shippability_runner) so the gate
+    touches REALITY instead of trusting a model-written status marker: a non-zero
+    exit is a `verification-failed` violation; a `verification` that is prose / not
+    runnable degrades to an ADVISORY (we could not reality-check it — fall back to
+    the marker, never a hard fail). --execute implies --strict-pre-finish.
 
 Per WS-1. The walking-skeleton discipline (Cockburn): the smallest possible
 end-to-end implementation that exercises every architectural layer.
@@ -21,10 +27,10 @@ unaffected. WS-1 is opt-in per slice.
 `variants.walking_skeleton` (was the `**Walking-skeleton**: true` field line);
 the 5-column markdown table `# | Layer | Component | Verification | Status`
 becomes the `architectural_layers[]` array of objects. Statuses are lowercase
-JSON tokens (`pending` / `exercised`) rather than UPPER markdown cells. The
-NFR-1 carry-over mtime exemption now keys on `mission-brief.json`. Audit
-semantics, violation kinds, exit codes, and `--strict-pre-finish` are otherwise
-preserved.
+JSON tokens (`pending` / `exercised`) rather than UPPER markdown cells. The NFR-1
+mtime carry-over exemption is REMOVED (3.9 — it was dead for every post-install
+user; `--no-carry-over` is accepted as a no-op for CLI compat). Audit semantics,
+violation kinds, exit codes, and `--strict-pre-finish` are otherwise preserved.
 
 v2 brief shape (the relevant fields of `mission-brief.json`):
 
@@ -32,9 +38,13 @@ v2 brief shape (the relevant fields of `mission-brief.json`):
       "variants": {"walking_skeleton": true, ...},
       "architectural_layers": [
         {"layer": "API", "component": "routes.py",
-         "verification": "curl returns 200", "status": "exercised"}
+         "verification": "curl -sf localhost:8000/health", "status": "exercised"}
       ]
     }
+
+    With --execute (3.1), `verification` is RUN as a command — write it as a runnable
+    machine command (like a shippability machine_cmd), not a prose sentence, so the gate
+    can touch reality. A prose verification degrades to a non-gating advisory.
 
 Usage:
     python walking_skeleton_audit.py <slice-folder>
@@ -53,9 +63,10 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import shlex
+import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
 from pathlib import Path
 
 _REPO = pathlib.Path(__file__).resolve().parents[3]  # skills/<skill>/scripts/X.py -> repo root
@@ -63,9 +74,6 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from scripts.lib import _stdout
-
-# Date this rule shipped. NFR-1 carry-over.
-_WS_1_RELEASE_DATE: date = date(2026, 5, 6)
 
 # Allowed statuses (lowercase JSON tokens; v1 markdown cells were UPPER).
 _ALLOWED_STATUSES: frozenset[str] = frozenset({"pending", "exercised"})
@@ -103,14 +111,16 @@ class AuditResult:
     walking_skeleton_enabled: bool = False
     rows: list[LayerRow] = field(default_factory=list)
     violations: list[WSViolation] = field(default_factory=list)
-    carry_over_exempt: bool = False
+    advisories: list[str] = field(default_factory=list)   # 3.1: non-gating "could not reality-check" notes
+    executions: list[dict] = field(default_factory=list)  # 3.1: per-layer --execute results
 
     def to_dict(self) -> dict:
         return {
             "walking_skeleton_enabled": self.walking_skeleton_enabled,
             "rows": [r.to_dict() for r in self.rows],
             "violations": [v.to_dict() for v in self.violations],
-            "carry_over_exempt": self.carry_over_exempt,
+            "advisories": list(self.advisories),
+            "executions": list(self.executions),
             "summary": {
                 "row_count": len(self.rows),
                 "by_status": {
@@ -118,15 +128,9 @@ class AuditResult:
                     for s in _ALLOWED_STATUSES
                 },
                 "violation_count": len(self.violations),
+                "advisory_count": len(self.advisories),
             },
         }
-
-
-def _slice_is_carry_over(brief_path: Path) -> bool:
-    if not brief_path.exists():
-        return False
-    mtime_date = datetime.fromtimestamp(brief_path.stat().st_mtime).date()
-    return mtime_date < _WS_1_RELEASE_DATE
 
 
 def _cell_is_empty(cell: str) -> bool:
@@ -136,16 +140,11 @@ def _cell_is_empty(cell: str) -> bool:
 def audit_brief_file(
     brief_path: Path,
     strict_pre_finish: bool = False,
-    skip_if_carry_over: bool = True,
 ) -> AuditResult:
     """Audit a mission-brief.json against WS-1."""
     result = AuditResult()
 
     if not brief_path.exists():
-        return result
-
-    if skip_if_carry_over and _slice_is_carry_over(brief_path):
-        result.carry_over_exempt = True
         return result
 
     try:
@@ -272,12 +271,85 @@ def audit_brief_file(
     return result
 
 
+def execute_verifications(
+    result: AuditResult,
+    repo_root: Path,
+    brief_path_str: str,
+    timeout: float | None = 120.0,
+) -> None:
+    """3.1 — actually RUN each layer's `verification` as a command (reality contact).
+
+    Mirrors shippability_runner: split on `;`, strip backticks per segment, ``shlex.split``,
+    ``subprocess.run`` with utf-8/replace. A layer is reality-verified iff every segment of
+    its verification exits 0. Outcomes per layer:
+      - all segments exit 0       -> execution {verified: true}; no violation.
+      - a segment exits non-zero  -> execution {verified: false} + a ``verification-failed``
+                                     VIOLATION (reality said no — the gate fails).
+      - verification not runnable -> execution {verified: null} + an ADVISORY (we could NOT
+        (empty / shlex error /       reality-check it — fall back to the status marker, NEVER
+         command not found)          a hard fail; "add reality OR demote").
+    Only runs over rows that passed structural validation (``result.rows``).
+    """
+    for row in result.rows:
+        segments = [s.strip().strip("`").strip() for s in row.verification.split(";")]
+        segments = [s for s in segments if s]
+        if not segments:
+            result.advisories.append(
+                f"layer '{row.layer}': verification is empty after parsing — cannot "
+                f"reality-check; falling back to the status marker ({row.status})."
+            )
+            result.executions.append(
+                {"layer": row.layer, "verified": None, "reason": "empty-verification"})
+            continue
+
+        ok, runnable, detail = True, True, ""
+        for seg in segments:
+            try:
+                argv = shlex.split(seg, posix=True)
+            except ValueError as exc:
+                runnable = False
+                detail = f"verification not parseable as a command ({exc}): {seg!r}"
+                break
+            if not argv:
+                continue
+            try:
+                proc = subprocess.run(
+                    argv, cwd=str(repo_root),
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=timeout,
+                )
+            except FileNotFoundError:
+                runnable = False
+                detail = (f"verification command not found (looks like prose, not a "
+                          f"runnable command): {seg!r}")
+                break
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                ok, detail = False, f"verification could not complete ({exc}): {seg!r}"
+                break
+            if proc.returncode != 0:
+                tail = ((proc.stdout or "")[-300:] + (proc.stderr or "")[-300:]).strip()
+                ok, detail = False, f"verification exited {proc.returncode}: {seg!r}\n{tail}"
+                break
+
+        if not runnable:
+            # Could not reach reality for this layer -> ADVISORY, not a violation (demote).
+            result.advisories.append(f"layer '{row.layer}': {detail}")
+            result.executions.append(
+                {"layer": row.layer, "verified": None, "reason": "not-runnable", "detail": detail})
+        elif ok:
+            result.executions.append({"layer": row.layer, "verified": True})
+        else:
+            result.violations.append(WSViolation(
+                path=brief_path_str, layer_index=row.index, kind="verification-failed",
+                severity="Important",
+                message=(f"layer '{row.layer}': REALITY check failed — {detail}. WS-1 "
+                         f"--execute ran the verification and it did not pass."),
+            ))
+            result.executions.append(
+                {"layer": row.layer, "verified": False, "detail": detail})
+
+
 def _format_human(result: AuditResult) -> str:
-    if result.carry_over_exempt:
-        return (
-            "Walking-skeleton audit: slice is carry-over exempt "
-            "(mission-brief.json predates WS-1 release).\n"
-        )
     if not result.walking_skeleton_enabled:
         return (
             "Walking-skeleton audit: not enabled "
@@ -289,11 +361,19 @@ def _format_human(result: AuditResult) -> str:
             s: sum(1 for r in result.rows if r.status == s)
             for s in _ALLOWED_STATUSES
         }
-        return (
-            f"Walking-skeleton audit: clean. {len(result.rows)} layer(s) — "
-            f"exercised={by_status['exercised']}, "
-            f"pending={by_status['pending']}.\n"
+        verified = sum(1 for e in result.executions if e.get("verified") is True)
+        exec_note = (
+            f" reality-verified={verified}/{len(result.executions)} (--execute)."
+            if result.executions else ""
         )
+        head = (
+            f"Walking-skeleton audit: clean. {len(result.rows)} layer(s) — "
+            f"exercised={by_status['exercised']}, pending={by_status['pending']}.{exec_note}\n"
+        )
+        if result.advisories:
+            head += (f"{len(result.advisories)} advisory(ies) — could not reality-check "
+                     f"(non-gating):\n" + "".join(f"  - {a}\n" for a in result.advisories))
+        return head
 
     out: list[str] = [
         f"{len(result.violations)} walking-skeleton violation(s):\n\n"
@@ -304,6 +384,13 @@ def _format_human(result: AuditResult) -> str:
             f"{f'layer #{v.layer_index}' if v.layer_index else ''}\n"
             f"    {v.message}\n\n"
         )
+    if result.advisories:
+        out.append(
+            f"{len(result.advisories)} advisory(ies) — could not reality-check "
+            f"(non-gating; fell back to the status marker):\n"
+        )
+        out.extend(f"  - {a}\n" for a in result.advisories)
+        out.append("\n")
     return "".join(out)
 
 
@@ -323,8 +410,23 @@ def main(argv: list[str] | None = None) -> int:
         help="Refuse non-exercised layers (use at /validate-slice WS-1 gate)",
     )
     parser.add_argument(
+        "--execute", action="store_true",
+        help="3.1: actually RUN each layer's verification command (reality contact). "
+             "Implies --strict-pre-finish. Non-zero exit -> violation; prose/unrunnable "
+             "verification -> advisory (degrade, never a hard fail).",
+    )
+    parser.add_argument(
+        "--repo-root", type=Path, default=Path("."),
+        help="Working directory for --execute verification commands (default: cwd)",
+    )
+    parser.add_argument(
+        "--timeout", type=float, default=120.0,
+        help="Per-segment timeout (seconds) for --execute verification commands",
+    )
+    parser.add_argument(
         "--no-carry-over", action="store_true",
-        help="Disable mtime-based carry-over exemption",
+        help="Accepted for v1 CLI compatibility; no-op (the NFR-1 mtime carry-over "
+             "exemption was removed in 3.9).",
     )
     args = parser.parse_args(argv)
 
@@ -333,9 +435,15 @@ def main(argv: list[str] | None = None) -> int:
 
     result = audit_brief_file(
         brief_path,
-        strict_pre_finish=args.strict_pre_finish,
-        skip_if_carry_over=not args.no_carry_over,
+        strict_pre_finish=args.strict_pre_finish or args.execute,
     )
+
+    # 3.1 reality contact: run the verification commands over structurally-valid rows.
+    if args.execute and result.walking_skeleton_enabled and result.rows:
+        execute_verifications(
+            result, repo_root=args.repo_root.resolve(),
+            brief_path_str=str(brief_path), timeout=args.timeout,
+        )
 
     if args.json:
         sys.stdout.write(json.dumps(result.to_dict(), indent=2) + "\n")

@@ -139,18 +139,21 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py" \
   resolves imports against `pyproject.toml` / `requirements.txt`. Anything unresolved is a possible
   AI-hallucinated import. Surface to user; defer-with-rationale allowed.
 - Skip flags: `--skip-secrets` / `--skip-deps` when the project runs its own scanner/linter.
-- NFR-1 carry-over: slices with `mission-brief.json` mtime pre-2026-05-06 are exempt automatically.
 
-### Walking-skeleton audit (WS-1)
+### Walking-skeleton audit (WS-1) — reality-grounded (3.1)
 
 Only when `mission-brief.json` sets `variants.walking_skeleton: true`:
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/scripts/walking_skeleton_audit.py" <vault>/slices/slice-NNN-<name> --strict-pre-finish
+$PY "${CLAUDE_SKILL_DIR}/scripts/walking_skeleton_audit.py" <vault>/slices/slice-NNN-<name> --execute --repo-root "$wt"
 ```
 
-Every architectural layer in the `architectural_layers` table must have `status: exercised`. Any
-`non-exercised-pre-finish` finding → STOP; the layer was not reached during validation.
+`--execute` (implies `--strict-pre-finish`) actually **runs** each layer's `verification` command from the slice
+worktree, so WS-1 touches reality instead of trusting the model-written `status` marker (3.1 — "add reality or
+demote"): a non-zero exit is a `verification-failed` violation → STOP; a `verification` that is prose / not a
+runnable command **degrades to a non-gating advisory** (we could not reality-check it — fall back to the marker,
+never a hard fail). For this to bite, write each layer's `verification` as a **runnable command** (like a
+shippability `machine_cmd`), not a prose sentence. Every layer must still be `status: exercised`.
 
 ### Exploratory-charter audit (ETC-1)
 
