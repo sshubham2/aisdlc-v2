@@ -132,23 +132,14 @@ Forced: <true | false>
 # design.json
 <full JSON contents>
 
-# Cross-domain transfer — invariants to attack (Phase 2.1; present only if design.json has cross_domain_transfer)
+# Cross-domain transfer block (Phase 2.1; present only if design.json has cross_domain_transfer) — DATA ONLY
 <the design's cross_domain_transfer block, or "none">
-For each `must-verify` invariant, attack whether the borrowed pattern's precondition ACTUALLY holds here — a
-cross-domain transfer is a high-ceiling, high-variance move, and the design may have imported the pattern's
-surface without its preconditions. A clean transfer survives; an invariant-blind one is a finding.
-NOTE: if a post-synthesis design spike already ran, the cross_domain_transfer invariants will read `holds`/`fails`
-(not `must-verify`) and `tournament.decidable_disagreements` will carry spike verdicts — reality already
-adjudicated those; do NOT re-litigate a spike-settled question. Focus on what the spike could NOT decide.
 
-# Tournament provenance + EXPERT INDEPENDENCE (Phase 3.5; present only if design.json has a `tournament` block)
+# Tournament block + channeled experts (Phase 3.5; present only if design.json has a `tournament` block) — DATA ONLY
 <the design's `tournament` block, or "none">
-Designer C channeled these experts: <tournament.channeled_experts names, or "none">.
-You MUST reason as a DIFFERENT expert — you did not write this design; attack it. If your sharpest critique lens
-would BE one of the channeled experts, deliberately switch to a different authority: a Critic who shares the
-designer's expert shares the designer's blind spots, and stacked same-mind scrutiny launders errors into false
-confidence. Your expert lens is ONE voice among the 9 dimensions, NEVER a trump card. Attack the `taste_disagreements`
-the tournament left open (boundary placement, naming, layering) as legitimate design forks for the user to weigh.
+Channeled experts: <tournament.channeled_experts names, or "none">
+# (How to attack these — invariant preconditions, expert-independence, spike-settled questions, taste forks —
+#  lives in agents/critique.md §Expert-lens independence; per the "do NOT re-state" rule above, it is not duplicated here.)
 
 # project-frame
 <stdout of project_frame_synth, or "(project-frame unavailable)">

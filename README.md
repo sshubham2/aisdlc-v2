@@ -13,6 +13,9 @@ review + designer agents, a shared Python tooling library, and a SessionStart ho
 The guiding philosophy: ground the model in **executable reality** (the code graph, throwaway spikes on the real
 environment, tests, drift-checks) — never in external authority. Generate freely, then *prove against reality*; and
 trust a gate exactly as much as it touches something that is **not the model** (reality > code-graph > model-critic).
+*One deliberate exception:* authority may be **channeled at generation time** inside the design tournament (the
+`designer-expert` flight) to widen the sample of approaches — never at **selection**. Reality and the synthesis
+rules select; channeling an expert to *generate* a candidate is diversity, not deference.
 
 The pipeline writes its artifacts to an **external vault** (outside your code repo) so the design record never
 pollutes your source tree, and every project gets its own isolated, worktree-shared vault.

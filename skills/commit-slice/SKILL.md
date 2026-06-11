@@ -275,6 +275,28 @@ Skips Steps 1–4 (no commit generated).
 
 **Critical rules — `--sync-after-pr`**: NEVER `-D`, NEVER omit `--ff-only`, NEVER omit explicit fetch refspec, NEVER skip both-signal AND, NEVER `--no-verify`.
 
+## Step 6 — mark the candidate shipped + archive it (CAND-1)
+
+Run this **only when a commit was actually created** (modes `--merge` / `--push`). `/reflect` left the candidate
+`validated` in `candidates.json`; now that the code has landed, mark it `shipped` and move it to the archive so
+the live backlog stays small (Direction #3) and a `shipped` candidate ALWAYS means committed code.
+
+1. Read `<vault>/candidates.json`, find the candidate whose `slice` matches this slice; set its `status` to `"shipped"`.
+2. Append the shipped entry to `<vault>/archive/candidates.json`:
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file archive/candidates.json --array candidates --content-file shipped-candidate.json
+   ```
+3. Remove it from `<vault>/candidates.json` via CAS-rewrite:
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file candidates.json --out-file base.bin
+   # drop the shipped candidate from candidates[], then:
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file candidates.json --base-file base.bin --content-file updated.json
+   # exit 3 → re-read + re-apply + retry (max 5)
+   ```
+
+(In default mode 5a — which only PRINTS the commit command — the candidate stays `validated` until the user
+actually commits and re-runs `/commit-slice --merge`/`--push`.)
+
 ## Critical rules (all modes)
 
 - NEVER fabricate content — every field sourced from a vault file.
