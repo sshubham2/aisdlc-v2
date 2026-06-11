@@ -145,6 +145,9 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py" \
 Only when `mission-brief.json` sets `variants.walking_skeleton: true`:
 
 ```bash
+repo_root="$(git rev-parse --show-toplevel)"
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"   # WT-ROOT-1: re-resolve $wt (fresh shell)
 $PY "${CLAUDE_SKILL_DIR}/scripts/walking_skeleton_audit.py" <vault>/slices/slice-NNN-<name> --execute --repo-root "$wt"
 ```
 

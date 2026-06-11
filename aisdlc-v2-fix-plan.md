@@ -8,7 +8,7 @@
 
 ## ⏳ EXECUTION STATUS (as of 2026-06-11 — read FIRST on resume)
 
-All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.19.19**.
+All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.20.0**.
 
 - **Phase 1 — ✅ DONE (8/8, tested)** · commit `2ed5500` (v2.18.4)
 - **Phase 2 — ✅ DONE (10/11, tested)** · commit `b381bcc` (v2.19.0)
@@ -36,8 +36,28 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
   - **REMAINING (2 items + optional/paired):** **3.7** (merge test_first/walking_skeleton/exploratory_charter → `brief_variants_audit.py` — RISKY ~970-line consolidation; recommend AFTER the 4.4 test harness exists. NOTE: 3.18.3 made the variants LIVE, so the merge must preserve WS-1's `--execute` + the producer's fields); **3.1 rest** (DCE-1 drift-log-timestamp cross-check needs a NEW /drift-check side-effect file → scope creep, OR demote/gate-log; BCSG-1 demote-to-advisory weakens a Critical-rule gate → **judgment call, confirm before doing**); **3.19 leftovers** = 3.19.5 (vault_root lazy — *optional* perf), 3.19.6 (assemble CSS/JS split — *optional* refactor), 3.19.8 (UX-8 hook swallows cwd-keyed vault WARN — **do together with Phase-4 item 4.6**, the hook vault-pin redesign).
   - **WS-1 gate-log/example polish owed:** the mission-brief `architectural_layers` example still shows a prose `verification`; update to a runnable command under 3.18.2.
   - Helpers a later item should know about: `.build/plugin_self_audits.py` (six evicted self-audits, for CI 4.4), `skills/build-slice/scripts/pre_finish_gate.py` (2.5 gate orchestrator), `active_slice.py --folder-only`, and `gate_log.py`'s new `design-tournament` gate + `INFORMATIONAL_GATES`.
-- **Phase 4 — ⬜ NOT STARTED.** Needs **USER DECISIONS**: 4.1 (license choice) and 4.10 (ship-vs-demote the
-  generated design record); 4.4 (tests + CI) is the high-value root-cause fix.
+- **Phase 4 — 🔶 STARTED (4.4 ✅ DONE).**
+  - **4.4 (tests + CI) — ✅ DONE** (v2.20.0): NEW `tests/` pytest suite (65 tests, green) covering `_vault_write`
+    concurrency primitives (lock/CAS/append/EOL + lost-update threads), `vault_edit` CLI exit-code contracts
+    (incl. the 1.7 fail-visible exits + CAS exit-3), `active_slice` resolution (git-branch + vault-scan), `finding_dedup`
+    merge rules, `artifact_lint` (the 1.4 `fix-now` regression + an examples-pass-their-own-audits sweep over all
+    bundled examples), and triage/critique-review audits PASS/FAIL. `pytest.ini` + `requirements-dev.txt`.
+    `.github/workflows/ci.yml`: **gating** pytest matrix (ubuntu+windows × py3.11/3.13) + a build-consistency job
+    (artifact_lint --self-check · cross-block audit · `aggregate.py` clean via `git diff --ignore-cr-at-eol`);
+    **informational** plugin-self-audits job (see below). Side fixes landed for green CI: `aggregate.py` ROOT made
+    portable (`Path(__file__)…parents[1]` — overlaps 4.8, unblocks the aggregate-clean gate); `cross_block_audit.py`
+    hardened to **exit 1** on a cross-block-var-use hit (was always-0) — which immediately caught a **real bug** in
+    this session's 3.1 WS-1 work (`validate-slice` WS-1 `--execute` block referenced `$wt` without re-resolving it in
+    its fresh shell → empty `--repo-root`; **fixed**).
+  - **4.4 FOLLOW-UP (decision owed):** the **plugin-self-audits** CI job is `continue-on-error` (informational) because
+    `plugin_self_audits.py` is currently 2/7 red on PRE-EXISTING items: **PCA-1**'s canonical pipeline chain predates
+    the in-loop design-spike (`design-slice → /risk-spike --mode design`) and the slice-story report
+    (`critique → /slice-story`) — 5 violations; and **UTF8-STDOUT-1** finds 5 tools lacking the canonical `_stdout`
+    guard. The UTF8 ones are a safe mechanical fix; updating PCA-1's `_CANONICAL_CHAIN` is a **judgment call** (it
+    touches a Critical-severity gate that guards the `/commit-slice`-never-auto-invoked terminal boundary). Promote
+    the job to a hard gate once green.
+  - **Phase-4 REMAINING — USER DECISIONS:** 4.1 (license choice) and 4.10 (ship-vs-demote the generated design record);
+    plus 4.5/4.6/4.7/4.8/4.9 (4.6 pairs with 3.19.8; 4.8 partly done via the `aggregate.py` ROOT fix).
 
 Resume by reading this file + `git log --stat` on `fix/remediation-plan`.
 
@@ -313,7 +333,7 @@ Background numbers (verified): a medium-tier Standard slice for a 50-line change
 **Fix:** pin `code-review-graph>=2.3,<3` minimum (prefer `==` exact + a documented bump procedure); note the trust boundary in README's Requirements table; have /setup print the resolved version before MCP registration.
 **Accept:** requirements.txt has an upper bound; setup surfaces the version.
 
-### 4.4 Tests + CI for the plugin itself *(MAJOR — the root-cause fix)*
+### 4.4 Tests + CI for the plugin itself *(MAJOR — the root-cause fix)* — ✅ DONE (v2.20.0; see EXECUTION STATUS)
 **Problem:** 72 shipped .py files (the gate scripts, the SVW-1 write path, finding_dedup, assemble.py), zero tests, zero CI, no .github/. This is how 1.1–1.4 survived: nothing deterministic ever exercised the happy path. (.gitignore even reserves `.pytest_cache/` — line ≈17.)
 **Fix:**
 1. `tests/` with pytest. Priority order: (a) `_vault_write.py` concurrency primitives (lock, CAS exit-3, append, EOL preservation — use tmp_path); (b) `vault_edit.py` subcommand contracts incl. the new exit codes from 1.7; (c) every audit script against crafted PASS/FAIL fixtures (the merged audits from 3.7/3.8 included); (d) `active_slice.py` resolution (branch vs fallback); (e) `finding_dedup.py` merge rules.

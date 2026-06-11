@@ -6,7 +6,7 @@ import json, os, re, html, glob, sys, shutil
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-ROOT = r"C:\Users\sshub\aisdlc-v2"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # <plugin>/.build/aggregate.py -> <plugin> (portable; 4.8/4.4 CI)
 MAN  = os.path.join(ROOT, ".build", "manifests")
 SKILLS_DIR = os.path.join(ROOT, "skills")
 GRAPH_OUT = os.path.join(ROOT, "skill-graph.json")

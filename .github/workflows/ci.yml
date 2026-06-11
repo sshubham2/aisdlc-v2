@@ -1,0 +1,73 @@
+name: CI
+
+# The plugin's own test + consistency gates (remediation 4.4). Before this, ~70
+# shipped .py files had zero tests and zero CI — which is how the Phase-1 bugs
+# survived (nothing deterministic ever exercised the happy path).
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }} / py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both OSes are load-bearing: the vault writer / git runners carry
+        # Windows-specific code paths (msvcrt locking, EPERM retry, CRLF).
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest
+
+  build-consistency:
+    name: build-consistency (lint + cross-block + aggregate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dev deps
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+      - name: artifact_lint --self-check (schema-by-example)
+        run: python scripts/lib/artifact_lint.py --self-check
+      - name: cross-block audit (SKILL.md bash blocks)
+        run: python .build/cross_block_audit.py skills/*/SKILL.md
+      - name: aggregate.py is clean (no uncommitted generated drift)
+        # --ignore-cr-at-eol: the committed skill.json / skill-graph.json were
+        # generated on Windows (CRLF); aggregate.py writes platform-native EOL, so
+        # a Linux regen flips them to LF. EOL is not semantic for these artifacts —
+        # only real content drift should fail the gate.
+        run: |
+          python .build/aggregate.py
+          git diff --ignore-cr-at-eol --exit-code
+
+  plugin-self-audits:
+    name: plugin self-audits (informational)
+    runs-on: ubuntu-latest
+    # NON-GATING for now. plugin_self_audits.py currently reports pre-existing items
+    # the gate hasn't been reconciled with: PCA-1's canonical pipeline chain predates
+    # the in-loop design-spike (design-slice -> /risk-spike --mode design) and the
+    # slice-story report (critique -> /slice-story), and 5 tools lack the canonical
+    # _stdout UTF-8 guard. Promote to a hard gate once plugin_self_audits.py is green
+    # (tracked: remediation 4.4 follow-up).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dev deps
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+      - name: Plugin self-audits
+        run: python .build/plugin_self_audits.py
