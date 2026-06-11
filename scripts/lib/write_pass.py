@@ -37,6 +37,7 @@ import yaml
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
+from scripts.lib import _stdout  # noqa: E402
 from scripts.lib.assemble import REQUIRED_FIELDS, normalize_finding  # noqa: E402
 
 
@@ -210,14 +211,9 @@ def write_pass(pass_name: str, out_dir: Path, raw_text: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # BB-12: cp1252 consoles raise UnicodeEncodeError on non-ASCII prints (YAML-error
-    # snippets, vault paths). Reconfigure both streams to UTF-8 so the fail-visible
-    # diagnostics survive. (Self-contained: this script intentionally avoids scripts.lib.)
-    for _stream in (sys.stdout, sys.stderr):
-        try:
-            _stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+    # UTF8-STDOUT-1: cp1252 consoles raise UnicodeEncodeError on non-ASCII prints
+    # (YAML-error snippets, vault paths); reconfigure both streams to UTF-8.
+    _stdout.reconfigure_stdout_utf8()
     parser = argparse.ArgumentParser(
         description=(
             "Write /diagnose pass output files from a subagent's raw response. "

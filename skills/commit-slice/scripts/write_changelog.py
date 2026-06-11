@@ -26,10 +26,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:
-    pass
+# --- single-skill import bootstrap (cannot use `-m`) ---
+_PLUGIN_ROOT = Path(__file__).resolve().parents[3]  # skills/commit-slice/scripts -> plugin root
+if str(_PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_ROOT))
+
+from scripts.lib import _stdout  # noqa: E402
 
 SCHEMA = "aisdlc/changelog@1"
 
@@ -99,6 +101,7 @@ def build_changelog(rec: dict, slice_id: str, mode: str, at: str) -> dict:
 
 
 def main(argv=None) -> int:
+    _stdout.reconfigure_stdout_utf8()  # UTF8-STDOUT-1
     ap = argparse.ArgumentParser(description="Write the per-slice changelog.json.")
     ap.add_argument("--vault", required=True, help="vault root (<vault>/)")
     ap.add_argument("--slice", required=True, dest="slice_id",

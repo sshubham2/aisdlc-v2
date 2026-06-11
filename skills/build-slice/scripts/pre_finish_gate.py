@@ -52,6 +52,11 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[3]      # plugin root
 _LIB = _PLUGIN_ROOT / "scripts" / "lib"
 _PY = sys.executable
 
+if str(_PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_ROOT))
+
+from scripts.lib import _stdout  # noqa: E402
+
 
 @dataclass
 class CheckResult:
@@ -181,7 +186,7 @@ def _format_human(gate: str, results: list[CheckResult]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # ASCII-only output here; sub-audits handle their own stdout encoding.
+    _stdout.reconfigure_stdout_utf8()  # UTF8-STDOUT-1 (sub-audits also handle their own)
     parser = argparse.ArgumentParser(
         prog="pre_finish_gate",
         description="Consolidated /build-slice pre-finish gate — one command, one verdict (remediation-plan 2.5).",

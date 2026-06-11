@@ -21,17 +21,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Output encoding robustness on Windows (cp1252 stdout): utf-8 to match the terminal,
-# errors=replace so a non-ASCII path never raises UnicodeEncodeError. Our literals are
-# ASCII; this covers dynamic content (paths).
-for _s in (sys.stdout, sys.stderr):
-    try:
-        _s.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        pass
-
 PY = sys.executable                       # the bootstrap resolved this working interpreter
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
+
+# UTF8-STDOUT-1: cp1252 stdout robustness (errors=replace so a non-ASCII path never
+# raises UnicodeEncodeError). _stdout is pure-stdlib and ships in the plugin, so the
+# import is safe even pre-install; reconfigure runs as main()'s first statement.
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+from scripts.lib import _stdout  # noqa: E402
 REQ = PLUGIN_ROOT / "requirements.txt"
 
 
@@ -116,6 +115,7 @@ def gitignore_mcp(repo: str) -> None:
 
 
 def main(argv: list[str]) -> int:
+    _stdout.reconfigure_stdout_utf8()  # UTF8-STDOUT-1
     no_mcp = "--no-mcp" in argv
     no_graph = "--no-graph" in argv
     repo = next((a for a in argv if not a.startswith("--")), os.getcwd())

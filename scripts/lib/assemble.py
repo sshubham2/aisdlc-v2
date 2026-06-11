@@ -40,6 +40,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
+from scripts.lib import _stdout  # noqa: E402
 from scripts.lib.finding_dedup import dedupe_findings  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -2267,13 +2268,9 @@ def assemble(out_dir: Path) -> None:
 
 
 def main() -> None:
-    # BB-12: UTF-8 stdout/stderr so non-ASCII YAML-error snippets + vault paths don't
-    # raise UnicodeEncodeError on a cp1252 console. (Self-contained — no scripts.lib.)
-    for _stream in (sys.stdout, sys.stderr):
-        try:
-            _stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+    # UTF8-STDOUT-1: UTF-8 stdout/stderr so non-ASCII YAML-error snippets + vault
+    # paths don't raise UnicodeEncodeError on a cp1252 console.
+    _stdout.reconfigure_stdout_utf8()
     ap = argparse.ArgumentParser(description="Assemble diagnose-out/diagnosis.html")
     ap.add_argument("--out", required=True, help="Path to diagnose-out directory")
     args = ap.parse_args()
