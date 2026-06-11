@@ -59,6 +59,16 @@ KNOWN_ENUMS: dict[tuple[str, str], frozenset[str]] = {
     ("spike", "verdict"): frozenset({"go", "no-go", "conditional"}),
     ("code-review", "verdict"): frozenset({"clean", "needs-fixes", "blocked"}),
     ("risk-register", "risks[].status"): frozenset({"open", "mitigated", "accepted", "closed", "retired"}),
+    ("mission-brief", "architectural_layers[].status"): frozenset({"pending", "exercised"}),
+    ("mission-brief", "exploratory_charters[].status"):
+        frozenset({"pending", "in-progress", "completed", "deferred"}),
+}
+
+# Top-level keys that appear in a canonical example but are genuinely OPTIONAL on a
+# real artifact (array-shaped optionals can't carry the dict-with-`_note` marker). Keyed
+# by artifact type. e.g. the variant blocks a mission-brief carries only when opted in.
+OPTIONAL_KEYS: dict[str, frozenset[str]] = {
+    "mission-brief": frozenset({"architectural_layers", "exploratory_charters"}),
 }
 
 
@@ -67,10 +77,13 @@ def _load_examples() -> dict:
         return {k: v for k, v in json.load(fh).items() if not k.startswith("_")}
 
 
-def _required_keys(example: dict) -> list[str]:
-    """Non-`_` top-level keys, excluding optional-marker objects (dict with `_note`)."""
+def _required_keys(example: dict, key: str) -> list[str]:
+    """Non-`_` top-level keys, excluding optional-marker objects (dict with `_note`) and
+    keys listed as optional for this artifact type (OPTIONAL_KEYS — array optionals)."""
+    optional = OPTIONAL_KEYS.get(key, frozenset())
     return [k for k, v in example.items()
             if not k.startswith("_")
+            and k not in optional
             and not (isinstance(v, dict) and "_note" in v)]
 
 
@@ -101,7 +114,7 @@ def lint_artifact(data: dict, key: str, example: dict, label: str) -> list[str]:
         return [f"{label}: top level is not a JSON object"]
     if not data.get("_schema"):
         v.append(f"{label}: missing required `_schema` tag")
-    for rk in _required_keys(example):
+    for rk in _required_keys(example, key):
         if rk not in data:
             v.append(f"{label}: missing required key `{rk}` (per the {key} example)")
     for (ak, path), allowed in KNOWN_ENUMS.items():
