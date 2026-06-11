@@ -2,7 +2,7 @@
 
 SHARED helper for the AI SDLC measurement spine (roadmap Theme 8 / plan Phase 0).
 Every verification GATE — `risk-spike`, `critique`, `critique-review`, `code-review`,
-`validate-slice`, `drift-check` — appends ONE row per slice to `<vault>/gate-log.json`
+`validate-slice`, `drift-check`, `build-checks` — appends ONE row per slice to `<vault>/gate-log.json`
 so per-gate outcomes are measurable instead of vibes. This emitter builds the row
 (real timestamp, canonical `slice-NNN`, gate->reality_contact mapping owned HERE so
 the six call-sites never drift) and prints it for the SVW-1 append channel:
@@ -16,8 +16,9 @@ the six call-sites never drift) and prints it for the SVW-1 append channel:
 `reality_contact` (plan Phase 1.1) is derived from the gate, NOT hand-passed: a gate
 that can say "no" because *reality* said no (a spike on the real environment, a real
 device/data validation) scores `high`; a code-graph check (`drift-check`) scores
-`medium`; a model grading the model (`critique`/`critique-review`/`code-review`) scores
-`low`. Pass `--reality-contact` only to override a one-off (kept for forward-compat;
+`medium`; a model grading the model (`critique`/`critique-review`/`code-review`) or a model
+attesting to itself (`build-checks` BCSG-1 ack echoes) scores `low`. Pass `--reality-contact`
+only to override a one-off (kept for forward-compat;
 the default is correct for every current gate). The single source of truth is
 ``GATE_CONTACT`` below — Phase 1 reads the same field this stamps.
 
@@ -93,6 +94,11 @@ GATE_CONTACT: dict[str, str] = {
     "critique": "low",           # the model grading the model
     "critique-review": "low",    # the model grading the model (meta)
     "design-tournament": "low",  # informational: how diverse the blind designers were (3.3) — NOT a finding gate
+    # BCSG-1 self-attestation (the Builder ACKED the Critical build-checks, not that reality verified them) —
+    # gate-logged at model-tier (3.1c) so the spine MEASURES it instead of trusting an unmeasured hard STOP. Its
+    # green is NOT a reality green; the hard STOP in build_checks_audit.py is kept (a forcing function), but it is
+    # now visible to /pulse + /critic-calibrate as a low-contact gate.
+    "build-checks": "low",
 }
 # Informational gates raise no findings; their row carries a measurement, not a verdict
 # of pass/fail. Readers (pulse) must NOT treat their always-zero raised_rate as a

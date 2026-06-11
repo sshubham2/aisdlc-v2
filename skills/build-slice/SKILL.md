@@ -195,6 +195,22 @@ The gate prints `=== pre-finish gate: PASS|FAIL ===` with one line per check (`o
 → do not declare done; fix or escalate.** (CRP-1 already ran as prerequisite #5 before plan mode — not re-run here;
 the six plugin self-audits are CI-only per 1.5.)
 
+**Step C — gate-log the BCSG-1 build-checks attestation (model-tier).** BCSG-1 is a **model-tier self-attestation**
+gate: it verifies you *acknowledged* each applicable Critical build-check, **not** that *reality* verified it. Per
+3.1c it is gate-logged at `low` reality-contact so the measurement spine (`/pulse`, `/critic-calibrate`) can SEE it
+— its green is **not** a reality green, and the hard STOP stays (a forcing function), but it is now measured. After
+the gate PASSES, append ONE `build-checks` row (`findings-count` = unacknowledged-critical raised, `0` on the pass
+path; mode from `triage.json`, tier = `risk_tier` from `mission-brief.json`):
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate build-checks --slice <slice-NNN-name> \
+    --verdict <clean|blocked> --findings-count <unacknowledged-critical count; 0 on pass> \
+    --mode <minimal|standard|heavy> --tier <low|medium|high> \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
 > **Note — plugin self-audits are NOT in this gate.** Six checks that grade the *plugin's own* static
 > files (`UTF8-STDOUT-1`, `PCA-1`, `BCI-1`, `STP-1`, `NAW-1`, `SVW-1`) used to run here on every slice in every
 > user project, where they are either no-ops or re-scan the plugin install (a constant result per plugin

@@ -8,7 +8,7 @@
 
 ## ⏳ EXECUTION STATUS (as of 2026-06-11 — read FIRST on resume)
 
-All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.21.0**.
+All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.22.0**.
 
 - **Phase 1 — ✅ DONE (8/8, tested)** · commit `2ed5500` (v2.18.4)
 - **Phase 2 — ✅ DONE (10/11, tested)** · commit `b381bcc` (v2.19.0)
@@ -16,7 +16,7 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
     `risk_tier` + `critic_required` alone; mode only sets the default tier (Minimal→low, Standard/Heavy→medium)
     + Heavy's compliance floor. **Honor this in any later item that touches gating.**
   - **2.11 DEFERRED** (optional; tier-only already cuts Minimal gate writes).
-- **Phase 3 — 🔶 NEAR-COMPLETE (only 3.1-rest + optional/paired 3.19 leftovers remain; 3.7 now ✅)** · prior commit
+- **Phase 3 — ✅ COMPLETE except OPTIONAL 3.19 leftovers (3.1-rest BCSG-1 ✅ v2.22.0; 3.7 ✅; no judgment calls remain)** · prior commit
   `c2285d2` (v2.19.1) did 3.4, 3.6, 3.14, 3.15, 3.16. Session of 2026-06-11 (commits `4e2438c`→`ab40a88`,
   v2.19.2→v2.19.18) added:
   - **3.10** (v2.19.2) — removed the degenerate `--resolve-soft` surface + dead resolve fns; commit-slice routes off `--classify`.
@@ -34,7 +34,19 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
   - **3.18** (v2.19.13 + v2.19.14) — ALL 7 sub-items. 3.18.1 two `_index` shapes (live `slice-index` gained total/active_count/archived_count/updated + recent[].summary; NEW `slice-archive-index`; aggregate.py `artifact_key` made path-aware; archive+reflect prose fixed). 3.18.2 examples carry load-bearing fields (mission-brief `critic_required`, concept `references[]`, design `whats_reused`/`components_detail`/contract auth+errors/WIRE-1 exemption row). 3.18.4 pulse `updated_at`→`at`. 3.18.5 `actor` example (flat `examples/actor.json`). 3.18.6 `spike_ref` bare-id + spikes file-vs-dir `_note`. 3.18.7 NEW `scripts/lib/artifact_lint.py` (required keys + known enums incl. 1.4 triage action; OPTIONAL_KEYS for array optionals) wired into CI self-check + build-slice pre_finish_gate + reflect + drift-check --fast; passes on all 38 examples. **3.18.3 (USER DECISION: wire all three)** — `/slice` Step 3b now produces the variants via one AskUserQuestion (sets the flag + writes architectural_layers[]/exploratory_charters[]), making the WS-1/ETC-1/TF-1+TPHD-1 consumers reachable.
   - **3.19 bug fixes** (v2.19.9 + v2.19.16 + v2.19.17) — 3.19.3 finding_dedup header; **3.19.1** mock_budget JS gap (hoisted module-level vi.mock/jest.mock were silently dropped → now file-scope boundary-checked; Go reduced-coverage note in the header); **3.19.2** diagnose PERSISTING status keyed off carried_anno (annotation-only) → now off prior_finding_ids incl. merged_ids (fixed status render + counts); **3.19.7** /triage raw-write-over-an-opened-project DATA-LOSS (bare-cat NOT_FOUND when env unset) → robust vault resolve + fail-closed (VAULT_UNRESOLVED→STOP, RE_TRIAGE→append, only FRESH writes); **3.19.4** _vault_write os.write short-write loop + honest "concurrency-not-crash" docstring + immortal-.lock doc.
   - **3.7 — ✅ DONE (v2.20.3, commit pending push):** merged test_first_audit + walking_skeleton_audit + exploratory_charter_audit → ONE `scripts/lib/brief_variants_audit.py` (shared; >1 skill) driven by a declarative `SPECS` table {flag, array_key, statuses, strict_accepted, case, required_field, findings-conditional} + 3 hooks (TF-1 AC-coverage + PTFCD-1/PTFFD-1 disk via `_pyfn`; WS-1 `--execute` reality run; ETC-1 findings-when-completed/deferred). **Exit-code parity proven** old-vs-new across 23 fixtures (incl. `--execute` pass/fail/advisory) BEFORE deleting the originals. Normalizations: status-case folds per-variant; missing TARGET is fail-visible exit-2 for all variants (was TF-only); non-dict row → `format`. Rewired both call sites (`pre_finish_gate.py` `--variant test_first`; validate-slice SKILL.md WS/ETC `--variant ...`) + manifest `batch3.json` + regenerated the design record + `_pyfn.py` doc refs. 25 new tests (`tests/test_brief_variants.py`); suite now **93 green**. 3.9's "deletes two carry-over sites for free" was already satisfied (carry-over was gone).
-  - **REMAINING (Phase 3):** **3.1 rest** (DCE-1 drift-log-timestamp cross-check needs a NEW /drift-check side-effect file → scope creep, OR demote/gate-log; BCSG-1 demote-to-advisory weakens a Critical-rule gate → **judgment call, confirm before doing**); **3.19 leftovers** = 3.19.5 (vault_root lazy — *optional* perf), 3.19.6 (assemble CSS/JS split — *optional* refactor), 3.19.8 (UX-8 hook swallows cwd-keyed vault WARN — **do together with Phase-4 item 4.6**, the hook vault-pin redesign).
+  - **3.1-rest BCSG-1 — ✅ DONE (v2.22.0, USER chose gate-log-as-model-tier):** added `"build-checks": "low"` to
+    `gate_log.GATE_CONTACT` (BCSG-1 is model-on-model self-attestation — "was-it-MARKED, not was-it-RUN"); `/build-slice`
+    now appends a `build-checks` gate-log row at `low` reality-contact after the pre-finish gate (new "Step C"), so the
+    measurement spine (`/pulse`, `/critic-calibrate`) SEES it; tagged its green as model-tier in `build_checks_audit.py`'s
+    docstring. **The hard STOP is KEPT** (a forcing function). **Deliberately did NOT auto-wire it into 3.2 gate-skip** —
+    that filter is an explicit allowlist {critique, critique-review, code-review}; a project-author Critical build-check is
+    closer to compliance-mandatory than the discretionary critique spawn, so auto-skipping it would re-introduce the
+    "weakens a Critical gate" risk. A future demote-to-advisory stays a deliberate USER call the data can now inform.
+    +6 gate_log tests (suite **99 green**). DCE-1 (the OTHER 3.1-rest half) stays an ACCEPTED defer (its drift-log-timestamp
+    cross-check needs a NEW /drift-check side-effect file = scope creep).
+  - **REMAINING (Phase 3) = optional only:** 3.19.5 (vault_root lazy — *optional* perf), 3.19.6 (assemble CSS/JS split —
+    *optional* refactor), 3.19.8 (UX-8 hook swallows cwd-keyed vault WARN — **do together with Phase-4 item 4.6**, the hook
+    vault-pin redesign). No Phase-3 judgment calls remain.
   - **WS-1 gate-log/example polish owed:** the mission-brief `architectural_layers` example still shows a prose `verification`; update to a runnable command under 3.18.2.
   - Helpers a later item should know about: `.build/plugin_self_audits.py` (six evicted self-audits, for CI 4.4), `skills/build-slice/scripts/pre_finish_gate.py` (2.5 gate orchestrator), `active_slice.py --folder-only`, and `gate_log.py`'s new `design-tournament` gate + `INFORMATIONAL_GATES`.
 - **Phase 4 — 🔶 STARTED (4.1 + 4.4 + 4.10 ✅ DONE; no remaining USER decisions).**
@@ -225,7 +237,7 @@ Background numbers (verified): a medium-tier Standard slice for a 50-line change
 
 ## Phase 3 — Coherence, philosophy alignment & script consolidation
 
-### 3.1 Attestation gates: add reality or demote *(MAJOR)*
+### 3.1 Attestation gates: add reality or demote *(MAJOR)* — ✅ DONE (WS-1 execute v2.19.5; BCSG-1 gate-log-as-model-tier v2.22.0; DCE-1 = accepted defer)
 **Problem:** DCE-1 (`drift_check_audit.py`), CRP-1, BCSG-1 (in `build_checks_audit.py` ≈513–531), WS-1 (`walking_skeleton_audit.py`), ETC-1 (`exploratory_charter_audit.py`) verify model-written JSON markers and run as hard exit-code STOPs — model-grading-model wearing deterministic clothing, while sitting entirely OUTSIDE the gate-log measurement spine. The scripts self-describe honestly ("was-it-MARKED, not was-it-RUN" — drift_check_audit.py ≈9–13).
 **Fix:** (a) WS-1: actually execute each layer's `verification` command (subprocess, like `shippability_runner.py` ≈148–171 does for machine_cmd) — turns it into a real reality gate; (b) DCE-1: cross-check the drift-log entry timestamp against a /drift-check side-effect file; (c) where reality contact isn't feasible (BCSG-1 ack echoes), demote to advisory (exit 0 + report) and/or log them as model-tier rows in gate-log so the spine sees them.
 **Accept:** WS-1 spawns the verification commands; remaining attestation-only checks are advisory or gate-logged as model-tier.

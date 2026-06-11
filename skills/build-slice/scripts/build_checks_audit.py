@@ -47,6 +47,18 @@ BCSG-1 strict gate (ADR-072): under `--strict`, each applicable Critical rule
 whose id is NOT in `--ack-critical` becomes an `unacknowledged-critical`
 violation, so the exit code (`1 if violations else 0`) gates the slice.
 
+MODEL-TIER self-attestation (3.1c): BCSG-1 checks that the Builder *acknowledged*
+each applicable Critical rule (echoed its id into `--ack-critical`), NOT that
+reality verified it — "was-it-MARKED, not was-it-RUN". So its green is a
+`low` reality-contact (model-on-model) green, NOT a reality green. The hard STOP
+is KEPT (a forcing function that makes the Builder enumerate + confront each
+Critical project rule), but `/build-slice` now gate-logs a `build-checks` row at
+`low` contact so the measurement spine (`gate_log.GATE_CONTACT["build-checks"]`,
+`/pulse`, `/critic-calibrate`) MEASURES it instead of trusting an unmeasured gate.
+A future demote-to-advisory remains a deliberate USER call informed by that data —
+it is NOT auto-skippable (a project-author Critical rule is closer to
+compliance-mandatory than the discretionary critique spawn).
+
 NFR-1 mtime carry-over was REMOVED (3.9 — it was dead for every post-install user).
 `--no-carry-over` is still accepted as a no-op for CLI compatibility.
 
