@@ -8,7 +8,7 @@
 
 ## ⏳ EXECUTION STATUS (as of 2026-06-11 — read FIRST on resume)
 
-All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.19.1**.
+All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.19.6**.
 
 - **Phase 1 — ✅ DONE (8/8, tested)** · commit `2ed5500` (v2.18.4)
 - **Phase 2 — ✅ DONE (10/11, tested)** · commit `b381bcc` (v2.19.0)
@@ -16,14 +16,19 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
     `risk_tier` + `critic_required` alone; mode only sets the default tier (Minimal→low, Standard/Heavy→medium)
     + Heavy's compliance floor. **Honor this in any later item that touches gating.**
   - **2.11 DEFERRED** (optional; tier-only already cuts Minimal gate writes).
-- **Phase 3 — 🔶 PARTIAL (5/19)** · commit `c2285d2` (v2.19.1) — done: **3.4, 3.6, 3.14, 3.15, 3.16**.
-  - **REMAINING:** 3.1, 3.2, 3.3, 3.5, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, 3.17, 3.18, 3.19
-    (mostly multi-file script refactors — merge variant audits, shrink SVW-1, WS-1 execute, artifact_lint, etc.).
-  - **Re-scope note for 3.8:** CRP-1 was already rewritten in **2.3** (tier-driven; no longer a DCE-1 byte-clone),
-    so 3.8 now = the hyphen-tolerance fix + the DCE-1 side only, not a CRP-1/DCE-1 merge.
-  - New helpers a later item should know about: `.build/plugin_self_audits.py` (the six evicted self-audits, for
-    CI — item 4.4), `skills/build-slice/scripts/pre_finish_gate.py` (the 2.5 gate orchestrator), and
-    `active_slice.py --folder-only`.
+- **Phase 3 — 🔶 PARTIAL (~14/19)** · prior commit `c2285d2` (v2.19.1) did 3.4, 3.6, 3.14, 3.15, 3.16.
+  Session of 2026-06-11 (commits `4e2438c`→`b2d86d1`, v2.19.2→v2.19.6) added:
+  - **3.10** (v2.19.2) — removed the degenerate `--resolve-soft` surface + dead resolve fns; commit-slice routes off `--classify`.
+  - **3.12** (v2.19.2) — deleted supersede-slice's doomed `_index.json` stamp; `/pulse --full` reads supersession from reflection.json.
+  - **3.13** (v2.19.2) — ONE canonical stage-derivation rule shared by `/archive` + `/pulse` (critique.json OPTIONAL).
+  - **3.5** (v2.19.3) — critic-calibrate ADD template now emits an `active_checks[]` overlay check, not splice-into-critique.md text.
+  - **3.2** (v2.19.3) — NEW third calibration kind **gate-skip** (`gate_skips[]` overlay; precision<0.2 over ≥8 runs; model-tier only; compliance-mandatory always overrides; reality spine excluded). `/critique` consumes it in its gating decision.
+  - **3.3** (v2.19.4) — design-slice records per-pair `approach_divergence` in design.json.tournament + a `design-tournament` gate-log row (gate_log.py gained the gate + `--approach-divergence`, marked INFORMATIONAL so pulse excludes it from precision/quiet); `/pulse --full` surfaces it + the drop-to-2-designers rule.
+  - **3.1 (WS-1 portion)** (v2.19.5) — walking_skeleton_audit `--execute` actually RUNS each layer's verification (subprocess); non-zero exit = violation, prose/unrunnable = non-gating advisory. validate-slice WS-1 gate now calls `--execute`. (DCE-1 timestamp cross-check + BCSG-1 demote still TODO.)
+  - **3.8 (hyphen portion)** (v2.19.6) — skip regex now tolerates em-dash/en-dash/hyphen in BOTH CRP-1 + DCE-1. The CRP/DCE **merge** is DROPPED (re-scope: CRP-1 no longer a byte-clone after 2.3).
+  - **REMAINING:** **3.7** (merge test_first/walking_skeleton/exploratory_charter → `brief_variants_audit.py` — RISKY ~970-line consolidation, recommend AFTER the 4.4 test harness exists); **3.9** (delete `date(2026,5,6)` carry-over from the 5 remaining audits — triage_audit, build_checks_audit, critique_review_audit, exploratory_charter_audit, validate_slice_layers — mechanical, keep `--no-carry-over` no-op; walking_skeleton already done); **3.1 rest** (DCE-1 drift-log-timestamp cross-check, BCSG-1 demote-to-advisory in build_checks_audit ≈513-531); **3.11** (shrink SVW-1 skill_vault_write_safety_audit.py 733→~150 lines); **3.17** (validate-slice fork must not AskUserQuestion mid-fork — return `blocked: needs-deferral-decision`, main thread asks + appends); **3.18** (schema/contract batch — incl `artifact_lint.py`, `_index.json` two shapes, examples carry load-bearing fields, **3.18.3 NEEDS USER DECISION** [variants producer-vs-delete], pulse updated_at→at, actor example, spike_ref format); **3.19** (8 small fixes — mock_budget JS gap, diagnose PERSISTING bug, finding_dedup stale header, write-path residuals, vault_root lazy, assemble split, UX-2 preamble, UX-8 hook stderr).
+  - **WS-1 gate-log/example polish owed:** the mission-brief `architectural_layers` example still shows a prose `verification`; update to a runnable command under 3.18.2.
+  - Helpers a later item should know about: `.build/plugin_self_audits.py` (six evicted self-audits, for CI 4.4), `skills/build-slice/scripts/pre_finish_gate.py` (2.5 gate orchestrator), `active_slice.py --folder-only`, and `gate_log.py`'s new `design-tournament` gate + `INFORMATIONAL_GATES`.
 - **Phase 4 — ⬜ NOT STARTED.** Needs **USER DECISIONS**: 4.1 (license choice) and 4.10 (ship-vs-demote the
   generated design record); 4.4 (tests + CI) is the high-value root-cause fix.
 
