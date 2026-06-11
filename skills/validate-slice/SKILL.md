@@ -219,8 +219,13 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py" <vault>/shippability.js
 The runner reads each row's Machine-cmd, splits on ` ; `, strips backticks per segment (reuses SCMD-1
 `_segments()`), executes each interpreter-anchored segment from the worktree root (`$wt`), reports PASS/FAIL per row.
 
-If any row FAILS: the current slice broke something a past slice established. This blocks /reflect. Either
-fix the regression or get explicit user approval to defer (with rationale logged in validation.json).
+If any row FAILS: the current slice broke something a past slice established — this blocks /reflect. Record the
+failed rows in `validation.json.shippability_regression.failed_rows` and leave `deferral: null`. **This skill runs
+as a forked context (`context: fork`) and CANNOT `AskUserQuestion`** — so the fork does NOT self-approve a deferral
+and does NOT prompt. It returns `blocked: needs-deferral-decision` to the main thread, which resolves it post-return
+(see **Main-thread deferral resolution** below): the user either fixes the regression (re-run `/validate-slice`) or
+approves an explicit deferral with rationale, and the **main thread** appends that decision to `validation.json`.
+NEVER write an approved deferral from inside the fork (3.17).
 
 ## Step 7 — write validation.json
 
@@ -248,11 +253,17 @@ Write `<vault>/slices/slice-NNN-<name>/validation.json` (schema by example: `exa
   ],
   "shippability_regression": {
     "ran": true,
-    "failed_rows": []
+    "failed_rows": [],
+    "deferral": null
   },
   "at": "<ts>"
 }
 ```
+
+`shippability_regression.deferral` stays `null` when the fork writes validation.json. If `failed_rows` is
+non-empty, the **main thread** fills it post-return (Main-thread deferral resolution): either it is never written
+(the user chose to fix → re-run) or it becomes `{"approved": true, "rationale": "<text>", "by": "user", "at":
+"<ts>"}`. The fork never sets `approved` — it cannot ask (3.17).
 
 Top-level `"result"` is computed as `"pass"` only when ALL criteria are `"pass"` AND all audits and
 shippability checks are green. Any criterion `"fail"` or `"partial"` → aggregate `"fail"` or `"partial"`.
@@ -310,6 +321,27 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
         --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
 ```
 
+## Main-thread deferral resolution (post-return — runs OUTSIDE the fork) (3.17)
+
+The fork has returned. If it returned `blocked: needs-deferral-decision` (a shippability regression with
+`shippability_regression.failed_rows` non-empty and `deferral: null`), the **main thread** now resolves it —
+this is where the user is asked, because a forked context cannot `AskUserQuestion`:
+
+1. Surface the failed rows from `validation.json.shippability_regression.failed_rows`.
+2. `AskUserQuestion` — two paths:
+   - **Fix the regression** → do NOT write a deferral; tell the user to fix it and re-run `/validate-slice`. HALT
+     (no advance to `/reflect`).
+   - **Defer with rationale** (rationale is mandatory; empty → re-ask) → append the decision to `validation.json`
+     via `vault_edit` (the file is a shared-aggregate write target; do not raw-overwrite):
+     set `shippability_regression.deferral = {"approved": true, "rationale": "<text>", "by": "user", "at": "<ts>"}`.
+     Then the regression is consciously accepted and the slice may advance to `/reflect`, which will record the
+     deferral as a known-debt lesson.
+3. Only after a `deferral.approved == true` (or a clean run with no failed rows) does the main thread auto-advance
+   to `/reflect`.
+
+The other post-return HALTs (per-criterion FAIL/PARTIAL, Layer-A credential finding — PCA-1) are surfaced the same
+way: the fork writes the verdict; the main thread owns the user gate.
+
 ## Critical rules
 
 - USE REAL ENVIRONMENTS. No mocks or simulators when real is possible.
@@ -334,4 +366,6 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
   - Any per-criterion FAIL — HALT (user decides remediation / failure classification). (PCA-1)
   - Any PARTIAL (per-criterion or aggregate) — HALT. Same disposition as FAIL; explicit gate required. (PCA-1)
   - Layer A (credential) finding — HALT. Cannot advance to /reflect until resolved.
-  - Shippability regression — HALT unless user approves explicit deferral with rationale.
+  - Shippability regression — the fork CANNOT ask mid-task; it returns `blocked: needs-deferral-decision` and the
+    MAIN THREAD resolves it post-return (fix + re-run, OR append a user-approved deferral + rationale to
+    validation.json via vault_edit — see "Main-thread deferral resolution"). HALT until resolved (3.17).

@@ -155,7 +155,7 @@
     "reality_contact": "high",
     "criteria": [{ "id": "AC1", "result": "pass", "evidence": "two browsers, avatar in 1.4s", "cause": null }],
     "reality_surprises": [{ "note": "Safari needs an explicit retry header", "becomes_candidate": "SC-024" }],
-    "shippability_regression": { "ran": true, "failed_rows": [] },
+    "shippability_regression": { "ran": true, "failed_rows": [], "deferral": null },
     "at": "<ts>"
   },
   "reflection": {
