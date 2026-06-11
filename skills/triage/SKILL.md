@@ -17,10 +17,26 @@ scaffold the vault, write `./CLAUDE.md`, hand off.
 
 ## Live state — injected
 
-Existing triage (re-triage detection):
+Existing triage (re-triage detection — UX-2 fail-closed, 3.19.7):
 ```!
-cat "$AI_SDLC_VAULT_ROOT/triage.json" 2>/dev/null || echo "NOT_FOUND"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+if [ -z "$VAULT" ]; then echo "VAULT_UNRESOLVED"
+elif [ -f "$VAULT/triage.json" ]; then echo "RE_TRIAGE (existing vault: $VAULT)"; cat "$VAULT/triage.json"
+else echo "FRESH (vault: $VAULT)"; fi
 ```
+
+> **UX-2 fail-closed (3.19.7) — read before any write.** This used to be a bare
+> `cat "$AI_SDLC_VAULT_ROOT/triage.json" 2>/dev/null || echo NOT_FOUND`: when
+> `$AI_SDLC_VAULT_ROOT` was unset (hook not fired / fresh session) it printed `NOT_FOUND`,
+> so triage thought an **already-opened** project was fresh and **raw-wrote over its vault**
+> (data loss). The block above resolves the vault via the env var OR `_vault_paths.py`:
+> - `VAULT_UNRESOLVED` → **STOP. Do NOT write** triage.json / risk-register.json. The vault
+>   root can't be determined (usually `$PY` / the SessionStart hook isn't set up). Tell the
+>   user to run `/ai-sdlc:setup` (or `export AI_SDLC_VAULT_ROOT=…`), then retry. Refuse rather
+>   than guess — a wrong guess overwrites an existing project's vault.
+> - `RE_TRIAGE …` → an opened project EXISTS. Take the **re-triage** path (Step 5a append to
+>   `history`; never raw-overwrite triage.json / risk-register.json).
+> - `FRESH …` → genuinely new; the Step 5a single-shot raw-write is safe. Write to that `$VAULT`.
 
 Project-root CLAUDE.md (append vs fresh-create):
 ```!
@@ -145,6 +161,10 @@ for compliance.
 Do NOT create those dirs for Minimal or Standard.
 
 ### Step 5a — Write triage.json and risk-register.json
+
+**Gate (UX-2, 3.19.7):** the single-shot raw-writes below run **only on the `FRESH` signal** from the re-triage
+injection above, targeting that resolved `$VAULT`. On `RE_TRIAGE` use the append/update path (end of this step); on
+`VAULT_UNRESOLVED` you already STOPped — never raw-write a guessed path.
 
 Write `<vault>/triage.json` — schema: `examples/triage.json`. Required top-level fields:
 `_schema`, `mode`, `date`, `classification` (domain_clarity / compliance / audience), `mode_rationale`,
