@@ -411,7 +411,12 @@ def _cmd_list(args: argparse.Namespace) -> int:
         target = _resolve_in_vault(_root(args), args.dir, arg_name="--dir")
     except ValueError as exc:
         _err(str(exc)); return 2
-    entries = sorted(p.name for p in target.iterdir()) if target.is_dir() else []
+    if not target.is_dir():
+        # Fail-visible (R-7): a missing / typo'd --dir was previously indistinguishable
+        # from an empty one (both printed nothing + exited 0). An EXISTING empty dir still
+        # prints nothing and exits 0; a non-existent / non-directory target exits 2.
+        _err(f"--dir {target} does not exist or is not a directory — cannot list."); return 2
+    entries = sorted(p.name for p in target.iterdir())
     if args.count:
         print(len(entries))
     else:
@@ -429,8 +434,14 @@ def _cmd_count(args: argparse.Namespace) -> int:
     key = args.array or _detect_array_key(data)
     if key is None:
         _err("specify --array (the doc has zero or multiple array fields)"); return 2
-    arr = data.get(key, []) if isinstance(data, dict) else []
-    print(len(arr) if isinstance(arr, list) else 0)
+    arr = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(arr, list):
+        # Fail-visible (R-7): printing `0` for a non-array field hid typos and schema
+        # drift (the field was scalar/dict/absent, not an empty array).
+        found = "no such field" if arr is None else f"a {type(arr).__name__}"
+        _err(f"field `{key}` is not a JSON array in {target} (found {found}) — "
+             f"count needs an array field."); return 2
+    print(len(arr))
     return 0
 
 

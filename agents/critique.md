@@ -144,12 +144,14 @@ In Minimal/Standard mode, design.json should **reference code locations** rather
 ## Output
 Produce the `critique.json` content the /critique skill will write to `<vault>/slices/slice-NNN-<name>/critique.json`, in the schema shown at `skills/critique/examples/critique.json`:
 
-`{ "_schema":"aisdlc/critique@1", "slice", "reviewed_by":"critique agent", "date":"<YYYY-MM-DD>", "result":"CLEAN|NEEDS-FIXES|BLOCKED", "summary", "findings":[{ "id":"B1|M1|m1", "dimension", "severity":"blocker|major|minor", "claim", "issue", "evidence", "fix", "builder_response":"pending" }], "dimensions_checked":[{ "dimension", "result":"<findings or 'none: reason'>" }] }`
+`{ "_schema":"aisdlc/critique@1", "slice", "reviewed_by":"critique agent", "date":"<YYYY-MM-DD>", "verdict":"clean|needs-fixes|blocked", "summary", "findings":[{ "id":"B1|M1|m1", "dimension", "severity":"blocker|major|minor", "claim", "issue", "evidence", "fix" }], "dimensions_checked":[{ "dimension", "result":"<findings or 'none: reason'>" }] }`
 
-**Result field rules** (these verdicts are PROVISIONAL — the user's TRI-1 triage at /critique Step 4.5 sets the final verdict, validated by `skills/critique/scripts/triage_audit.py`: any ESCALATED → BLOCKED; any ACCEPTED-PENDING → NEEDS-FIXES; else CLEAN):
-- **CLEAN**: zero blockers, zero majors — ready to build as-is.
-- **NEEDS-FIXES**: blockers/majors exist but are addressable this slice.
-- **BLOCKED**: ≥1 finding requires redesign or a spike — re-run /design-slice (or /risk-spike) first.
+You emit `verdict` + `findings[]` + `dimensions_checked[]`. The /critique skill adds each finding's `disposition` (the Builder's draft, Step 4) and the user-ratified `triage` object (Step 4.5) — do NOT set those yourself.
+
+**Verdict field rules** (this verdict is PROVISIONAL — the user's TRI-1 triage at /critique Step 4.5 sets the final verdict, validated by `skills/critique/scripts/triage_audit.py`: any `escalated` → `blocked`; any `accepted-pending` → `needs-fixes`; else `clean`):
+- **clean**: zero blockers, zero majors — ready to build as-is.
+- **needs-fixes**: blockers/majors exist but are addressable this slice.
+- **blocked**: ≥1 finding requires redesign or a spike — re-run /design-slice (or /risk-spike) first.
 
 Return a 2-line summary (Result + B/M/m counts) to the main thread; the full critique is in the JSON.
 

@@ -147,13 +147,9 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file build-ch
 ```
 Schema by example: `examples/build-checks.json`.
 
-**BCI-1 post-write gate (mandatory when a rule was promoted)**:
-1. Also add the rule to the canonical fixture `tests/methodology/fixtures/build_checks/canonical_project_checks.json`.
-2. Reconstruct the live file from the fixture (byte-copy), then run:
-   ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/build_checks_integrity.py"
-   ```
-3. Exit non-zero → STOP, reconstruct from fixture, re-run until exit 0.
+The `vault_edit append` above is the whole promotion — the rule is now live for the next slice's
+`/build-slice` BC-1 gate to enforce. (BCI-1, the build-checks **integrity** audit, is a plugin self-audit run
+in CI against the plugin's own fixtures — it is NOT a per-project step and references no user-side fixture.)
 
 ---
 

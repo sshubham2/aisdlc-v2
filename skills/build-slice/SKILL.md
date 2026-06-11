@@ -21,19 +21,21 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/stranded_slice_audit.py" --repo-root 
 
 Active mission brief (acceptance criteria, must-not-defer, test-first flag, smoke gate):
 ```!
-cat "${AI_SDLC_VAULT_ROOT}/slices/$(ls -1t "${AI_SDLC_VAULT_ROOT}/slices/" | grep -v archive | head -1)/mission-brief.json" 2>/dev/null
+SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only 2>/dev/null)"
+[ -n "$SDIR" ] && cat "$SDIR/mission-brief.json" 2>/dev/null
 ```
 
 Critic constraints (Critic findings the build must respect):
 ```!
-cat "${AI_SDLC_VAULT_ROOT}/slices/$(ls -1t "${AI_SDLC_VAULT_ROOT}/slices/" | grep -v archive | head -1)/critique.json" 2>/dev/null
+SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only 2>/dev/null)"
+[ -n "$SDIR" ] && cat "$SDIR/critique.json" 2>/dev/null
 ```
 
 ## Prerequisite check
 
 1. Find the active slice folder. Read `mission-brief.json`, `design.json`, `critique.json`, `critique-review.json` (if present — incorporate any MUST-FIX items as hard build constraints), and any ADRs created this slice.
-2. If `critique.json` is absent (Standard / Heavy mode): STOP — run `/critique` first.
-3. If `critique.json` shows `"result": "BLOCKED"`: STOP — address blockers before build.
+2. If `critique.json` is absent: this is OK **iff** the Critic was deliberately skipped. Read `milestone.json` `progress[]` and look for `{ "step": "critique", "done": "skipped" }` (the `/critique` skip path writes this on a low-tier slice with no mandatory triggers — `done` is the string `"skipped"`, not the boolean `true`). Skip recorded → proceed (Builder self-review applies). No such marker → STOP: run `/critique` first.
+3. If `critique.json` shows `"verdict": "blocked"`: STOP — address blockers before build.
 4. **TPHD-1 pre-flight**: scan the `mission-brief.json` TF-1 plan table; verify each Test path will exist at the right path and the Test function name matches what will be built. Flag any drift for user fix BEFORE entering plan mode.
 5. **CRP-1** (critique-review prerequisite):
    ```bash
@@ -53,7 +55,7 @@ Therefore:
 - **Resolve `$wt` and re-derive it in every code bash block** (it does not carry over):
   ```bash
   repo_root="$(git rev-parse --show-toplevel)"
-  slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
   wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
   cd "$wt"                       # fresh shell each block — re-derive + re-cd every time
   ```
@@ -166,7 +168,7 @@ Run audit gates in this order:
 # WT-ROOT-1 — worktree-root enforcement: the main tree must be clean of slice code (it all lives in $wt).
 # A non-empty main tree means edits leaked out of the worktree — STOP and move them into $wt.
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py" --worktree "$wt"
 
@@ -190,29 +192,18 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/test_first_audit.py" <vault>/slices/slice-NNN-<
 # BRANCH-1 — branch workflow audit
 $PY "${CLAUDE_SKILL_DIR}/scripts/branch_workflow_audit.py" <vault>/slices/slice-NNN-<name>
 
-# UTF8-STDOUT-1 — utf-8 stdout audit
-$PY "${CLAUDE_SKILL_DIR}/scripts/utf8_stdout_audit.py"
-
 # CRP-1 — critique-review prerequisite audit (defense-in-depth re-run)
 $PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py" <vault>/slices/slice-NNN-<name>
-
-# PCA-1 — pipeline-chain audit
-$PY "${CLAUDE_SKILL_DIR}/scripts/pipeline_chain_audit.py"
-
-# BCI-1 — build-checks integrity audit
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/build_checks_integrity.py"
-
-# STP-1 — state-transition stale-pin audit
-$PY "${CLAUDE_SKILL_DIR}/scripts/state_transition_pin_audit.py"
-
-# NAW-1 — new-agent warning audit
-$PY "${CLAUDE_SKILL_DIR}/scripts/new_agent_warning_audit.py"
-
-# SVW-1 — skill-vault-write-safety audit
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/skill_vault_write_safety_audit.py"
 ```
 
 If any gate fails: do not declare done — fix or escalate.
+
+> **Note — plugin self-audits are NOT in this gate.** Six checks that grade the *plugin's own* static
+> files (`UTF8-STDOUT-1`, `PCA-1`, `BCI-1`, `STP-1`, `NAW-1`, `SVW-1`) used to run here on every slice in every
+> user project, where they are either no-ops or re-scan the plugin install (a constant result per plugin
+> version, zero user value). They now run only in plugin CI (`.build/plugin_self_audits.py`, wired into the
+> GitHub Actions workflow), never on a user's slice. The **SVW-1 routing discipline** below still applies to
+> the Builder when it appends to shared vault files — that is a build-time rule, not a per-slice audit.
 
 **BC-1 Critical rule handling**: address each applicable Critical rule, attest in `build-log.json` (e.g. "BC-PROJ-3: this slice performs no destructive git reset of uncommitted work"), then pass the IDs via `--ack-critical`. Important rules may be deferred with rationale logged in `build-log.json`.
 

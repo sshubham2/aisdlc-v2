@@ -208,11 +208,12 @@ risk that selection alone can't).
 
 ## Step D1 — identify design-spike targets
 
-Read the active slice's `design.json` (latest `<vault>/slices/slice-*/design.json`). Collect targets:
+Read the active slice's `design.json` (the active slice is resolved via `active_slice.py` — branch-first, never mtime). Collect targets:
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-$PY -c "import json,glob,sys; v=sys.argv[1]; fs=sorted(glob.glob(f'{v}/slices/slice-*/design.json')); f=fs[-1] if fs else None; d=json.load(open(f,encoding='utf-8')) if f else {}; t=d.get('tournament',{}); dd=[x for x in t.get('decidable_disagreements',[]) if x.get('verdict','pending')=='pending']; mv=[i for i in (d.get('cross_domain_transfer') or {}).get('invariants',[]) if i.get('status')=='must-verify']; print(json.dumps({'design':f,'decidable_disagreements':dd,'must_verify_invariants':mv},indent=2))" "$VAULT"
+SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only 2>/dev/null)"
+$PY -c "import json,sys; sd=sys.argv[1]; f=(sd+'/design.json') if sd else None; d=json.load(open(f,encoding='utf-8')) if f else {}; t=d.get('tournament',{}); dd=[x for x in t.get('decidable_disagreements',[]) if x.get('verdict','pending')=='pending']; mv=[i for i in (d.get('cross_domain_transfer') or {}).get('invariants',[]) if i.get('status')=='must-verify']; print(json.dumps({'design':f,'decidable_disagreements':dd,'must_verify_invariants':mv},indent=2))" "$SDIR"
 ```
 
 - **Decidable disagreements** (`tournament.decidable_disagreements` with `verdict: pending`) — "API supports X?",

@@ -184,7 +184,7 @@
     "slice": "slice-021", "reviewed_by": "critique agent", "verdict": "needs-fixes",
     "findings": [{ "id": "C1", "dimension": "security", "severity": "major", "claim": "SSE endpoint lacks an auth check.", "fix": "gate on session cookie", "disposition": "accepted-pending" }],
     "dimensions_checked": [{ "dimension": "security", "result": "1 major" }, { "dimension": "edge-cases", "result": "none" }],
-    "triage": { "verdict": "needs-fixes", "ratified_by": "<user>", "at": "<ts>", "dispositions": [{ "finding": "C1", "action": "fix-now" }] }
+    "triage": { "verdict": "needs-fixes", "ratified_by": "<user>", "at": "<ts>", "dispositions": [{ "finding": "C1", "action": "accepted-pending" }] }
   },
   "critique-review": {
     "_schema": "aisdlc/critique-review@1",

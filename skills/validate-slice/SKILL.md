@@ -99,7 +99,7 @@ the repro test live), NOT the main tree. Each code ```bash block below is a fres
 `$wt` and `cd "$wt"` first:
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 cd "$wt"
 ```
@@ -110,7 +110,7 @@ changed — from `build-log.json`, or (from `$wt`) `git -C "$wt" diff --name-onl
 
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"   # WT-ROOT-1: scan worktree code
 $PY "${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py" \
   --slice <vault>/slices/slice-NNN-<name> \
@@ -161,7 +161,7 @@ Skip if `<vault>/shippability.json` does not exist (first slice — /reflect wil
 **WT-ROOT-1** — the slice's code (fix + repro test) is in the WORKTREE; the main tree must be clean:
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py" --worktree "$wt"
 ```
@@ -176,7 +176,7 @@ Non-zero → STOP: fix the row before running the catalog.
 **PTFCD-1** — verifies every `tests/<...>.py` token in Machine-cmd cells resolves to a file on disk (in `$wt`):
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"
 $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_path_audit.py" <vault>/shippability.json
 ```
@@ -195,7 +195,7 @@ worktree, where this slice's fix AND its repro test both live (running from the 
 the fix → false regression):
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"
 $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py" <vault>/shippability.json
 ```

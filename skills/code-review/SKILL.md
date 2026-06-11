@@ -43,7 +43,7 @@ NOT the main tree (HEAD = default there → an empty diff). The build leaves cha
 
 ```!
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 paths='src/** skills/** agents/** scripts/** tests/**'
 base="$(git -C "$wt" merge-base HEAD origin/HEAD 2>/dev/null)"   # fork point (real repos w/ origin/HEAD)

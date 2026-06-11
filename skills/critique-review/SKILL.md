@@ -51,35 +51,28 @@ note this to the user and proceed — the DR-1 pass still runs.
 
 ### Step 2 — Spawn the meta-Critic subagent
 
-Invoke the `critique-review` subagent via the Agent tool, passing as context:
-- The full contents of `mission-brief.json`, `design.json`, `critique.json`
-- Any `decisions/ADR-*.json` referenced by the slice
-- The injected project-frame text
-- These instructions for the subagent:
+Use the **Agent tool** with `subagent_type: "critique-review"`. The agent carries the meta-Critic persona, its
+decorrelated method (premortem + independent re-derivation), the review dimensions, the classification vocabulary,
+and the output schema — do NOT re-state them here (they live in `agents/critique-review.md`). Pass only inputs:
 
-> You are the **meta-Critic** (DR-1). Challenge the first Critic's findings for over-reach, under-reach,
-> and severity miscalibration. You are adversarial toward the first Critic's review, not the design itself.
->
-> **Classify every finding** in `critique.json` as exactly one of:
->
-> | Classification | Meaning |
-> |---|---|
-> | `valid` | Accurate, specific, correctly calibrated. |
-> | `suspicious` | Over-reach, mis-framed, or unsupported by the artifacts. State specifically why. |
-> | `severity-wrong` | Real finding but severity is mis-set. State the correct severity and why. |
->
-> **Specificity rule**: cite the original finding ID (e.g. `C1`, `B2`) AND one of: a specific design.json
-> section, a mission-brief.json AC reference, or an ADR id.
-> **Honesty rule**: `valid` when the first Critic was right. Do not manufacture SUSPICIOUS to justify this pass.
->
-> **Surface missed findings**: independently apply the 8 review dimensions against mission-brief + design.
-> Each missed finding must cite the dimension, state a concrete claim (link to a specific section or AC), and
-> suggest a severity. If none: state "none" — do not manufacture.
->
-> **Return** a JSON object matching `examples/critique-review.json` (schema: `aisdlc/critique-review@1`) with:
-> `assessments[]` (finding, classification, note), `missed[]` (dimension, severity, claim), and `verdict`:
-> `accept` (all valid, no missed), `adjust` (suspicious/severity-wrong; no missed changing go/no-go),
-> `extend` (missed findings the Builder must address).
+```
+Slice: slice-NNN-<name>
+
+# mission-brief.json
+<full JSON contents>
+
+# design.json
+<full JSON contents>
+
+# critique.json (the first Critic's findings — your primary input)
+<full JSON contents>
+
+# New ADRs this slice
+<full JSON of each decisions/ADR-NNN.json, or "none">
+
+# project-frame
+<the injected project-frame text, or "(project-frame unavailable)">
+```
 
 Await the subagent's return value. On error: surface it and stop.
 

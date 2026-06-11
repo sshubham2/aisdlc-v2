@@ -23,13 +23,15 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/pulse_worktree_resolver.py" --detect 
 Active slice mission-brief (mode + risk tier + critic_required):
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-$PY -c "import json,glob,sys; v=sys.argv[1]; slices=sorted(glob.glob(f'{v}/slices/slice-*/mission-brief.json')); f=slices[-1] if slices else None; d=json.load(open(f)) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" "$VAULT" 2>/dev/null || echo "{}"
+SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only 2>/dev/null)"
+$PY -c "import json,sys; f=sys.argv[1]; d=json.load(open(f+'/mission-brief.json')) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
 Active slice design.json (component contracts for Critic):
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-$PY -c "import json,glob,sys; v=sys.argv[1]; slices=sorted(glob.glob(f'{v}/slices/slice-*/design.json')); f=slices[-1] if slices else None; print(open(f).read() if f else '{}')" "$VAULT" 2>/dev/null || echo "{}"
+SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only 2>/dev/null)"
+$PY -c "import sys; f=sys.argv[1]; print(open(f+'/design.json').read() if f else '{}')" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
 Cross-slice action points:
@@ -72,10 +74,12 @@ security-sensitive paths, methodology surface (`skills/**`, `agents/**`, `script
 
 **`/critique --force`**: run regardless of tier; record the reason in `critique.json`.
 
-**On skip**: update `milestone.json` (`stage: "critique"`, `next_action: "/slice-story"`, mark step done
-as `skipped`). Print: _"Slice tier is `low`, no mandatory triggers. Skipping /critique — Builder self-review
-applies. Re-run with `/critique --force` to override."_ Then invoke `/slice-story` via Skill (it produces the
-plain-language pre-build report, then prompts `/build-slice`).
+**On skip**: update `milestone.json` (`stage: "critique"`, `next_action: "/slice-story"`) and set the critique
+entry in `progress[]` to exactly `{ "step": "critique", "done": "skipped" }` (the string `"skipped"`, not the
+boolean `true`). This marker is what lets `/build-slice` accept the absence of `critique.json` instead of
+deadlocking on "run /critique first". Print: _"Slice tier is `low`, no mandatory triggers. Skipping /critique —
+Builder self-review applies. Re-run with `/critique --force` to override."_ Then invoke `/slice-story` via Skill
+(it produces the plain-language pre-build report, then prompts `/build-slice`).
 
 ## Prerequisite check
 
@@ -185,13 +189,14 @@ The meta-Critic runs BEFORE the TRI-1 gate so its findings feed your triage (BB-
 `/critique-review` via the **Skill** tool (mandatory in Standard/Heavy for methodology surfaces —
 `skills/**`/`agents/**`/`scripts/**` — advisory otherwise; skip only on a low-tier slice with no mandatory
 triggers). It reads `critique.json`, spawns the meta-Critic agent, and writes
-`<vault>/slices/slice-NNN-<name>/critique-review.json` (verdict `accept|adjust|extend` with
-`confirmed[]` / `suspicious[]` / `missed[]` / `severity_adjustments[]`).
+`<vault>/slices/slice-NNN-<name>/critique-review.json` (verdict `accept|adjust|extend` with `assessments[]` —
+one per first-Critic finding, each classified `valid|suspicious|severity-wrong` — and `missed[]`).
 
 Merge its output into the finding set you triage in Step 4.5:
 - **missed[]** (`extend`) → add each to `critique.json` `findings[]` as a new finding (id `M-add-N`) with a Builder draft disposition.
-- **severity_adjustments[]** → apply the corrected severity to the named finding.
-- **suspicious[]** → flag the named finding as "meta-Critic: likely over-reach" so the user can drop it at triage.
+- **assessments[]** classified `severity-wrong` → apply the corrected severity (stated in the assessment's `note`) to the named finding.
+- **assessments[]** classified `suspicious` → flag the named finding as "meta-Critic: likely over-reach" so the user can drop it at triage.
+- **assessments[]** classified `valid` → no change (the first Critic was right).
 
 On `/critique-review` error or skip: proceed with the first Critic's findings only; note it to the user.
 

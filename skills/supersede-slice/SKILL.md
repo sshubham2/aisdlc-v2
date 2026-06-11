@@ -22,7 +22,7 @@ Skip when: adding a feature on top of a shipped slice (normal new slice); fixing
 
 Active slice (latest):
 ```!
-ls "$AI_SDLC_VAULT_ROOT/slices/" 2>/dev/null | grep -v archive | sort | tail -1
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --folder-only 2>/dev/null
 ```
 
 ---

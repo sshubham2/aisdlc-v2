@@ -35,12 +35,11 @@ Windows path-normalization mismatch (slice-089 Critic B1 + M-add-1).
 
 Read-only — never mutates git state.
 
-Per slice-090's documented cp1252 failure class: every ``git`` subprocess call here
-passes ``encoding="utf-8"`` so git's UTF-8 output round-trips on a non-UTF-8 host
-(Windows cp1252). The reused ``pulse_worktree_resolver._run_git`` does NOT pass
-``encoding=`` (slice-090's bug), so we do NOT call it — we run git ourselves and reuse
-only the pure-string ``_parse_worktree_porcelain`` parser, which consumes
-already-decoded text.
+Per slice-090's documented cp1252 failure class, all git output is decoded UTF-8 with
+``errors="replace"`` so it round-trips on a non-UTF-8 host (Windows cp1252). This now
+routes through the single shared ``scripts.lib._git_default_branch.run_git`` (the runner
+that historically lacked ``encoding=`` — that bug is fixed at the source), wrapped only
+to map a missing git binary to ``_GitError``.
 
 Cross-spec parity (CSP-1) with ``pulse_worktree_resolver`` / ``parallel_conflict_resolver``:
 argparse ``--repo-root`` (parse-time ``default=Path(".")``, post-parse ``.resolve()``),
@@ -65,6 +64,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from scripts.lib import _stdout
+from scripts.lib._git_default_branch import run_git
 from scripts.lib.pulse_worktree_resolver import _parse_worktree_porcelain
 
 __all__ = [
@@ -105,22 +105,13 @@ class StaleBranchVerdict:
 
 
 def _run_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """Run git with -C <repo_root>, decoding stdout/stderr as UTF-8.
-
-    ``encoding="utf-8"`` is load-bearing (slice-090): without it, CPython decodes
-    the child's pipe with ``locale.getpreferredencoding(False)`` (cp1252 on Windows),
-    which raises ``UnicodeDecodeError`` inside the pipe-reader thread on any
-    cp1252-undefined byte in git output. A missing git binary raises FileNotFoundError,
-    surfaced to the caller as _GitError.
+    """Thin wrapper over the shared UTF-8-safe runner
+    (``scripts.lib._git_default_branch.run_git``) that maps a missing git binary to
+    ``_GitError`` (the CSP-1 exit-1 contract). The UTF-8 + ``errors="replace"`` decoding
+    lives in the shared runner — no second runner definition here.
     """
     try:
-        return subprocess.run(
-            ["git", "-C", str(repo_root), *args],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-        )
+        return run_git(repo_root, *args)
     except FileNotFoundError as exc:  # git binary not on PATH
         raise _GitError(f"git binary unavailable: {exc}") from exc
 

@@ -26,9 +26,10 @@ Results are unioned and deduplicated by path.
 - v1 resolved ``base`` via a locally-defined ``_resolve_default_branch`` that
   duplicated ``branch_workflow_audit``'s logic. v2 imports
   ``resolve_default_branch`` (+ ``run_git``) from the shared
-  ``scripts.lib._git_default_branch`` leaf — single source of truth. There is
-  NO ``main`` literal fallback: ``None`` ⇒ NAW-1 exits 2 per the
-  default-branch-unresolvable semantics.
+  ``scripts.lib._git_default_branch`` leaf — single source of truth. The shared
+  resolver now falls back through ``main``/``master`` refs and the current branch
+  (``git symbolic-ref --short HEAD``), so a fresh ``git init`` repo resolves instead
+  of spuriously tripping NAW-1; ``None`` (git unusable) still ⇒ exit 2.
 - git subprocess calls route through the shared ``run_git`` (``git -C <root>``)
   helper rather than ad-hoc ``subprocess.run(cwd=…)``.
 - ``agents/*.md`` is unchanged in v2 (the agents/ directory still exists).
@@ -105,10 +106,10 @@ _USAGE_GIT_MISSING = (
     "resolve the slice diff."
 )
 _USAGE_DEFAULT_BRANCH_UNRESOLVABLE = (
-    "NAW-1 usage error: default branch unresolvable (neither "
-    "`git symbolic-ref refs/remotes/origin/HEAD` nor "
-    "`git config init.defaultBranch` returned a value). Configure an "
-    "`origin/HEAD` ref or set `init.defaultBranch`."
+    "NAW-1 usage error: default branch unresolvable — `origin/HEAD`, "
+    "`init.defaultBranch`, a `main`/`master` ref, AND the current branch "
+    "(`git symbolic-ref --short HEAD`) all failed. Is this a git repo on a branch? "
+    "Make an initial commit or set `init.defaultBranch`."
 )
 _USAGE_GIT_SUBCOMMAND_FAILED = (
     "NAW-1 usage error: `git {subcommand}` exited non-zero ({rc}): {stderr}"

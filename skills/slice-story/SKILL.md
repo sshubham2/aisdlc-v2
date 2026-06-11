@@ -25,7 +25,8 @@ to the user via `SendUserFile`** (it reaches them wherever they are, phone inclu
 Active slice + which artifacts exist (drives which sections the story includes):
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-$PY -c "import json,glob,os,sys; v=sys.argv[1]; ds=sorted([d for d in glob.glob(f'{v}/slices/slice-*/') if 'archive' not in d]); d=ds[-1] if ds else None; have=[os.path.basename(f) for f in sorted(glob.glob(f'{d}/*.json'))] if d else []; mb=json.load(open(f'{d}/mission-brief.json')) if d and os.path.exists(f'{d}/mission-brief.json') else {}; ms=json.load(open(f'{d}/milestone.json')) if d and os.path.exists(f'{d}/milestone.json') else {}; print(json.dumps({'active_slice_dir':d,'slice':mb.get('slice'),'title':mb.get('title'),'mode':mb.get('mode'),'risk_tier':mb.get('risk_tier'),'stage':ms.get('stage'),'artifacts_present':have},indent=2))" "$VAULT" 2>/dev/null || echo "{}"
+SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only 2>/dev/null)"
+$PY -c "import json,glob,os,sys; d=sys.argv[1] or None; have=[os.path.basename(f) for f in sorted(glob.glob(f'{d}/*.json'))] if d else []; mb=json.load(open(f'{d}/mission-brief.json')) if d and os.path.exists(f'{d}/mission-brief.json') else {}; ms=json.load(open(f'{d}/milestone.json')) if d and os.path.exists(f'{d}/milestone.json') else {}; print(json.dumps({'active_slice_dir':d,'slice':mb.get('slice'),'title':mb.get('title'),'mode':mb.get('mode'),'risk_tier':mb.get('risk_tier'),'stage':ms.get('stage'),'artifacts_present':have},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
 ## Step 0 — resolve the target slice
