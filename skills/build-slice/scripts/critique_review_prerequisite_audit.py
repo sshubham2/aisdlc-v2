@@ -63,9 +63,10 @@ from pathlib import Path  # noqa: E402
 from scripts.lib import _stdout  # noqa: E402
 
 # Canonical regex for the milestone.json `critique-review-skip` value. Same
-# `rationale:` spirit as BRANCH-1's `BRANCH=skip — rationale:` (ADR-024); the
-# em-dash `—` is required (NOT a hyphen) — remediation-plan 3.8 relaxes this.
-_SKIP_VALUE_RE = re.compile(r"^skip — rationale: .+")
+# `rationale:` spirit as BRANCH-1's `BRANCH=skip — rationale:` (ADR-024). 3.8:
+# the separator is now hyphen-TOLERANT — em-dash `—`, en-dash `–`, or a plain
+# hyphen `-` all pass (typography, not dishonesty, must never block the gate).
+_SKIP_VALUE_RE = re.compile(r"^skip\s*[—–-]\s*rationale:\s*.+")
 
 # first-Critic findings count at or above which DR-1 becomes mandatory.
 _FINDINGS_MANDATORY_THRESHOLD = 5
