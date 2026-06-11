@@ -8,7 +8,7 @@
 
 ## ⏳ EXECUTION STATUS (as of 2026-06-11 — read FIRST on resume)
 
-All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.20.0**.
+All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.20.2**.
 
 - **Phase 1 — ✅ DONE (8/8, tested)** · commit `2ed5500` (v2.18.4)
 - **Phase 2 — ✅ DONE (10/11, tested)** · commit `b381bcc` (v2.19.0)
@@ -49,13 +49,19 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
     hardened to **exit 1** on a cross-block-var-use hit (was always-0) — which immediately caught a **real bug** in
     this session's 3.1 WS-1 work (`validate-slice` WS-1 `--execute` block referenced `$wt` without re-resolving it in
     its fresh shell → empty `--repo-root`; **fixed**).
-  - **4.4 FOLLOW-UP (decision owed):** the **plugin-self-audits** CI job is `continue-on-error` (informational) because
-    `plugin_self_audits.py` is currently 2/7 red on PRE-EXISTING items: **PCA-1**'s canonical pipeline chain predates
-    the in-loop design-spike (`design-slice → /risk-spike --mode design`) and the slice-story report
-    (`critique → /slice-story`) — 5 violations; and **UTF8-STDOUT-1** finds 5 tools lacking the canonical `_stdout`
-    guard. The UTF8 ones are a safe mechanical fix; updating PCA-1's `_CANONICAL_CHAIN` is a **judgment call** (it
-    touches a Critical-severity gate that guards the `/commit-slice`-never-auto-invoked terminal boundary). Promote
-    the job to a hard gate once green.
+  - **4.4 FOLLOW-UP — ✅ DONE (plugin-self-audits now a HARD gate; 7/7 green).** Reconciled the 2/7 pre-existing reds:
+    - **UTF8-STDOUT-1** (v2.20.1) — made `_stdout.reconfigure_stdout_utf8()` the first `main()` statement (+ the
+      `from scripts.lib import _stdout` import) in the 5 flagged tools (assemble.py, write_pass.py, pre_finish_gate.py,
+      write_changelog.py, setup.py). Audit now 53/53 clean.
+    - **PCA-1** (v2.20.2, **USER-DECIDED — Option 1 "relax the matcher"**) — the 2 successor-mismatches were FALSE
+      POSITIVES (the shipped pipeline IS correct; the audit's first-token matcher was stale). New `_all_cmds()` matches
+      the canonical successor by **membership** — it passes iff the canonical edge appears among the block's listed
+      `/skill` tokens (v2 blocks list the conditional design-spike / slice-story alongside it) and STILL fails a
+      successor that omits the canonical edge. `_CANONICAL_CHAIN` + the `auto-advance:false` terminal-boundary check are
+      UNCHANGED (severity was "Important", not Critical — that guarantee was never at risk). Fixed the 3 missing-field
+      blocks (risk-spike + commit-slice `on-clean-completion`; code-review `user-input gates`). Added 3 PCA-1 unit tests
+      (multi-way PASS + omits-canonical FAIL + real-tree-clean). `plugin-self-audits` CI job flipped from
+      `continue-on-error` to GATING. **68 tests green.**
   - **Phase-4 REMAINING — USER DECISIONS:** 4.1 (license choice) and 4.10 (ship-vs-demote the generated design record);
     plus 4.5/4.6/4.7/4.8/4.9 (4.6 pairs with 3.19.8; 4.8 partly done via the `aggregate.py` ROOT fix).
 

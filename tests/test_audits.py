@@ -26,6 +26,7 @@ def _load(relpath, name):
 triage_audit = _load("skills/critique/scripts/triage_audit.py", "ai_sdlc_triage_audit")
 cr_audit = _load("skills/critique-review/scripts/critique_review_audit.py",
                  "ai_sdlc_critique_review_audit")
+pca_audit = _load("skills/build-slice/scripts/pipeline_chain_audit.py", "ai_sdlc_pca_audit")
 
 
 def _write(p, obj):
@@ -122,6 +123,29 @@ def test_critique_review_audit_missing_field_fails(tmp_path):
     p = tmp_path / "critique-review.json"
     _write(p, c)
     assert cr_audit.main([str(p)]) == 1
+
+
+# ── pipeline_chain_audit (PCA-1) — Option-1 membership matcher ────────────────────
+
+def test_pca_real_tree_is_clean():
+    # the shipped 10-skill chain conforms: the membership matcher accepts
+    # design-slice's conditional design-spike and critique's slice-story +
+    # in-loop critique-review listed alongside the canonical edge.
+    result = pca_audit.audit(repo_root=PLUGIN_ROOT)
+    assert not result.violations, [v.message for v in result.violations]
+
+
+def test_pca_matcher_accepts_canonical_among_alternatives():
+    toks = pca_audit._all_cmds("/risk-spike --mode design (conditional) -> then /critique")
+    assert "/critique" in toks
+    toks2 = pca_audit._all_cmds(
+        "/slice-story when >=1 finding else /build-slice; the /critique-review runs in-loop")
+    assert "/critique-review" in toks2
+
+
+def test_pca_matcher_still_fails_when_canonical_absent():
+    # the relaxation must NOT accept a successor that omits the canonical edge
+    assert "/critique" not in pca_audit._all_cmds("/build-slice directly")
 
 
 # ── deterministic plugin self-audit (the green member of plugin_self_audits) ──────

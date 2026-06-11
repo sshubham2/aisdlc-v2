@@ -50,16 +50,23 @@ lines, e.g.::
 The parser therefore splits the section into segments on both newlines AND
 ``·`` and extracts ``predecessor`` / ``successor`` / ``auto-advance`` /
 ``on-clean-completion`` ``key: value`` pairs from those segments. ``successor``
-is normalised to its first ``/skill`` token; ``auto-advance`` is normalised via
+is matched by MEMBERSHIP — the canonical edge must appear among the value's
+``/skill`` tokens (v2 blocks list a conditional / alternative successor alongside
+the canonical one; e.g. ``design-slice`` lists ``/risk-spike --mode design … then
+/critique`` and ``critique`` lists ``/slice-story … else /build-slice … the
+/critique-review meta-review runs in-loop``). ``auto-advance`` is normalised via
 the true-family / false mapping above.
 
 Refuse conditions (exit 1):
     malformed-block      : ``## Pipeline position`` section absent or a required
                            field missing/unparseable.
-    successor-mismatch   : declared successor != canonical successor.
+    successor-mismatch   : the canonical successor does NOT appear among the
+                           block's listed successor(s). (A successor that omits the
+                           canonical edge still fails — the relaxation only accepts
+                           the canonical edge listed alongside conditional ones.)
     auto-advance-mismatch: declared auto-advance != canonical value (the
                            ``/commit-slice``-never-auto-invoked terminal
-                           guarantee).
+                           guarantee — UNAFFECTED by the successor relaxation).
 
 Usage:
     python pipeline_chain_audit.py
@@ -171,15 +178,32 @@ class AuditResult:
 
 
 def _norm_cmd(raw: str) -> str:
-    """Normalize a successor value to a `/skill` command token.
-
-    Strips markdown backticks/bold and surrounding prose, keeps the first
-    `/skill`-shaped token. E.g. "**`/critique-review`** (then `/build-slice`)"
-    -> "/critique-review".
+    """Normalize a successor value to its FIRST `/skill` command token (used for
+    display). E.g. "**`/critique-review`** (then `/build-slice`)" -> "/critique-review".
     """
     cleaned = raw.replace("`", "").replace("*", "")
     m = re.search(r"/([a-z][a-z0-9-]+)", cleaned)
     return f"/{m.group(1)}" if m else cleaned.strip()
+
+
+def _all_cmds(raw: str) -> list[str]:
+    """Every `/skill` command token in a (possibly multi-way) successor value, in
+    order, deduped. v2 ``## Pipeline position`` blocks deliberately list a
+    conditional / alternative successor alongside the canonical edge (e.g.
+    ``/risk-spike --mode design (Step 8, conditional) -> then /critique`` or
+    ``/slice-story when ... else /build-slice``). PCA-1 therefore matches the
+    canonical successor by MEMBERSHIP: it passes iff the canonical edge appears
+    among the listed tokens, and still FAILS a successor that omits it. The
+    load-bearing terminal-boundary guarantee (``/commit-slice`` never auto-invoked)
+    is unaffected — it lives in the separate ``auto-advance`` check.
+    """
+    cleaned = raw.replace("`", "").replace("*", "")
+    out: list[str] = []
+    for m in re.finditer(r"/([a-z][a-z0-9-]+)", cleaned):
+        cmd = f"/{m.group(1)}"
+        if cmd not in out:
+            out.append(cmd)
+    return out
 
 
 def _norm_bool(raw: str) -> bool | None:
@@ -336,8 +360,8 @@ def audit(repo_root: Path | None = None) -> AuditResult:
             )
             continue
 
-        got_succ = _norm_cmd(succ_raw)
-        if got_succ != exp_succ:
+        got_cmds = _all_cmds(succ_raw)
+        if exp_succ not in got_cmds:
             result.violations.append(
                 PCAViolation(
                     kind="successor-mismatch",
@@ -345,8 +369,10 @@ def audit(repo_root: Path | None = None) -> AuditResult:
                     skill=skill,
                     message=(
                         f"skills/{skill}/SKILL.md `## Pipeline position` "
-                        f"successor is {got_succ!r}; canonical chain "
-                        f"requires {exp_succ!r}"
+                        f"successor(s) {got_cmds or '[none parseable]'} do not "
+                        f"include the canonical {exp_succ!r} (v2 blocks may list a "
+                        f"conditional/alternative successor, but the canonical edge "
+                        f"must appear among them)"
                     ),
                 )
             )

@@ -301,3 +301,4 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
   - No spiking candidate in context (feasibility) → `AskUserQuestion` for target (Step 1)
   - Any NO-GO (feasibility) → `AskUserQuestion` for fallback decision (Step 6)
   - Environment unavailable → halt and tell the user what's needed (Step 3 / D2–D4)
+- on-clean-completion: feasibility — all assumptions proven → write the spike record + advance to `/design-slice`; design (`--mode design`) — all targets GO → `/critique` (any NO-GO → `/design-slice` to re-synthesize).

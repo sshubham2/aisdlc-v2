@@ -98,3 +98,4 @@ let it override a reality gate.
 ## Pipeline position
 - predecessor: `/build-slice` · successor: `/validate-slice` · auto-advance: true
 - on-clean-completion: the main thread advances to `/validate-slice` after this fork returns.
+- user-input gates: none — `/code-review` runs as a forked agent and returns its verdict to the main thread (no mid-fork user prompts; the CRD-1 blocker disposition is gated in `/build-slice`, not here).

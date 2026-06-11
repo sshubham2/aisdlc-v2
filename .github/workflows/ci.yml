@@ -53,15 +53,11 @@ jobs:
           git diff --ignore-cr-at-eol --exit-code
 
   plugin-self-audits:
-    name: plugin self-audits (informational)
+    name: plugin self-audits
     runs-on: ubuntu-latest
-    # NON-GATING for now. plugin_self_audits.py currently reports pre-existing items
-    # the gate hasn't been reconciled with: PCA-1's canonical pipeline chain predates
-    # the in-loop design-spike (design-slice -> /risk-spike --mode design) and the
-    # slice-story report (critique -> /slice-story), and 5 tools lack the canonical
-    # _stdout UTF-8 guard. Promote to a hard gate once plugin_self_audits.py is green
-    # (tracked: remediation 4.4 follow-up).
-    continue-on-error: true
+    # GATING: all 7 pass on the current tree (UTF8-STDOUT-1 conformance fixed in
+    # v2.20.1; PCA-1 reconciled in v2.20.2 — its successor matcher now accepts the
+    # canonical edge listed alongside the conditional design-spike + slice-story).
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

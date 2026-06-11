@@ -314,3 +314,4 @@ actually commits and re-runs `/commit-slice --merge`/`--push`.)
 - successor: `/slice` (next slice) or `/pulse` (re-orient)
 - auto-advance: false — `/commit-slice` is never auto-invoked by any skill; it is always user-triggered
 - user-input gates: always user-invoked; `--merge`/`--push`/`--sync-after-pr` each require explicit yes/no confirmations before any git state change; PCR-2b HARD gate uses TRI-RESOLVE-1 (AskUserQuestion, 3 options)
+- on-clean-completion: after the chosen mode's git actions succeed, write `changelog.json` into the archived slice + report the result; hand back to the user for `/slice` (next) or `/pulse` (re-orient) — never auto-advances.
