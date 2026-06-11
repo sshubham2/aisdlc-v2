@@ -137,6 +137,14 @@ You now hold 2–3 independent proposals. Compose **one** design — this is the
    its pattern is (partly) selected — its `must-verify` invariants are design-spike + `/critique` targets. Take
    `designer-expert`'s `channeled_experts` into `tournament.channeled_experts` (the `/critique` independence guard
    reads it so the Critic is a *different* expert — Phase 3.5).
+5. **Measure the divergence (3.3 — measure "diverse at generation", don't just assert it).** For each designer
+   **pair**, classify how different their proposals actually were: `identical` (same approach modulo wording),
+   `overlapping` (shared core, differing details), or `disjoint` (materially different approaches). Record one
+   entry per pair into `tournament.approach_divergence`. This is the empirical check on the tournament's whole
+   premise — and the **decision rule** it feeds: if a project's `designer-practice ~ designer-expert` pair comes
+   back `identical`/`overlapping` on **most high-tier slices**, the expert lens is converging on practice and not
+   earning its spawn cost → **drop to 2 designers** (the medium-tier default) for this project. `/pulse --full`
+   surfaces the cross-slice aggregate from the design-tournament gate-log row (Step 5).
 
 The synthesized design is "what's new for this slice." **Thin-vault discipline**: reference code locations, don't
 duplicate them; design ONLY what this slice ships. The vault grows with the system, not ahead of it.
@@ -184,8 +192,26 @@ Key fields:
   `must-verify` invariants are what the design spike and `/critique` check.
 - `tournament` — **only on the tournament path** (omit on single-flight low-tier slices): `tier`, `designers[]`,
   `proposals[]` (`designer`, `approach`, `selected: core|partial|none`), `channeled_experts[]`,
-  `selection_rationale`, `coherence_check`, `decidable_disagreements[]`, `taste_disagreements[]`.
+  `selection_rationale`, `coherence_check`, `decidable_disagreements[]`, `taste_disagreements[]`,
+  `approach_divergence[]` (3.3 — per designer-pair `{pair, divergence: identical|overlapping|disjoint}`).
 - `at` — ISO-8601 timestamp
+
+**Gate-log the divergence (tournament path only — 3.3).** After writing design.json, append one *informational*
+`design-tournament` gate-log row so "diverse at generation" is measurable across slices (skip on single-flight
+low-tier slices — no tournament ran):
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate design-tournament --slice slice-NNN-<name> \
+    --verdict <most-divergent pair: identical|overlapping|disjoint> --findings-count 0 \
+    --approach-divergence "practice~crossdomain:<d>; practice~expert:<d>; crossdomain~expert:<d>" \
+    --mode <minimal|standard|heavy> --tier <medium|high> \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
+This row raises no findings (it is informational, not a verdict/finding gate — `/pulse` excludes it from the
+quiet/lighten math); `/pulse --full` reads it to surface the project's expert-lens cost over time.
 
 **Wiring matrix (WIRE-1)**: every new module declares a consumer entry point AND a consumer test, or carries an
 explicit `exemption` with substring `"rationale:"`. build-slice treats null-exemption + empty consumer fields as a failure.

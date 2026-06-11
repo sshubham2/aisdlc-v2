@@ -24,7 +24,13 @@ the default is correct for every current gate). The single source of truth is
 Verdict row shape (default `--kind verdict`; optional fields OMITTED, never written
 as null — matches the vault's "omit empty" convention so absence reads cleanly):
     {at, slice, gate, verdict, findings_count, reality_contact
-     [, findings_real][, findings_noise][, mode][, tier][, cross_domain]}
+     [, findings_real][, findings_noise][, mode][, tier][, cross_domain][, approach_divergence]}
+
+The `design-tournament` gate (3.3) is INFORMATIONAL — it raises no findings
+(findings_count 0); its row carries `approach_divergence` (how diverse the blind
+designers were: identical|overlapping|disjoint per pair) so `/pulse --full` can track,
+over a project, whether the expert lens earns its cost. Readers must not treat its
+always-zero raised_rate as "quiet" (see INFORMATIONAL_GATES).
 
 `--kind miss` (plan Phase 0.2 RECALL half / roadmap Theme 8) emits a recall row: a
 real issue this gate SHOULD have caught but MISSED, surfaced later. No verdict /
@@ -86,7 +92,13 @@ GATE_CONTACT: dict[str, str] = {
     "code-review": "low",        # the model grading a diff
     "critique": "low",           # the model grading the model
     "critique-review": "low",    # the model grading the model (meta)
+    "design-tournament": "low",  # informational: how diverse the blind designers were (3.3) — NOT a finding gate
 }
+# Informational gates raise no findings; their row carries a measurement, not a verdict
+# of pass/fail. Readers (pulse) must NOT treat their always-zero raised_rate as a
+# "quiet / lighten candidate", and they are excluded from the /critic-calibrate lighten
+# filter by construction (that filter passes only critique/critique-review/code-review).
+INFORMATIONAL_GATES: frozenset[str] = frozenset({"design-tournament"})
 _CONTACTS = {"high", "medium", "low"}
 _SLICE_RE = re.compile(r"^(slice-\d+)(?:-.+)?$")
 
@@ -148,6 +160,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                    help="mark this row as a cross-domain-transfer outcome — set by risk-spike / "
                         "validate-slice when the slice's design.json carries a cross_domain_transfer "
                         "(Phase 2.3 validity ratio: did reality confirm the borrowed pattern?)")
+    p.add_argument("--approach-divergence", default=None, dest="approach_divergence",
+                   help="(design-tournament gate, 3.3) how diverse the blind designers were — a "
+                        "per-pair summary, e.g. 'practice~expert:overlapping; practice~crossdomain:disjoint'. "
+                        "Lets /pulse --full track whether the expert lens is earning its cost over a project.")
     p.add_argument("--at", default=None, help="ISO-8601 timestamp (default: now, UTC)")
     p.add_argument("--out", default=None,
                    help="write the row to this file and print the path "
@@ -242,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
                 row[k] = v.strip()
         if args.cross_domain:
             row["cross_domain"] = True
+        if args.approach_divergence and args.approach_divergence.strip():
+            row["approach_divergence"] = args.approach_divergence.strip()
 
     payload = json.dumps(row, ensure_ascii=False)
     if args.out:
