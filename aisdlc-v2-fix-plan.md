@@ -8,7 +8,7 @@
 
 ## ⏳ EXECUTION STATUS (as of 2026-06-11 — read FIRST on resume)
 
-All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.22.0**.
+All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.22.1**.
 
 - **Phase 1 — ✅ DONE (8/8, tested)** · commit `2ed5500` (v2.18.4)
 - **Phase 2 — ✅ DONE (10/11, tested)** · commit `b381bcc` (v2.19.0)
@@ -81,10 +81,19 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
     plan's "gitignore .build/", which would have dismantled 4.4's CI — aggregate.py/cross_block/plugin_self_audits/manifests
     live there); `examples/` stay tracked + shipped; deleted `.build/probe.py` + `.build/review.json` (detritus); dropped
     "source of truth" framing from README/CLAUDE.md; CI aggregate-clean gate now guards the tracked `examples/` only.
-  - **Phase-4 REMAINING:** 4.2 (storefront copy), 4.3 (pin code-review-graph), 4.5 (artifact schema versioning), 4.6 (hook
-    vault-pin — pairs with 3.19.8), 4.7 (vault lifecycle/secrets-sweep), 4.8 (finish portable `.build/` ROOTs — aggregate.py
-    done), 4.9 (meta-docs cleanup — would absorb the residual CLAUDE.md "source of truth"/skill-count drift). None are
-    blocking; none need a NEW user decision.
+  - **4.6 (2 of 3) + 3.19.8 — ✅ DONE (v2.22.1, USER chose the safe hook-only subset):** `hooks/setup_env.py` rewritten —
+    **4.6.2** the env-file write is ONE idempotent marked managed block (was `open(...,"a")` → duplicate exports piled up on
+    every clear/compact; now strips legacy un-markered copies on migration + preserves foreign lines); **4.6.3** a re-fire
+    whose block already names a still-existing PY short-circuits (zero re-probe subprocesses); **3.19.8a** the deliberate
+    cwd-keyed vault `WARN` is RELAYED to stdout (was swallowed). Verified by actually firing the hook twice on a tmp env-file
+    (dedupe + short-circuit + migration confirmed) + 7 unit tests; suite **106 green**. **4.6.1 DEFERRED (the cross-repo
+    fix):** stop exporting `AI_SDLC_VAULT_ROOT` needs converting **9 bare-consumer skills / 17 sites** (critic-calibrate ×5,
+    reduce ×4, user-test ×2, design-slice, drift-check, reflect, risk-spike, supersede-slice, validate-slice) to the
+    `${AI_SDLC_VAULT_ROOT:-…}` fallback — invasive + un-live-testable, best validated on a live install.
+  - **Phase-4 REMAINING:** 4.2 (storefront copy), 4.3 (pin code-review-graph), 4.5 (artifact schema versioning), **4.6.1**
+    (vault-export removal + 9-skill conversion — deferred above), 4.7 (vault lifecycle/secrets-sweep), 4.8 (finish portable
+    `.build/` ROOTs — aggregate.py done), 4.9 (meta-docs cleanup — residual CLAUDE.md "source of truth"/skill-count drift).
+    None are blocking; none need a NEW user decision.
 
 Resume by reading this file + `git log --stat` on `fix/remediation-plan`.
 
@@ -340,7 +349,7 @@ Background numbers (verified): a medium-tier Standard slice for a 50-line change
 5. **vault_root lazy resolution** *(optional)* — `_vault_paths.py` ≈262 resolves at import (git subprocess + stderr nag per CLI invocation). Consider module `__getattr__` lazy+cached resolution; preserves precedence, kills the per-import spawn.
 6. **assemble.py split** *(optional)* — move the ~1,100-line CSS + ~180-line JS (≈501–1771, ~57% of the file) to sibling `assemble.css`/`assemble.js` inlined at build time; fix the false "Self-contained — no scripts.lib" comment (≈2260–2262 vs the import at line 43).
 7. **UX-2 standard degradation preamble** — skills diverge on missing `$AI_SDLC_VAULT_ROOT`: adopt fails closed with `${VAR:-$($PY _vault_paths.py)}` + FATAL (≈23, 147–148); triage (≈22) and build-slice (≈24, 29, 56, 169) bare-`cat` with `2>/dev/null || echo NOT_FOUND` — triage can mis-detect an opened project as fresh and raw-write over it. Fix: one shared preamble (`VAULT=${AI_SDLC_VAULT_ROOT:-$("$PY" .../_vault_paths.py --path)}; [ -n "$VAULT" ] || FATAL`) in every vault-touching SKILL.md; triage fails closed before any raw-write.
-8. **UX-8 hook swallows the cwd-keyed vault warning** — `hooks/setup_env.py` ≈113 captures and discards the resolver's stderr; `_vault_paths.py` ≈248–258 deliberately nags loudly when keying the vault on a non-git cwd. Fix: relay the WARN to the hook's stdout, or skip exporting `AI_SDLC_VAULT_ROOT` when resolution fell to the cwd fallback. (Interacts with 4.6 — do together.)
+8. **UX-8 hook swallows the cwd-keyed vault warning** — ✅ DONE (v2.22.1, option a: relay): `resolve_vault_root` now returns `(path, warn)` and `main` relays the `WARN` line(s) to stdout. `hooks/setup_env.py` ≈113 captures and discards the resolver's stderr; `_vault_paths.py` ≈248–258 deliberately nags loudly when keying the vault on a non-git cwd. Fix: relay the WARN to the hook's stdout, or skip exporting `AI_SDLC_VAULT_ROOT` when resolution fell to the cwd fallback. (Interacts with 4.6 — do together.)
 
 ---
 
@@ -373,7 +382,7 @@ Background numbers (verified): a medium-tier Standard slice for a 50-line change
 **Fix:** every writer stamps `_schema: <artifact>/v1` + `_plugin_version` (vault_edit can inject on create; SKILL.md templates include it — the `_conventions.md` `_schema` tag already half-exists). Readers (pulse, drift-check, artifact_lint) WARN on unknown/major-newer schema. Document the policy in `_conventions.md`: schema bump = migration note in CHANGELOG.
 **Accept:** new artifacts carry both fields; pulse surfaces a skew warning when present.
 
-### 4.6 Fix the SessionStart hook's vault pinning *(MAJOR)*
+### 4.6 Fix the SessionStart hook's vault pinning *(MAJOR)* — 🔶 PARTIAL (4.6.2 dedupe + 4.6.3 short-circuit + 3.19.8a relay ✅ v2.22.1; 4.6.1 vault-export removal DEFERRED — needs the 9-skill fallback conversion)
 **Problem:** `hooks/setup_env.py` ≈158–164 exports `AI_SDLC_VAULT_ROOT` resolved from the session-start cwd into `CLAUDE_ENV_FILE`; `_vault_paths.py` ≈235–240 gives that env var tier-1 precedence, frozen at import. So mid-session work against a DIFFERENT repo (`/bug-hunt <path>`, `/diagnose <path>`, cd) routes every vault write to the FIRST project's vault, silently. The hook also re-appends duplicate export lines on every clear/compact (file opened `'a'`), and runs ~5–6 subprocesses in every Claude Code project, ai-sdlc user or not.
 **Fix:**
 1. Stop exporting `AI_SDLC_VAULT_ROOT` from the hook entirely — export only `$PY`/`$CRG`, and let `_vault_paths.py` resolve the vault per-invocation from the actual cwd/git context (it already does this well; the env tier remains for explicit user overrides). If skills' bash blocks consume the env var directly, the 3.19.7 shared preamble covers the fallback.
