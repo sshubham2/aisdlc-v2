@@ -8,7 +8,7 @@
 
 ## ⏳ EXECUTION STATUS (as of 2026-06-11 — read FIRST on resume)
 
-All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.19.6**.
+All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.19.19**.
 
 - **Phase 1 — ✅ DONE (8/8, tested)** · commit `2ed5500` (v2.18.4)
 - **Phase 2 — ✅ DONE (10/11, tested)** · commit `b381bcc` (v2.19.0)
@@ -16,8 +16,9 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
     `risk_tier` + `critic_required` alone; mode only sets the default tier (Minimal→low, Standard/Heavy→medium)
     + Heavy's compliance floor. **Honor this in any later item that touches gating.**
   - **2.11 DEFERRED** (optional; tier-only already cuts Minimal gate writes).
-- **Phase 3 — 🔶 PARTIAL (~18/19)** · prior commit `c2285d2` (v2.19.1) did 3.4, 3.6, 3.14, 3.15, 3.16.
-  Session of 2026-06-11 (commits `4e2438c`→`8582634`, v2.19.2→v2.19.14) added:
+- **Phase 3 — 🔶 PARTIAL (~18.5/19; only 3.7 + 3.1-rest + optional/paired 3.19 leftovers remain)** · prior commit
+  `c2285d2` (v2.19.1) did 3.4, 3.6, 3.14, 3.15, 3.16. Session of 2026-06-11 (commits `4e2438c`→`ab40a88`,
+  v2.19.2→v2.19.18) added:
   - **3.10** (v2.19.2) — removed the degenerate `--resolve-soft` surface + dead resolve fns; commit-slice routes off `--classify`.
   - **3.12** (v2.19.2) — deleted supersede-slice's doomed `_index.json` stamp; `/pulse --full` reads supersession from reflection.json.
   - **3.13** (v2.19.2) — ONE canonical stage-derivation rule shared by `/archive` + `/pulse` (critique.json OPTIONAL).
