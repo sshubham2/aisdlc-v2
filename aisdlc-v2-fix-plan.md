@@ -8,7 +8,7 @@
 
 ## ⏳ EXECUTION STATUS (as of 2026-06-11 — read FIRST on resume)
 
-All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.20.3**.
+All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.21.0**.
 
 - **Phase 1 — ✅ DONE (8/8, tested)** · commit `2ed5500` (v2.18.4)
 - **Phase 2 — ✅ DONE (10/11, tested)** · commit `b381bcc` (v2.19.0)
@@ -37,7 +37,7 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
   - **REMAINING (Phase 3):** **3.1 rest** (DCE-1 drift-log-timestamp cross-check needs a NEW /drift-check side-effect file → scope creep, OR demote/gate-log; BCSG-1 demote-to-advisory weakens a Critical-rule gate → **judgment call, confirm before doing**); **3.19 leftovers** = 3.19.5 (vault_root lazy — *optional* perf), 3.19.6 (assemble CSS/JS split — *optional* refactor), 3.19.8 (UX-8 hook swallows cwd-keyed vault WARN — **do together with Phase-4 item 4.6**, the hook vault-pin redesign).
   - **WS-1 gate-log/example polish owed:** the mission-brief `architectural_layers` example still shows a prose `verification`; update to a runnable command under 3.18.2.
   - Helpers a later item should know about: `.build/plugin_self_audits.py` (six evicted self-audits, for CI 4.4), `skills/build-slice/scripts/pre_finish_gate.py` (2.5 gate orchestrator), `active_slice.py --folder-only`, and `gate_log.py`'s new `design-tournament` gate + `INFORMATIONAL_GATES`.
-- **Phase 4 — 🔶 STARTED (4.4 ✅ DONE).**
+- **Phase 4 — 🔶 STARTED (4.1 + 4.4 + 4.10 ✅ DONE; no remaining USER decisions).**
   - **4.4 (tests + CI) — ✅ DONE** (v2.20.0): NEW `tests/` pytest suite (65 tests, green) covering `_vault_write`
     concurrency primitives (lock/CAS/append/EOL + lost-update threads), `vault_edit` CLI exit-code contracts
     (incl. the 1.7 fail-visible exits + CAS exit-3), `active_slice` resolution (git-branch + vault-scan), `finding_dedup`
@@ -63,8 +63,16 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
       blocks (risk-spike + commit-slice `on-clean-completion`; code-review `user-input gates`). Added 3 PCA-1 unit tests
       (multi-way PASS + omits-canonical FAIL + real-tree-clean). `plugin-self-audits` CI job flipped from
       `continue-on-error` to GATING. **68 tests green.**
-  - **Phase-4 REMAINING — USER DECISIONS:** 4.1 (license choice) and 4.10 (ship-vs-demote the generated design record);
-    plus 4.5/4.6/4.7/4.8/4.9 (4.6 pairs with 3.19.8; 4.8 partly done via the `aggregate.py` ROOT fix).
+  - **4.1 — ✅ DONE (v2.21.0, USER chose MIT):** added `LICENSE` (MIT), `"license": "MIT"` in plugin.json, README License section.
+  - **4.10 — ✅ DONE (v2.21.0, USER chose DEMOTE):** gitignored `skill.json` (×30) + `skill-graph.json` (~358KB, zero
+    runtime consumers — kept LOCAL as authoring history); `git rm --cached` all 31; **KEPT `.build/` tracked** (refines the
+    plan's "gitignore .build/", which would have dismantled 4.4's CI — aggregate.py/cross_block/plugin_self_audits/manifests
+    live there); `examples/` stay tracked + shipped; deleted `.build/probe.py` + `.build/review.json` (detritus); dropped
+    "source of truth" framing from README/CLAUDE.md; CI aggregate-clean gate now guards the tracked `examples/` only.
+  - **Phase-4 REMAINING:** 4.2 (storefront copy), 4.3 (pin code-review-graph), 4.5 (artifact schema versioning), 4.6 (hook
+    vault-pin — pairs with 3.19.8), 4.7 (vault lifecycle/secrets-sweep), 4.8 (finish portable `.build/` ROOTs — aggregate.py
+    done), 4.9 (meta-docs cleanup — would absorb the residual CLAUDE.md "source of truth"/skill-count drift). None are
+    blocking; none need a NEW user decision.
 
 Resume by reading this file + `git log --stat` on `fix/remediation-plan`.
 
@@ -326,7 +334,7 @@ Background numbers (verified): a medium-tier Standard slice for a 50-line change
 
 ## Phase 4 — Distribution, infrastructure, lifecycle
 
-### 4.1 LICENSE *(blocking for public distribution)*
+### 4.1 LICENSE *(blocking for public distribution)* — ✅ DONE (v2.21.0, MIT)
 **Problem:** publicly distributed (README instructs `/plugin marketplace add sshubham2/aisdlc-v2`; repo is its own marketplace; external PRs merged) with NO license file, no `license` key in plugin.json, zero README mentions — legally all-rights-reserved.
 **Fix:** USER DECISION REQUIRED — pick a license (MIT/Apache-2.0 typical for plugins). Add `LICENSE`, `"license"` key in `.claude-plugin/plugin.json`, one README line. Ask the user; do not pick silently.
 
@@ -383,7 +391,7 @@ Background numbers (verified): a medium-tier Standard slice for a 50-line change
 4. **schemas/_conventions.md:** fix the false per-file example layout claim (≈4 — 35 of 36 examples live inside artifact-examples.json), enumerate all example keys (or generate the table in aggregate.py), delete the "next batch" footer.
 5. **README dependency table:** sync with requirements.txt (PyYAML = diagnose + bug-hunt + slice-candidates fallback; CRG "installed by setup; degrades gracefully if absent" — consistent wording both places).
 
-### 4.10 Stop shipping the dead design record *(MAJOR, decision required)*
+### 4.10 Stop shipping the dead design record *(MAJOR, decision required)* — ✅ DONE (v2.21.0, DEMOTE; see EXECUTION STATUS)
 **Problem (verified):** `skill.json` ×30 (250,698 B) + `skill-graph.json` (107,206 B) + `.build/` (367,654 B) = ~725KB ≈ 32% of the tracked repo with ZERO runtime consumers (grep across skills/scripts/agents/hooks: only 2 commentary mentions). The record is also already WRONG: its critique→build-slice edge predates slice-story (the shipped flow is critique→slice-story→build), and all 30 `source` fields + the graph's `generated_from` point at the deleted `temp/` tree.
 **Fix (recommended option b):**
 - (a) Keep shipping + make it true: regenerate manifests to include slice-story wiring, fix `source` fields (aggregate.py ≈243 default), add a CI check diffing `hands_off_to` vs SKILL.md successor lines. Cost: permanent double bookkeeping.
