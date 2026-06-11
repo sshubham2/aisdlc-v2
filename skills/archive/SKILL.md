@@ -124,12 +124,20 @@ Key fields: `_schema`, `project`, `mode`, `total`, `active_count`, `archived_cou
 - Each `summary` is the slice's `mission-brief.json` `intent` field, first sentence, trimmed, ≤ 500 chars. NOT the reflection's full summary paragraph.
 - `action-points.json` is **never regenerated or modified by `/archive`** — it is a curated artifact. Only emit a ref pointer.
 
-Stage derivation (from files present in slice folder):
-- no `design.json` → `"spike"`
-- no `critique.json` → `"design"`
-- no `build-log.json` → `"critique"`
-- no `validation.json` → `"build"`
-- no `reflection.json` → `"validate"`
+**Canonical stage-derivation rule** (shared verbatim with `/pulse` Step 2 — keep the two identical): derive
+from file presence, checking the **highest** stage first (first match wins). `critique.json` is **OPTIONAL**
+(a low-tier slice with no mandatory trigger skips it — 1.1), so `build-log.json` presence decides `build`
+regardless of whether `critique.json` exists:
+
+| Highest-present file in slice folder | Stage |
+|---|---|
+| `reflection.json` | `reflect` (complete) |
+| `validation.json` | `validate` |
+| `build-log.json` | `build` |
+| `critique.json` (only when `build-log.json` is **absent**) | `critique` |
+| `design.json` | `design` |
+| `mission-brief.json` | `spike` |
+| (none / empty dir) | `none` — not started |
 
 ## `slices/archive/_index.json` schema: `examples/slice-index.json`
 

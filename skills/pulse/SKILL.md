@@ -98,16 +98,17 @@ Do NOT read individual slice design/mission files (active slice excepted). Do NO
 
 ## Step 2 — Compute derived metrics
 
-**Active slice stage + next action:** Read directly from `milestone.json` fields (`stage`, `next_action`, progress checkboxes, `on_resume`). If `milestone.json` is missing, derive stage from file existence as fallback (WARN: milestone absent) using this chain:
+**Active slice stage + next action:** Read directly from `milestone.json` fields (`stage`, `next_action`, progress checkboxes, `on_resume`). If `milestone.json` is missing, derive stage from file existence as fallback (WARN: milestone absent) using the **canonical stage-derivation rule** (shared verbatim with `/archive` Step 3 — keep the two identical): check the **highest** stage first (first match wins); `critique.json` is **OPTIONAL** (a low-tier slice with no mandatory trigger skips it — 1.1), so `build-log.json` presence decides `build` regardless of whether `critique.json` exists:
 
-| Files present in `<vault>/slices/slice-NNN-<name>/` | Derived stage |
+| Highest-present file in `<vault>/slices/slice-NNN-<name>/` | Derived stage |
 |---|---|
+| `reflection.json` | `reflect` (complete) |
+| `validation.json` | `validate` |
+| `build-log.json` | `build` |
+| `critique.json` (only when `build-log.json` is **absent**) | `critique` |
+| `design.json` | `design` |
+| `mission-brief.json` | `spike` (awaiting `/risk-spike`) |
 | none (directory missing or empty) | `none` — slice not started |
-| `mission-brief.json` only | `spike` (awaiting `/risk-spike`) |
-| `mission-brief.json` + `design.json` | `design` |
-| above + `build-log.json` | `build` |
-| above + `validation.json` | `validate` |
-| above + `reflection.json` | `reflect` (complete) |
 
 **Regression health:**
 - Shippability count from `shippability.json`.
@@ -307,6 +308,9 @@ Recent lessons: <3 one-liners>
 Balanced view plus:
 - All active HIGH risks with detail
 - All deferred items from last 5 reflections
+- **Supersession links** — for any reflection read above whose `supersession` block is set, show
+  `slice-NNN superseded by slice-MMM — <reason>` (this is the only surface for supersession; `/supersede-slice`
+  no longer stamps `_index.json` — 3.12). No extra file reads beyond the reflections already loaded.
 - All cross-slice action-points from `action-points.json`
 - Full shippability catalog listing
 - Critic calibration history (all past runs)
