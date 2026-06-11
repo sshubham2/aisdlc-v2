@@ -89,6 +89,14 @@ Pick mode:
 | **Minimal** | solo dev AND (MVP or exploration or one-off) |
 | **Standard** | everything else (default) |
 
+**What mode actually controls (be honest with the user).** Mode is NOT the per-slice review cost — that is set
+by each slice's **risk tier** (`/slice` Step 3a; the design tournament + `/critique` key on tier, not mode). Mode
+controls three things: (1) the **default tier** for new slices — Minimal ⇒ `low` (small work is cheap by default;
+bump up for risky cuts), Standard/Heavy ⇒ `medium`; (2) **vault structure** — Heavy creates components/contracts/
+threat-model/etc., Standard/Minimal stay thin; (3) **Heavy's compliance floor** — Heavy forces `critic_required`
+on every slice + requires human sign-off. So Minimal mostly saves cost by *defaulting slices to low tier*, not by
+weakening review on a slice you mark `medium`/`high`.
+
 State the mode + 2–3 sentence rationale. **Wait for user confirmation** via `AskUserQuestion` before
 writing any files.
 

@@ -1,6 +1,6 @@
 ---
 name: critique
-description: "Adversarial design review of the current slice by a separate Critic AI persona. Spawns a 'critique' subagent with 9 fixed attack dimensions, writes findings to critique.json, gates /build-slice behind user-owned TRI-1 triage. Mandatory in Standard (medium/high tier) and Heavy modes; skippable on low-tier slices with no mandatory triggers. BLOCKED verdict prevents auto-advance; CLEAN or NEEDS-FIXES proceed to /slice-story (the plain-language pre-build report), then /build-slice."
+description: "Adversarial design review of the current slice by a separate Critic AI persona. Spawns a 'critique' subagent with 9 fixed attack dimensions, writes findings to critique.json, gates /build-slice behind user-owned TRI-1 triage. Tier-driven: runs when risk_tier is medium/high OR critic_required is true; skipped on a low-tier slice with no mandatory trigger (mode is not a per-slice cost lever — it only sets the default tier + Heavy's sign-off floor). BLOCKED verdict prevents auto-advance; CLEAN or NEEDS-FIXES proceed to /slice-story (the plain-language pre-build report), then /build-slice."
 when_to_use: "Trigger phrases: /critique, 'critique this design', 'review the slice design', 'have the Critic review', 'adversarial review'. Use after /design-slice, before /build-slice. The forked adversarial review returns to the main thread for the interactive TRI-1 user triage gate."
 argument-hint: "[--force]"
 allowed-tools: Read, Grep, Bash, Write, Edit, Agent, AskUserQuestion, Skill
@@ -27,12 +27,9 @@ SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$
 $PY -c "import json,sys; f=sys.argv[1]; d=json.load(open(f+'/mission-brief.json')) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
-Active slice design.json (component contracts for Critic):
-```!
-VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only 2>/dev/null)"
-$PY -c "import sys; f=sys.argv[1]; print(open(f+'/design.json').read() if f else '{}')" "$SDIR" 2>/dev/null || echo "{}"
-```
+_(The full `design.json` is NOT pre-injected here — the Critic receives it verbatim in its agent prompt at Step 2,
+and the orchestrator reads it directly in Step 1 if it needs a field. Pre-injecting it too would cross the same
+JSON into context twice for no gain — 2.8.)_
 
 Cross-slice action points:
 ```!
@@ -54,21 +51,28 @@ VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vau
 $PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/critic-calibration-log.json'; d=json.load(open(f,encoding='utf-8')) if os.path.exists(f) else {}; print(json.dumps({'active_checks':d.get('active_checks',[]),'calibration_notes':d.get('calibration_notes',[])},indent=2))" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
-## Mode/tier gating
+## Gating — when the Critic runs (tier-driven)
 
-Read `risk_tier` and `critic_required` from `mission-brief.json` and `milestone.json`.
+Read `risk_tier` and `critic_required` from `mission-brief.json` (and `milestone.json`). The Critic is a
+**model-on-model** gate whose cost is paid per-slice, so it keys on the slice's **risk**, not the project's mode:
 
-| Mode    | Risk tier    | critic_required | Action                            |
-|---------|-------------|-----------------|-----------------------------------|
-| Heavy   | any          | any             | ALWAYS RUN + sign-off required    |
-| Standard | medium/high | any             | ALWAYS RUN                        |
-| Standard | low         | true            | RUN (mandatory trigger detected)  |
-| Standard | low         | false           | **SKIP** — Builder self-review    |
-| Minimal  | medium/high | any             | RUN (no sign-off)                 |
-| Minimal  | low         | true            | RUN                               |
-| Minimal  | low         | false           | **SKIP**                          |
+> **RUN when `risk_tier ∈ {medium, high}` OR `critic_required == true`.** Otherwise (`low` + `critic_required:
+> false`) **SKIP** — Builder self-review.
 
-**Mandatory triggers** (override low-tier to force `critic_required: true` even if `/slice` missed them):
+| Condition | Action |
+|-----------|--------|
+| `risk_tier` = high | RUN |
+| `risk_tier` = medium | RUN |
+| `risk_tier` = low AND `critic_required` = true | RUN (a mandatory trigger fired) |
+| `risk_tier` = low AND `critic_required` = false | **SKIP** — Builder self-review |
+| **Heavy mode**, any tier | RUN **+ human sign-off required** (Heavy forces `critic_required: true` at `/slice` — its compliance floor) |
+
+**Mode is NOT a per-slice cost lever.** It only sets the *default* tier at `/slice` (Minimal → `low`, Standard →
+`medium`, Heavy → `medium`) and Heavy's sign-off floor. A small Minimal-mode change defaults to `low` and skips
+the Critic; the same change marked `medium`/`high` (or tripping a mandatory trigger) runs it. The SAME slice gets
+the SAME scrutiny in any mode — risk drives review, project ceremony does not.
+
+**Mandatory triggers** (force `critic_required: true` even on a low-tier slice — set at `/slice`, re-checked here):
 auth/authz, new API contracts, data model/migrations, multi-device/sync, external integrations,
 security-sensitive paths, methodology surface (`skills/**`, `agents/**`, `scripts/**`).
 
@@ -78,8 +82,10 @@ security-sensitive paths, methodology surface (`skills/**`, `agents/**`, `script
 entry in `progress[]` to exactly `{ "step": "critique", "done": "skipped" }` (the string `"skipped"`, not the
 boolean `true`). This marker is what lets `/build-slice` accept the absence of `critique.json` instead of
 deadlocking on "run /critique first". Print: _"Slice tier is `low`, no mandatory triggers. Skipping /critique —
-Builder self-review applies. Re-run with `/critique --force` to override."_ Then invoke `/slice-story` via Skill
-(it produces the plain-language pre-build report, then prompts `/build-slice`).
+Builder self-review applies. Re-run with `/critique --force` to override. (`/slice-story` is available any time
+for a plain-language overview.)"_ Then HALT and prompt the user to run `/build-slice` when ready — do NOT spawn
+the narrator on a skipped slice (there is no review to narrate). (Also set `next_action: "/build-slice"` here, not
+`"/slice-story"`.)
 
 ## Prerequisite check
 
@@ -185,12 +191,27 @@ Required top-level fields: `_schema`, `slice`, `reviewed_by`, `verdict` (`clean|
 
 ## Step 3.5 — meta-Critic dual review (DR-1) — runs BEFORE triage
 
-The meta-Critic runs BEFORE the TRI-1 gate so its findings feed your triage (BB-28). Invoke
-`/critique-review` via the **Skill** tool (mandatory in Standard/Heavy for methodology surfaces —
-`skills/**`/`agents/**`/`scripts/**` — advisory otherwise; skip only on a low-tier slice with no mandatory
-triggers). It reads `critique.json`, spawns the meta-Critic agent, and writes
-`<vault>/slices/slice-NNN-<name>/critique-review.json` (verdict `accept|adjust|extend` with `assessments[]` —
-one per first-Critic finding, each classified `valid|suspicious|severity-wrong` — and `missed[]`).
+The meta-Critic runs BEFORE the TRI-1 gate so its findings feed your triage (BB-28).
+
+**When to run `/critique-review` (DR-1) — the canonical trigger table** (tier-driven, like `/critique`; the
+`critique_review_prerequisite_audit.py` CRP-1 gate at `/build-slice` enforces exactly this):
+
+| Trigger (run if ANY holds — MANDATORY; CRP-1 refuses `/build-slice` if absent + unrationalised) | Source |
+|---|---|
+| `risk_tier == high` | mission-brief.json |
+| `critic_required == true` — auth/authz · API contracts · data-model/migrations · security · methodology surface (`skills/**`/`agents/**`/`scripts/**`); Heavy forces this on every slice | mission-brief.json |
+| first-Critic `findings` count ≥ 5 (severity-inflation check) | critique.json |
+
+**Advisory (recommended, not refused):** 3+ consecutive `clean` first-Critic verdicts (calibration smell) —
+`/critic-calibrate` handles under-firing empirically across slices. Run it, or skip with a marker.
+
+**Otherwise SKIP**: no mandatory trigger → `/critique-review` is not required (CRP-1 accepts). If a mandatory
+trigger holds but you are deliberately skipping, add `"critique-review-skip": "skip — rationale: <text>"` to
+`milestone.json`.
+
+To run it, invoke `/critique-review` via the **Skill** tool. It reads `critique.json`, spawns the meta-Critic
+agent, and writes `<vault>/slices/slice-NNN-<name>/critique-review.json` (verdict `accept|adjust|extend` with
+`assessments[]` — one per first-Critic finding, each classified `valid|suspicious|severity-wrong` — and `missed[]`).
 
 Merge its output into the finding set you triage in Step 4.5:
 - **missed[]** (`extend`) → add each to `critique.json` `findings[]` as a new finding (id `M-add-N`) with a Builder draft disposition.
@@ -302,16 +323,16 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
 
 ## Step 5 — gate decision + milestone update
 
-After verdict:
-- **CLEAN** → proceed to `/slice-story`
-- **NEEDS-FIXES** → proceed to `/slice-story`; ACCEPTED-PENDING fixes are applied during `/build-slice`; OVERRIDDEN/DEFERRED recorded
+After verdict (the pre-build handoff is decided in Step 5b — `/slice-story` is conditional, not mandatory):
+- **CLEAN** / **NEEDS-FIXES** → go to the Step 5b handoff. ACCEPTED-PENDING fixes are applied during
+  `/build-slice`; OVERRIDDEN/DEFERRED are recorded.
 - **BLOCKED** (any ESCALATED) → **HALT (PCA-1)**. Do NOT auto-advance. Revise design (`/design-slice`),
   then re-run `/critique`.
 
 **Heavy mode + BLOCKED**: human reviewer sign-off on the redesign required before triage may clear BLOCKED.
 
 Update `<vault>/slices/slice-NNN-<name>/milestone.json` via `Edit`:
-- `stage: "critique"`, `next_action: "/slice-story"` (or `"address blockers then re-run /critique"`)
+- `stage: "critique"`, `next_action`: `"/slice-story"` when it will auto-run (Step 5b: ≥1 finding) else `"/build-slice"` (or `"address blockers then re-run /critique"` on BLOCKED)
 - Mark `{ "step": "critique", "done": true }` (or `"skipped"`)
 - `current_focus`: critique result summary (blocker + major counts)
 - `on_resume`: next step (or address blockers first)
@@ -319,14 +340,24 @@ Update `<vault>/slices/slice-NNN-<name>/milestone.json` via `Edit`:
 Use `Edit` (read-modify-write) — milestone.json is a shared file; route through `vault_edit` only if
 parallel writers are possible (standard Edit is safe for the orchestrator's own update here).
 
-## Step 5b — auto-advance
+## Step 5b — pre-build handoff (slice-story is conditional, not mandatory)
 
 `/critique-review` already ran IN-LOOP at Step 3.5 (its findings were triaged in Step 4.5), so there is
 NO post-triage meta-review step.
 
-On CLEAN or NEEDS-FIXES: advance to `/slice-story` (it generates the plain-language pre-build report, saves it
-in the slice folder + delivers it to you (phone included, via SendUserFile), then prompts the user to run `/build-slice` when ready).
-On BLOCKED: do NOT invoke any successor — HALT and surface instructions to the user.
+On **CLEAN or NEEDS-FIXES**, decide the handoff by whether there is anything to narrate:
+- **This critique produced ≥1 finding** (any severity, including minors and meta-Critic `M-add-*`): invoke
+  `/slice-story` via Skill. It generates the plain-language pre-build report (what the review found), saves it in
+  the slice folder, delivers it to you (phone included, via SendUserFile), then HALTS and prompts `/build-slice`.
+- **This critique produced ZERO findings**: do NOT spawn the narrator — nothing to report, and a narrator halt
+  here would be a third consecutive stop for no signal (TRI-1 → narrator → plan-approval). Print one line —
+  _"Clean review, no findings. Run `/slice-story` any time for a plain-language overview."_ — then HALT and prompt
+  the user to run `/build-slice` when ready.
+
+On **BLOCKED**: do NOT invoke any successor — HALT and surface instructions to the user.
+
+`/slice-story` stays fully **user-invokable** any time, in any mode, at any lifecycle stage — this gate governs
+only the *automatic* pre-build invocation.
 
 ## Critical rules
 
@@ -334,19 +365,18 @@ On BLOCKED: do NOT invoke any successor — HALT and surface instructions to the
 - Do NOT re-state the 9 dimensions or adversarial stance in the agent prompt — those live in the agent file.
 - Do NOT soften Critic findings. Dispute with rationale if wrong; never dilute severity.
 - Do NOT bypass the TRI-1 gate (Step 4.5) — even in auto-advance mode.
-- TRACK Critic accuracy in `/reflect`. Every 10–20 slices, run `/critic-calibrate`.
-- "No issues found" on 3+ slices in a row is a smell — re-read more aggressively or escalate.
+- TRACK Critic accuracy in `/reflect`. Every 10–20 slices, run `/critic-calibrate` (under-firing detection is its job, measured empirically across slices — not a per-slice quiet-streak nag here).
 - **Model-on-model gate (Phase 1.3).** This is LOW reality-contact — the model grading the model. It is advisory
-  and lighter on low-tier slices (see Mode/tier gating: skippable on Standard-low / Minimal-low with no mandatory
-  triggers) and NEVER overrides a reality gate (`/risk-spike`, `/validate-slice`). A clean critique is a
-  model-approval, not a reality sign-off — trust it less than a spike.
+  and skipped on a `low`-tier slice with `critic_required: false` (see the tier-driven gating above) and NEVER
+  overrides a reality gate (`/risk-spike`, `/validate-slice`). A clean critique is a model-approval, not a reality
+  sign-off — trust it less than a spike.
 
 ## Pipeline position
 
 - predecessor: `/design-slice` (or `/risk-spike --mode design` when a post-synthesis design spike ran — the spike already settled the empirically-decidable tournament disagreements; you attack the taste forks + the rest)
-- successor: `/slice-story` (the plain-language pre-build report; it then prompts `/build-slice`. The `/critique-review` meta-review runs IN-LOOP at Step 3.5, before triage)
+- successor: `/slice-story` **only when the Critic ran and produced ≥1 finding** (Step 5b) — it narrates the review then prompts `/build-slice`; otherwise (skip path, or a zero-finding clean review) the successor is `/build-slice` directly, with `/slice-story` offered as an optional one-liner. The `/critique-review` meta-review runs IN-LOOP at Step 3.5, before triage.
 - auto-advance: true (CLEAN/NEEDS-FIXES only)
 - user-input gates (halt auto-advance):
   - **Step 4.5 TRI-1** — always; user is final triage authority over BOTH Critic passes; Builder cannot self-ratify.
   - **Verdict BLOCKED** — halt; redesign via `/design-slice` then re-run `/critique`.
-- on-clean-completion: `/slice-story`.
+- on-clean-completion: `/slice-story` if ≥1 finding (Step 5b), else `/build-slice` directly.

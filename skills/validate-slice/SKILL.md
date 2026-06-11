@@ -24,10 +24,23 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py" --vault "$AI_SDLC_VAULT_R
 Read from the active slice folder:
 - `mission-brief.json` — acceptance criteria, verification plan, walking-skeleton/exploratory-charter flags
 - `build-log.json` — what was actually built; interpret deviations during AC validation
-- `code-review.json` (if present) — for any finding with `measure_at_validate: true` (a complexity/perf hypothesis the code-Critic deliberately did NOT assert), Step 1b benchmarks it on real data
+- `code-review.json` (if present) — (a) every `blocker` finding must be dispositioned in `triage.dispositions[]`
+  (the CRD-1 prerequisite below); (b) any finding with `measure_at_validate: true` (a complexity/perf hypothesis
+  the code-Critic deliberately did NOT assert) is benchmarked on real data in Step 1b
 
-**Prerequisite gate**: if `build-log.json` is missing OR `result != "shipped"` → STOP and surface. The slice
-is not ready to validate.
+**Prerequisite gate:**
+- if `build-log.json` is missing OR `result != "shipped"` → STOP and surface. The slice is not ready to validate.
+- **CRD-1 — no un-dispositioned code-review blockers.** Every `blocker`-severity finding in `code-review.json`
+  MUST carry a disposition in `triage.dispositions[]` (action `fixed`, or `overridden` + a non-empty rationale —
+  written by the MAIN thread after `/code-review` returned). Any un-dispositioned blocker → STOP and surface:
+  _"code-review blocker `<id>` has no disposition — fix it (re-run the relevant check) or override it with a
+  rationale in `code-review.json` `triage`, then re-run `/validate-slice`."_ Check:
+  ```bash
+  repo_root="$(git rev-parse --show-toplevel)"
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"
+  $PY -c "import json,os,sys; p=sys.argv[1]+'/code-review.json'; d=json.load(open(p,encoding='utf-8')) if os.path.exists(p) else {}; F=d.get('findings') or []; tr=d.get('triage') or {}; D={str(x.get('finding','')).strip() for x in (tr.get('dispositions') or []) if str(x.get('action','')).strip().lower() in {'fixed','overridden'} and str(x.get('rationale','')).strip()}; miss=[str(f.get('id')) for f in F if str(f.get('severity','')).lower()=='blocker' and str(f.get('id','')).strip() not in D]; print('CRD-1 un-dispositioned code-review blocker(s): '+', '.join(miss)) if miss else print('CRD-1: ok'); sys.exit(1 if miss else 0)" "$slice_folder"
+  ```
+  Exit 1 → STOP. (Major/minor code-review findings are advisory — not gated here.)
 
 ## Step 1 — per-criterion real-world checks
 

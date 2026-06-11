@@ -43,7 +43,8 @@ Prerequisite: archived slice folder has `reflection.json` (slice completed) — 
 From `<vault>/slices/archive/slice-NNN-<name>/` (or active slice folder for mid-slice):
 
 - `mission-brief.json` → intent (one-line), AC count
-- `critique.json` (if present) → blocker count + addressed status
+- `critique.json` (if present) → design-Critic blocker count + addressed status
+- `code-review.json` (if present) → code-Critic blocker count + each blocker's CRD-1 disposition (`fixed` / `overridden` + rationale)
 - `build-log.json` → `files_changed`, `deferrals`
 - `validation.json` → per-AC PASS/FAIL, shippability regression status
 - `reflection.json` → validated items, design corrections
@@ -58,13 +59,13 @@ Also:
 Type from intent verb: add→`feat`, fix→`fix`, refactor/reduce→`refactor`, improve/perf→`perf`, test→`test`, migrate→`chore` (or `feat` if user-facing), docs→`docs`. Default: `feat`.
 Scope: derived from the slice name area (e.g., `slice-023-add-receipt-ocr` → `receipt`).
 
-## Step 4 — generate commit message via Haiku dispatch
+## Step 4 — generate the commit message (inline)
 
-Per **COST-1**: dispatch to a Haiku subagent via the Agent tool (`model: haiku`). Hand the agent:
-- Input dict from Step 2: `{type, scope, slice_id, slice_path, intent_one_line, body_2_3_sentences, ac_pass, ac_total, critic_blockers, adrs, shippability_entry_n, shippability_entry_text, deferrals, regressions}`
-- The template below as fill spec
-
-The main thread gathers input (Step 2) and executes (Step 5); Haiku fills the template.
+Fill the template below **directly in the main thread** from the Step 2 input dict
+`{type, scope, slice_id, slice_path, intent_one_line, body_2_3_sentences, ac_pass, ac_total, critic_blockers,
+adrs, shippability_entry_n, shippability_entry_text, deferrals, regressions}`. This is a ~12-line mechanical fill —
+the old COST-1 Haiku-subagent dispatch cost more in spawn overhead than the ~500 tokens it saved, so it is done
+inline. (The defensible Haiku dispatch stays in `/archive`'s index regeneration.)
 
 **Commit message template:**
 ```
@@ -74,7 +75,8 @@ The main thread gathers input (Step 2) and executes (Step 5); Haiku fills the te
 
 Slice: [slice-NNN-<name>](<vault>/slices/archive/slice-NNN-<name>/)
 Acceptance criteria: <X>/<Y> PASS (see validation.json)
-Critic blockers addressed: <list or "none">
+Critic blockers addressed: <design-Critic list or "none">
+Code-review blockers: <code-Critic list + disposition (fixed / overridden + rationale) or "none">
 ADRs: <ADR-NNN, …> (or "none")
 Shippability entry: #<N> — <one-line>
 <if deferrals:   Deferred: <summary> (see reflection.json)>
@@ -88,7 +90,7 @@ Reviewer sign-offs: <from critique.json + validation.json>
 ```
 (Read `<vault>/non-functional.json` if present; omit the Compliance line entirely if the file does not exist — it is a Heavy-mode-only optional artifact.)
 
-**Minimal mode** (no critique): `Critic: skipped (Minimal mode)` (never omit the line).
+**Critic skipped** (low-tier slice, no mandatory trigger → no critique.json): `Critic: skipped (low-tier, no mandatory trigger)` (never omit the line).
 
 **Bug-fix slice** (preceded by `/repro`): body notes the reproduction test path and that it now passes.
 
@@ -276,7 +278,7 @@ Skips Steps 1–4 (no commit generated).
 ## Critical rules (all modes)
 
 - NEVER fabricate content — every field sourced from a vault file.
-- Missing field (e.g., no critique.json in Minimal): write `Critic: skipped (Minimal mode)` — never omit the line.
+- Missing field (e.g., no critique.json — Critic skipped on a low-tier slice with no mandatory trigger): write `Critic: skipped (low-tier, no mandatory trigger)` — never omit the line.
 - CONSISTENT FORMAT — every slice commit looks the same shape (audit tools scan for these patterns).
 - NEVER `--no-verify` (pre-commit hooks like `/drift-check` exist for a reason).
 - One slice per commit — if two are ready, two commits.

@@ -71,7 +71,7 @@ not buy platinum on a $5 slice:**
 |------|-----------|------|
 | **low / mechanical** (typo, config, rename, obvious CRUD) | **1 (inline)** | **Single flight** — use the "Single flight" path just below, then skip Step 2 (synthesis) → Step 3. No agents spawned, no design spike. **Zero added cost.** |
 | **medium** | **2 blind**: `designer-practice` + `designer-crossdomain` | Tournament |
-| **high / novel / irreversible** | **3 blind**: + `designer-expert` | Tournament + mandatory coherence pass + design spike |
+| **high / novel / irreversible** | **3 blind**: + `designer-expert` | Tournament + mandatory coherence pass + design spike **iff** the synthesis left a `pending` decidable disagreement or a `must-verify` invariant (Step 8) |
 
 **Escalate within medium → full 3** when the slice is genuinely *novel* (no similar prior slice in the injected
 reflections) or locks an *irreversible* ADR — those are exactly the slices where the expert lens earns its cost.
@@ -126,8 +126,11 @@ You now hold 2–3 independent proposals. Compose **one** design — this is the
    keep one and redesign the seam; record it in `coherence_check`.
 3. **Classify the disagreements.**
    - **Empirically decidable** (does the API support X? is it fast enough? does the integration actually work?)
-     → add to `tournament.decidable_disagreements` with `verdict: "pending"`. **Reality adjudicates these** at the
-     post-synthesis design spike (Step 8) — not you, not the Critic.
+     → add to `tournament.decidable_disagreements` with `verdict: "pending"` **only when the losing answer would
+     force a re-synthesis** — a different component boundary, contract, or data model. A cheap question whose
+     answer doesn't change the design (it just needs to hold) is NOT a decidable disagreement; let `/build-slice`'s
+     smoke gate settle it. **Reality adjudicates the material ones** at the post-synthesis design spike (Step 8) —
+     not you, not the Critic.
    - **Taste** (boundary placement, naming, layering) → add to `tournament.taste_disagreements`; these fall
      through to `/critique` + the user.
 4. **Carry the provenance.** Take `designer-crossdomain`'s `cross_domain_transfer` block into `design.json` when
@@ -223,10 +226,14 @@ the user: "Scope expanded to touch X; Critic is now mandatory."
 ## Step 8 — design-spike gate (post-synthesis; conditional)
 
 The tournament's empirically-decidable disagreements are settled by **reality**, not by the Critic. Run the
-post-synthesis **design spike** when ANY of these hold (otherwise skip straight to Step 9 → `/critique`):
+post-synthesis **design spike** when EITHER of these has something real to adjudicate (otherwise skip straight to
+Step 9 → `/critique`):
 - `tournament.decidable_disagreements` has any `verdict: "pending"`, OR
-- the selected `cross_domain_transfer` has any invariant `status: "must-verify"`, OR
-- `risk_tier` is `high` or this slice locks an `irreversible` ADR.
+- the selected `cross_domain_transfer` has any invariant `status: "must-verify"`.
+
+**Tier/irreversibility alone does NOT trigger a spike.** A high-tier or irreversible slice with nothing pending
+has nothing for reality to decide — spiking it would be an empty round-trip (it would just write a skip note and
+forward). The two target conditions above are the whole gate.
 
 To run it, invoke **`/risk-spike --mode design`** via the Skill tool. It spikes the chosen composition on the real
 environment, writes verdicts back into `design.json`'s `decidable_disagreements` + the `cross_domain_transfer`
@@ -248,8 +255,8 @@ ADR-NNN (count), milestone.json (stage: design). Next: <design spike | /critique
 
 Then advance — **do not wait for the user** unless Step 3 clarifying questions were asked (those already halted):
 - Step 8 fires → invoke `/risk-spike --mode design` via Skill.
-- Else → invoke `/critique` via Skill (it self-skips per its own mode/tier gate if `critic_required: false` and
-  advances onward).
+- Else → invoke `/critique` via Skill (it self-skips per its own tier gate when the slice is `low`-tier with
+  `critic_required: false`, and advances onward).
 
 ## Critical rules
 

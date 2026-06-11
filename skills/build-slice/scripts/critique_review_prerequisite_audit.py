@@ -1,34 +1,36 @@
-"""Critique-review prerequisite audit (CRP-1) — v2 JSON.
+"""Critique-review prerequisite audit (CRP-1) — v2 JSON, tier-driven.
 
-Refuses ``/build-slice`` when a mandatory ``/critique-review`` (DR-1) was skipped
-without a documented rationale. The first structural skip-detector for DR-1.
+Refuses ``/build-slice`` when a MANDATORY ``/critique-review`` (DR-1) was skipped
+without a documented rationale. The structural skip-detector for DR-1.
 
 Per CRP-1 (methodology-changelog.md v0.40.0). CRP-1 is an **audit-enforced gate**
 (its programmatic gate is this module), so per ADR-019's test-pinned naming note
 it carries the bare ``CRP-1`` form (NO ``-D`` suffix).
 
-**v2 changes from v1.**
-- The slice artifacts are JSON: ``milestone.md`` -> ``milestone.json``,
-  ``critique-review.md`` -> ``critique-review.json``. ``critic-required`` and the
-  ``critique-review-skip`` escape-hatch are now JSON FIELDS of ``milestone.json``
-  (not YAML frontmatter) — per ``skills/build-slice/SKILL.md`` Step 8, which keeps
-  these as preserved milestone keys.
-- Mode resolution reads ``<vault>/triage.json`` ``mode`` (was ``triage.md``
-  frontmatter), falling back to the repo ``CLAUDE.md`` ``**Mode**:`` line.
-- ``_vault_git.resolve_repo_root_for_slice`` is GONE in v2 (the slice folder lives
-  in the EXTERNAL shared vault, which has no ``.git`` ancestor). The vault root is
-  derived from the slice folder itself (``<vault>/slices/slice-NNN-<name>`` ->
-  ``<vault>``), so ``triage.json`` is found without a git walk. ``CLAUDE.md`` is
-  resolved from ``--root`` (default cwd) for the fallback.
+**Tier-driven trigger (remediation-plan 2.1 + 2.3).** ``/critique-review`` is no longer
+gated on pipeline *mode* — the meta-Critic is a model-on-model cost paid per slice, so
+it keys on the slice's RISK, exactly like ``/critique`` itself. It is MANDATORY when ANY
+of these hold (the canonical table also lives in ``skills/critique/SKILL.md`` Step 3.5):
+
+  - ``risk_tier == high``                              (mission-brief.json)
+  - ``critic_required == true``                        (mission-brief.json / milestone.json)
+        i.e. the slice trips a mandatory trigger — auth/authz, API contracts,
+        data-model/migrations, security, or a methodology surface. In Heavy mode
+        ``/slice`` forces ``critic_required: true`` on every slice, so Heavy's
+        compliance floor falls out of this row with no separate mode check.
+  - first-Critic ``findings`` count >= 5               (critique.json — severity-inflation check)
+
+(The "3+ consecutive clean first-Critic verdicts" calibration smell is ADVISORY — it is
+documented in the SKILL table and handled empirically by ``/critic-calibrate``, not
+hard-refused here, so this audit stays deterministic and free of gate-log coupling.)
 
 Refuse condition (exit 1, ``mandatory-critique-review-absent``):
-    mode in {STANDARD, HEAVY}
-    AND milestone.json ``critic_required`` (or ``critic-required``) is truthy
+    a mandatory trigger holds
     AND ``critique-review.json`` absent in the slice folder
     AND no ``critique-review-skip`` key in milestone.json
 
 Accept (exit 0): ``critique-review.json`` present, OR a canonical
-``critique-review-skip`` value present, OR mode == MINIMAL, OR not critic-required.
+``critique-review-skip`` value present, OR no mandatory trigger holds.
 
 Malformed-skip (exit 1, Important, ``escape-hatch-malformed``):
 ``critique-review-skip`` present but value does NOT match ``^skip — rationale: .+``.
@@ -36,12 +38,11 @@ Malformed-skip (exit 1, Important, ``escape-hatch-malformed``):
 Usage:
     python critique_review_prerequisite_audit.py <slice-folder>
     python critique_review_prerequisite_audit.py --json <slice-folder>
-    python critique_review_prerequisite_audit.py --root <repo-root> <slice-folder>
 
 Exit codes:
     0  clean (accept)
     1  violations (mandatory review absent + unrationalised, or malformed skip)
-    2  usage error (slice-folder missing, milestone.json missing, mode unresolvable)
+    2  usage error (slice-folder missing, milestone.json missing)
 """
 from __future__ import annotations
 
@@ -63,17 +64,17 @@ from scripts.lib import _stdout  # noqa: E402
 
 # Canonical regex for the milestone.json `critique-review-skip` value. Same
 # `rationale:` spirit as BRANCH-1's `BRANCH=skip — rationale:` (ADR-024); the
-# em-dash `—` is required (NOT a hyphen), matching v1 byte-for-byte.
+# em-dash `—` is required (NOT a hyphen) — remediation-plan 3.8 relaxes this.
 _SKIP_VALUE_RE = re.compile(r"^skip — rationale: .+")
 
-# Modes for which a mandatory /critique-review is enforced.
-_ENFORCED_MODES = {"STANDARD", "HEAVY"}
+# first-Critic findings count at or above which DR-1 becomes mandatory.
+_FINDINGS_MANDATORY_THRESHOLD = 5
 
 
 @dataclass(frozen=True)
 class CRPViolation:
     kind: str       # "mandatory-critique-review-absent" | "escape-hatch-malformed" |
-                    # "usage-error" | "mode-unresolvable"
+                    # "usage-error"
     severity: str   # "Important" (all CRP-1 violations refuse)
     message: str
 
@@ -85,8 +86,10 @@ class CRPViolation:
 class AuditResult:
     slice_folder: str = ""
     repo_root: str = ""
-    resolved_mode: str = ""
+    risk_tier: str = ""
     critic_required: bool | None = None
+    findings_count: int = 0
+    mandatory_triggers: list[str] = field(default_factory=list)
     critique_review_present: bool = False
     skip_key_present: bool = False
     skip_rationale: str | None = None
@@ -98,8 +101,10 @@ class AuditResult:
             "rule": "CRP-1",
             "slice_folder": self.slice_folder,
             "repo_root": self.repo_root,
-            "resolved_mode": self.resolved_mode,
+            "risk_tier": self.risk_tier,
             "critic_required": self.critic_required,
+            "findings_count": self.findings_count,
+            "mandatory_triggers": list(self.mandatory_triggers),
             "critique_review_present": self.critique_review_present,
             "skip_key_present": self.skip_key_present,
             "skip_rationale": self.skip_rationale,
@@ -133,46 +138,25 @@ def _field(data: dict, *keys: str) -> object:
     return None
 
 
-def _resolve_vault_root(slice_folder: Path) -> Path | None:
-    """Derive ``<vault>`` from a slice folder ``<vault>/slices/slice-NNN-<name>``.
-
-    Returns the vault root (parent of ``slices/``) or None when the folder is not
-    laid out under a ``slices/`` (active) or ``slices/archive/`` directory.
-    """
-    parent = slice_folder.parent
-    if parent.name == "archive":
-        parent = parent.parent
-    if parent.name == "slices":
-        return parent.parent
-    return None
+def _read_risk_tier(slice_folder: Path) -> str:
+    """Lowercased ``risk_tier`` from mission-brief.json, or "" if unreadable."""
+    mb = _load_json(slice_folder / "mission-brief.json")
+    if mb:
+        val = mb.get("risk_tier")
+        if isinstance(val, str):
+            return val.strip().lower()
+    return ""
 
 
-def _resolve_mode(slice_folder: Path, repo_root: Path) -> str | None:
-    """Resolve pipeline mode.
-
-    Primary: ``<vault>/triage.json`` ``mode`` (vault derived from the slice
-    folder). Fallback: ``<repo_root>/CLAUDE.md`` ``**Mode**:`` line. Returns an
-    uppercased mode string, or None if unresolvable.
-    """
-    vault = _resolve_vault_root(slice_folder)
-    if vault is not None:
-        triage = _load_json(vault / "triage.json")
-        if triage:
-            val = triage.get("mode")
-            if isinstance(val, str) and val.strip():
-                return val.strip().upper()
-
-    claude_md = repo_root / "CLAUDE.md"
-    if claude_md.exists():
-        m = re.search(
-            r"^\*\*Mode\*\*\s*:\s*([A-Za-z]+)",
-            claude_md.read_text(encoding="utf-8"),
-            re.MULTILINE,
-        )
-        if m:
-            return m.group(1).strip().upper()
-
-    return None
+def _read_findings_count(slice_folder: Path) -> int:
+    """Length of critique.json ``findings[]`` (0 if absent/unreadable — e.g. the
+    Critic was skipped on a low-tier slice)."""
+    cj = _load_json(slice_folder / "critique.json")
+    if cj:
+        findings = cj.get("findings")
+        if isinstance(findings, list):
+            return len(findings)
+    return 0
 
 
 def audit(slice_folder: Path, repo_root: Path | None = None) -> AuditResult:
@@ -206,26 +190,30 @@ def audit(slice_folder: Path, repo_root: Path | None = None) -> AuditResult:
         ))
         return result
 
-    # Resolve mode.
-    mode = _resolve_mode(slice_folder, repo_root)
-    if mode is None:
-        result.violations.append(CRPViolation(
-            kind="mode-unresolvable", severity="Important",
-            message=(
-                "cannot resolve pipeline mode from <vault>/triage.json `mode` "
-                "or CLAUDE.md `**Mode**:` line"
-            ),
-        ))
-        return result
-    result.resolved_mode = mode
-
-    # Read critic-required (tolerate JSON bool or string).
+    # Read critic-required (tolerate JSON bool or string). mission-brief.json wins
+    # if it carries the flag; milestone.json is the fallback.
     cr_raw = _field(milestone, "critic_required", "critic-required")
+    mb = _load_json(slice_folder / "mission-brief.json")
+    if mb is not None and _field(mb, "critic_required", "critic-required") is not None:
+        cr_raw = _field(mb, "critic_required", "critic-required")
     if isinstance(cr_raw, bool):
         critic_required = cr_raw
     else:
         critic_required = str(cr_raw or "").strip().lower() == "true"
     result.critic_required = critic_required
+
+    result.risk_tier = _read_risk_tier(slice_folder)
+    result.findings_count = _read_findings_count(slice_folder)
+
+    # Mandatory-trigger evaluation (the canonical tier-driven table).
+    triggers: list[str] = []
+    if result.risk_tier == "high":
+        triggers.append("risk_tier=high")
+    if critic_required:
+        triggers.append("critic_required=true")
+    if result.findings_count >= _FINDINGS_MANDATORY_THRESHOLD:
+        triggers.append(f"findings={result.findings_count}>={_FINDINGS_MANDATORY_THRESHOLD}")
+    result.mandatory_triggers = triggers
 
     # critique-review.json presence.
     result.critique_review_present = (slice_folder / "critique-review.json").exists()
@@ -255,22 +243,23 @@ def audit(slice_folder: Path, repo_root: Path | None = None) -> AuditResult:
     if result.skip_rationale is not None:
         result.accepted_reason = f"documented skip — {result.skip_rationale}"
         return result
-    if mode not in _ENFORCED_MODES:
-        result.accepted_reason = f"mode {mode} does not enforce mandatory /critique-review"
-        return result
-    if not critic_required:
-        result.accepted_reason = "critic-required is not true (no mandatory-Critic trigger)"
+    if not triggers:
+        result.accepted_reason = (
+            f"no mandatory DR-1 trigger (risk_tier={result.risk_tier or '?'} != high; "
+            f"critic_required={critic_required}; findings={result.findings_count} < "
+            f"{_FINDINGS_MANDATORY_THRESHOLD})"
+        )
         return result
 
     # Refuse: mandatory /critique-review absent + unrationalised.
     result.violations.append(CRPViolation(
         kind="mandatory-critique-review-absent", severity="Important",
         message=(
-            f"mandatory /critique-review is absent and unrationalised. Conditions "
-            f"held: mode={mode} (in {{STANDARD, HEAVY}}); critic-required=true; "
-            f"critique-review.json absent; no `critique-review-skip` milestone.json key. "
-            f"Run `/critique-review` for this slice, OR document a deliberate skip by "
-            f"adding `\"critique-review-skip\": \"skip — rationale: <text>\"` to "
+            f"mandatory /critique-review is absent and unrationalised. Mandatory "
+            f"trigger(s) held: {', '.join(triggers)}; critique-review.json absent; "
+            f"no `critique-review-skip` milestone.json key. Run `/critique-review` "
+            f"for this slice, OR document a deliberate skip by adding "
+            f"`\"critique-review-skip\": \"skip — rationale: <text>\"` to "
             f"milestone.json (per ADR-024)."
         ),
     ))
@@ -281,11 +270,11 @@ def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     parser = argparse.ArgumentParser(
         prog="critique_review_prerequisite_audit",
-        description="CRP-1 audit: refuse /build-slice on skipped mandatory /critique-review (v2 JSON).",
+        description="CRP-1 audit: refuse /build-slice on skipped mandatory /critique-review (v2 JSON, tier-driven).",
     )
     parser.add_argument("slice_folder", type=Path, help="Path to active slice folder.")
     parser.add_argument("--root", type=Path, default=None,
-                        help="Repo root for the CLAUDE.md mode fallback (default: cwd).")
+                        help="Repo root (accepted for CLI compatibility; no longer used).")
     parser.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
     args = parser.parse_args(argv)
 
@@ -304,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"CRP-1 audit: clean. Accepted: {result.accepted_reason}.")
 
-    usage_kinds = {"usage-error", "mode-unresolvable"}
+    usage_kinds = {"usage-error"}
     if any(v.kind in usage_kinds for v in result.violations):
         return 2
     if result.violations:

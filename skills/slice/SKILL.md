@@ -69,11 +69,21 @@ failing test to the MAIN tree; **Step 5 relocates it into `$wt`** on the slice b
 - **Risk tier**: `low | medium | high` (Step 3a). **Acceptance criteria** ≤5, testable. **Verification plan** per AC.
   **Must-not-defer** (auth/validation/error paths/logging — EVERY slice). **Out of scope**. Mid-slice smoke gate.
 
-### Step 3a — risk tier (controls /critique)
-`low` = pure CSS/copy/docs/test-only; `medium` = default; `high` = novel domain / first integration / extra scrutiny.
+### Step 3a — risk tier (the per-slice cost lever)
+Tier drives in-loop cost — the design-tournament size AND whether `/critique` runs — so pick it honestly:
+`low` = pure CSS/copy/docs/test-only OR a genuinely small bug-fix / small feature; `medium` = a normal change;
+`high` = novel domain / first integration / irreversible / needs extra scrutiny.
+
+**Default tier by mode** (mode is NOT a per-slice cost lever — it only sets this default + Heavy's floor):
+read `mode` from `triage.json` / `mission-brief.json` → **Minimal ⇒ default `low`** (small solo work is cheap by
+default; bump up for a genuinely risky cut), **Standard ⇒ default `medium`**, **Heavy ⇒ default `medium`**. Offer
+the default; let the user override.
+
 **Always set `critic_required: true`** (even if tier=low) when the slice touches: auth/authz, new API contracts, data
 model/migrations, multi-device/sync, external integrations, security paths, or the methodology surface
-(`skills/**`, `agents/**`, `scripts/**`). Tell the user when low-tier still triggers the Critic and why.
+(`skills/**`, `agents/**`, `scripts/**`). **Heavy mode forces `critic_required: true` on EVERY slice** (its
+compliance/audit floor — the Critic runs even on a low-tier Heavy slice, with sign-off). Tell the user when
+low-tier still triggers the Critic and why.
 
 ## Step 4 — scope check
 ≤5 ACs, ≤1 day, system stays shippable. If it exceeds → split.

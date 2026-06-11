@@ -162,41 +162,38 @@ All of the following must pass before declaring done:
 - [ ] Mid-slice smoke still passes (no regression)
 - [ ] `/drift-check` **full mode** (appends `Trigger` entry to `<vault>/drift-log.json` — DCE-1 verifies this)
 
-Run audit gates in this order:
+The pre-finish gate is **one consolidated command** — `pre_finish_gate.py` subprocess-orchestrates every
+user-facing audit (WT-ROOT-1, DCE-1, LINT-MOCK, WIRE-1, BC-1, TF-1, BRANCH-1) and emits ONE verdict, so no check
+can be silently skipped (the failure mode of the old hand-run-each-block gate).
 
+**Step A — enumerate BC-1 Critical rules and attest them** (the only multi-step part; the gate then runs BC-1
+strict with your acks):
 ```bash
-# WT-ROOT-1 — worktree-root enforcement: the main tree must be clean of slice code (it all lives in $wt).
-# A non-empty main tree means edits leaked out of the worktree — STOP and move them into $wt.
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py" --worktree "$wt"
-
-# DCE-1 — drift-check enforcement (run /drift-check full mode FIRST, then audit)
-$PY "${CLAUDE_SKILL_DIR}/scripts/drift_check_audit.py" <vault>/slices/slice-NNN-<name>
-
-# LINT-MOCK — mock-budget lint (pass changed test files; add --seam-allowlist if present; --strict in Heavy)
-$PY "${CLAUDE_SKILL_DIR}/scripts/mock_budget_lint.py" <changed-test-files> [--seam-allowlist <vault>/.cross-chunk-seams]
-
-# WIRE-1 — wiring matrix audit
-$PY "${CLAUDE_SKILL_DIR}/scripts/wiring_matrix_audit.py" <vault>/slices/slice-NNN-<name>
-
-# BC-1 — build-checks audit (enumerate Critical rules, address each, then re-run with --strict --ack-critical)
-$PY "${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py" --slice <vault>/slices/slice-NNN-<name> --changed-files <list> --json
-$PY "${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py" --slice <vault>/slices/slice-NNN-<name> --changed-files <list> \
-    --strict --ack-critical <addressed-ids>
-
-# TF-1 — test-first audit (only when mission-brief.json test_first == true)
-$PY "${CLAUDE_SKILL_DIR}/scripts/test_first_audit.py" <vault>/slices/slice-NNN-<name> --strict-pre-finish
-
-# BRANCH-1 — branch workflow audit
-$PY "${CLAUDE_SKILL_DIR}/scripts/branch_workflow_audit.py" <vault>/slices/slice-NNN-<name>
-
-# CRP-1 — critique-review prerequisite audit (defense-in-depth re-run)
-$PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py" <vault>/slices/slice-NNN-<name>
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"
+$PY "${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py" --slice "$slice_folder" --changed-files <list> --json
 ```
+Address each applicable Critical rule, attest it in `build-log.json` (e.g. "BC-PROJ-3: this slice performs no
+destructive git reset of uncommitted work"), and collect the addressed ids for `--ack-critical`.
 
-If any gate fails: do not declare done — fix or escalate.
+**Step B — run `/drift-check` full mode** (it appends the `Trigger` entry to `<vault>/drift-log.json` that DCE-1
+verifies), then run the consolidated gate from the worktree:
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$(basename "$slice_folder")" --repo-root "$repo_root" | head -1)"
+cd "$wt"
+$PY "${CLAUDE_SKILL_DIR}/scripts/pre_finish_gate.py" \
+    --slice "$slice_folder" --worktree "$wt" \
+    --changed-files <list> \
+    --changed-test-files <changed-test-files> \
+    --ack-critical <addressed-ids>
+# Append optional flags as applicable: --seam-allowlist <vault>/.cross-chunk-seams (if present);
+#   --test-first (when mission-brief.json test_first == true); --strict (Heavy mode, LINT-MOCK Important rules block).
+```
+The gate prints `=== pre-finish gate: PASS|FAIL ===` with one line per check (`ok` / `FAIL` / `skip`). **Any FAIL
+→ do not declare done; fix or escalate.** (CRP-1 already ran as prerequisite #5 before plan mode — not re-run here;
+the six plugin self-audits are CI-only per 1.5.)
 
 > **Note — plugin self-audits are NOT in this gate.** Six checks that grade the *plugin's own* static
 > files (`UTF8-STDOUT-1`, `PCA-1`, `BCI-1`, `STP-1`, `NAW-1`, `SVW-1`) used to run here on every slice in every
@@ -251,7 +248,7 @@ If `/drift-check` found entries, route through `$PY "${CLAUDE_SKILL_DIR}/../../s
 
 ## Pipeline position
 
-- predecessor: `/slice-story` (which follows `/critique` post-TRI-1, on CLEAN or NEEDS-FIXES; user-invoked — `/slice-story` halts and prompts the build) · successor: `/code-review` · auto-advance: true
+- predecessor: `/slice-story` when the Critic surfaced ≥1 finding, else `/critique` (or its skip path) directly — both HALT post-TRI-1 and prompt the build (user-invoked) · successor: `/code-review` · auto-advance: true
 - on-clean-completion: once the pre-finish gate fully passes (all ACs, must-not-defer, drift-check, all Step 6 audits) and `build-log.json` is written, invoke `/code-review` via the Skill tool. `/code-review` auto-advances to `/validate-slice` on clean completion.
 - user-input gates (halt auto-advance):
   - Plan-mode approval (Step 3) — HALT for explicit user sign-off before any code edits.

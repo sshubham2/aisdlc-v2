@@ -1,7 +1,7 @@
 ---
 name: slice-story
 description: "Turns one slice's internal artifacts into a single plain-language STORY for a mixed technical / non-technical audience (tilted slightly technical, ZERO pipeline jargon), rendered as a standalone story.html and delivered straight to you — including your phone over Remote Control — via SendUserFile. Adaptive across the lifecycle: before building it covers the objective, what was proven in spikes, how it's built, and what the design review changed; after building it adds what was built, what code review found, what reality testing showed, and what was learned. A forked slice-story narrator subagent does the heavy synthesis and returns structured JSON; render_story.py renders the HTML; then you're asked to start /build-slice when ready."
-when_to_use: "Trigger phrases: /slice-story, 'tell the story of this slice', 'plain-language slice report', 'overview before build', 'explain this slice for non-engineers'. Runs automatically just after /critique (the pre-build report), and is user-invokable any time to get a readable report of where a slice stands. Optional arg: a slice id (default: the active slice)."
+when_to_use: "Trigger phrases: /slice-story, 'tell the story of this slice', 'plain-language slice report', 'overview before build', 'explain this slice for non-engineers'. Auto-invoked after /critique ONLY when the design review surfaced >=1 finding to narrate (a clean zero-finding review or a skipped low-tier Critic hands straight to /build-slice); always user-invokable any time to get a readable report of where a slice stands. Optional arg: a slice id (default: the active slice)."
 argument-hint: "[slice-id]"
 allowed-tools: Read, Write, Bash, Agent, SendUserFile
 ---
@@ -165,7 +165,7 @@ design, the user can loop back to `/design-slice` → `/critique` before buildin
 
 ## Pipeline position
 
-- predecessor: `/slice-story` follows `/critique` (the pre-build report); also user-invokable out-of-loop any time
+- predecessor: `/critique` — auto-invoked only when the Critic ran and surfaced ≥1 finding (a zero-finding clean review or a skipped low-tier Critic hands straight to `/build-slice`); also user-invokable out-of-loop any time
 - successor: `/build-slice`
 - auto-advance: false — generate + deliver the report, then HALT and ask the user to run `/build-slice` when ready
 - on-clean-completion: write `story-sections.json` + `story.html`, deliver `story.html` to the user via `SendUserFile` (proactive when auto-invoked / the user may be away), report the saved path, and prompt `/build-slice`. Do NOT auto-invoke the build.
