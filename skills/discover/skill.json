@@ -181,7 +181,9 @@
         "heavy-architect"
       ],
       "validated_by": [],
-      "purpose": "One file per actor with role-play walkthroughs. Heavy mode only."
+      "purpose": "One file per actor with role-play walkthroughs. Heavy mode only.",
+      "example_schema": "aisdlc/actor@1",
+      "example": "examples/actor.json"
     },
     {
       "path": "<vault>/candidates.json",

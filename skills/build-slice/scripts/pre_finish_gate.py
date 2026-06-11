@@ -21,6 +21,7 @@ LINT-MOCK with no changed test files):
   BC-1       build_checks_audit    --slice <slice> --changed-files ... --strict --ack-critical ...
   TF-1       test_first_audit      <slice> --strict-pre-finish      (only with --test-first)
   BRANCH-1   branch_workflow_audit <slice>
+  ARTIFACT-LINT artifact_lint      --dir <slice> --skip-unknown     (3.18.7 schema-by-example)
 
 The BC-1 *enumerate* pass (`--json`, no `--strict`) that lists the applicable Critical
 rules for the Builder to attest stays a manual PRE-step — this gate runs BC-1 once, in
@@ -151,6 +152,14 @@ def run_gate(args: argparse.Namespace) -> tuple[str, list[CheckResult]]:
     results.append(_run(
         "BRANCH-1",
         [_PY, str(_SCRIPTS / "branch_workflow_audit.py"), slice_folder],
+        cwd,
+    ))
+
+    # ARTIFACT-LINT (3.18.7) — schema-by-example over this slice's JSON artifacts
+    # (required keys + known enums; --skip-unknown so non-modeled files don't fail).
+    results.append(_run(
+        "ARTIFACT-LINT",
+        [_PY, str(_LIB / "artifact_lint.py"), "--dir", slice_folder, "--skip-unknown"],
         cwd,
     ))
 

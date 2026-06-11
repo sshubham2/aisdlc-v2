@@ -66,7 +66,7 @@
           "risk_ref": "R-27",
           "blocking": true,
           "spike_status": "failed",
-          "spike_ref": "spikes/spike-ws-presence",
+          "spike_ref": "spike-ws-presence",
           "spike_evidence": "Host capped at ~120 concurrent WS before 503s; see spike output.",
           "fallback": "Switch transport to SSE + short-poll fallback, OR move presence to a managed pub/sub (Ably/Pusher). Re-spike before unblocking."
         }
@@ -75,7 +75,7 @@
       "history": [
         { "event": "created", "by": "reflect", "at": "<ts>", "ref": "slice-018" },
         { "event": "picked", "by": "slice", "at": "<ts>", "ref": "slice-021" },
-        { "event": "spike-failed", "by": "risk-spike", "at": "<ts>", "ref": "spikes/spike-ws-presence" }
+        { "event": "spike-failed", "by": "risk-spike", "at": "<ts>", "ref": "spike-ws-presence" }
       ]
     },
     {

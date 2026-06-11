@@ -93,8 +93,9 @@ the decision is non-obvious.
 
 ## Step 3: Actor files
 
-For each actor identified in `concept.json` (or discovered in the code graph), write `<vault>/actors/<actor>.json`.
-Schema by example: `examples/actors/example-actor.json`.
+For each actor identified in `concept.json` (or discovered in the code graph), write `<vault>/actors/<actor>.json`
+(one file per actor). Schema by example: `examples/actor.json` (the bundled example is flat — aggregate.py cannot
+nest `examples/actors/`).
 
 ## Step 4: Threat model (STRIDE per component)
 

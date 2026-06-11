@@ -1,8 +1,12 @@
 {
   "_schema": "aisdlc/slice-index@1",
-  "_note": "Thin router: active slices + recent-10 one-liners + pointer to action-points + archive. CAS via vault_edit.",
+  "_note": "The LIVE index (slices/_index.json). Thin router: active slices + recent-10 one-liners + pointer to action-points + archive. recent[] = EXACTLY the 10 most recent archived slices (or all if <10); each summary = the slice's mission-brief.json intent, first sentence, <=500 chars. The FULL archive catalog is the separate slice-archive-index shape (examples/slice-archive-index.json). CAS via vault_edit.",
   "project": "<name>",
   "mode": "standard",
+  "total": 21,
+  "active_count": 1,
+  "archived_count": 20,
+  "updated": "<ts>",
   "active": [
     {
       "slice": "slice-021",
@@ -14,7 +18,8 @@
     {
       "slice": "slice-020",
       "title": "webhook-receiver",
-      "shipped": "<ts>"
+      "shipped": "<ts>",
+      "summary": "Stripe webhook receiver with signature verification."
     }
   ],
   "action_points_ref": "<vault>/slices/action-points.json",

@@ -5,6 +5,7 @@
   "title": "realtime-presence",
   "mode": "standard",
   "risk_tier": "medium",
+  "critic_required": false,
   "intent": "## Intent\nShow which teammates are viewing a doc, live.",
   "acceptance_criteria": [
     {

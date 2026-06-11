@@ -49,6 +49,14 @@ Read only the live-claim surfaces. Always included:
 
 For each vault claim, check against code reality. Prefer CRG MCP tools when available; fall back to Grep/Read.
 
+**Schema-by-example lint (3.18.7):** also run `artifact_lint` over the in-scope vault artifacts — a
+malformed / enum-invalid artifact (e.g. an unknown `verdict`, a missing required key) is vault↔contract drift the
+claim checks won't catch. In `--fast` mode scope it to the active slice folder; full mode can sweep the vault:
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --dir "$AI_SDLC_VAULT_ROOT/slices/slice-NNN-<name>" --skip-unknown
+```
+Non-zero → surface each violation as a STALE CLAIM finding (Step 4). Detect-only; `--fast` writes nothing.
+
 | Claim type | Verification |
 |---|---|
 | ADR chose library `X` | CRG search for `X` in imports/pyproject.toml/package.json; fallback: `Grep "X" pyproject.toml` |

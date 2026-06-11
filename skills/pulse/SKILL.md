@@ -92,7 +92,7 @@ Read the following JSON files if not fully covered by the injections above (skip
 | `<vault>/gate-log.json` | per-gate outcome log (Phase 0 measurement spine) — **read the file FULLY** here (do NOT rely on a truncated snapshot); aggregate per gate in Step 2 |
 | `<vault>/threat-model.json` · `requirements.json` · `non-functional.json` · `cost-estimation.json` · `diagrams.json` · `actors/` | **Heavy-mode upfront architecture** — presence-probed above (existence + counts, not full-read). Their existence = `/heavy-architect` has run; their absence in Heavy mode = it has not. |
 
-**Active slice:** Read `<vault>/slices/slice-NNN-<name>/milestone.json` first (primary source: `stage`, `next_action`, progress checkboxes, `on_resume`). If `stage` is `build` or later and `build-log.json` exists, read the last ~15 lines of its `events` array — the events trace is the durable record; compare its latest timestamp to `milestone.json.updated_at`. If events are newer, milestone is stale — flag it.
+**Active slice:** Read `<vault>/slices/slice-NNN-<name>/milestone.json` first (primary source: `stage`, `next_action`, progress checkboxes, `on_resume`). If `stage` is `build` or later and `build-log.json` exists, read the last ~15 lines of its `events` array — the events trace is the durable record; compare its latest timestamp to `milestone.json.at`. If events are newer, milestone is stale — flag it.
 
 Do NOT read individual slice design/mission files (active slice excepted). Do NOT read ADRs. Do NOT descend into `slices/archive/`.
 

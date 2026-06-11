@@ -180,6 +180,12 @@ Schema by example: `examples/milestone.json`.
 
 After `reflection.json` is written and `milestone.json` is complete:
 
+0. **Lint the slice's artifacts (3.18.7)** before archiving — a malformed / enum-invalid artifact must not be
+   frozen into the archive:
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --dir "$AI_SDLC_VAULT_ROOT/slices/slice-NNN-<name>" --skip-unknown
+   ```
+   Non-zero → fix the offending artifact (required key / known enum), then proceed to the move.
 1. **Move the slice folder** (R-32 seam-routed, ADR-103):
    ```bash
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" move --from slices/slice-NNN --to slices/archive/
@@ -198,10 +204,12 @@ After `reflection.json` is written and `milestone.json` is complete:
 3. **Prepend to `<vault>/slices/archive/_index.json`** (newest-first, CAS-rewrite):
    ```bash
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file slices/archive/_index.json --out-file base.bin
-   # insert the thin one-liner row at TOP of recent[] (after table separator), then:
+   # insert the thin one-liner row at the TOP of slices[] (newest-first), then:
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file slices/archive/_index.json --base-file base.bin --content-file edited.json
    ```
    NOT `vault_edit append` — appending at EOF would put the row at the oldest position.
+   Schema by example: `examples/slice-archive-index.json` — the FULL catalog; its array is `slices[]`, NOT the
+   live index's `recent[]` (3.18.1).
 
 ---
 

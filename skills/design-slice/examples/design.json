@@ -2,14 +2,31 @@
   "_schema": "aisdlc/design@1",
   "slice": "slice-021",
   "whats_new": "## What's new\nSSE presence endpoint + client subscriber.",
+  "whats_reused": "## What's reused\nExisting session-auth middleware + doc-view's EventSource client.",
   "components_touched": [
     "presence",
     "doc-view"
+  ],
+  "components_detail": [
+    {
+      "name": "presence",
+      "responsibility": "track + fan out who-is-here per doc",
+      "lives_at": "src/presence.ts",
+      "key_interactions": [
+        "doc-view subscribes via SSE",
+        "auth middleware gates the stream"
+      ]
+    }
   ],
   "contracts": [
     {
       "name": "GET /presence/:doc",
       "kind": "sse",
+      "auth_model": "session cookie",
+      "error_cases": [
+        "401 unauthenticated",
+        "404 unknown doc"
+      ],
       "notes": "emits {userId,joined}"
     }
   ],
@@ -19,6 +36,12 @@
       "module": "presence.ts",
       "consumer_entrypoint": "doc-view subscribes on mount",
       "consumer_test": "tests/presence.test.ts"
+    },
+    {
+      "module": "presence_metrics.ts",
+      "consumer_entrypoint": null,
+      "consumer_test": null,
+      "exemption": "internal counter — rationale: emitted to the metrics sink, never called by app code (WIRE-1 exemption variant)"
     }
   ],
   "adrs": [

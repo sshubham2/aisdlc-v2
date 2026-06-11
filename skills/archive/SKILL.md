@@ -139,10 +139,10 @@ regardless of whether `critique.json` exists:
 | `mission-brief.json` | `spike` |
 | (none / empty dir) | `none` — not started |
 
-## `slices/archive/_index.json` schema: `examples/slice-index.json`
+## `slices/archive/_index.json` schema: `examples/slice-archive-index.json`
 
-Full chronological catalog of all archived slices (not capped at 10). Fields: `_schema`, `total`, `updated`,
-`slices[]` (slice/title/shipped/summary). Same one-liner source rule as above.
+Full chronological catalog of all archived slices (not capped at 10 — that cap is the live index's `recent[]`).
+Fields: `_schema`, `total`, `updated`, `slices[]` (slice/title/shipped/summary). Same one-liner source rule as above.
 
 ## Step 4 — Summary
 

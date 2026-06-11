@@ -146,8 +146,8 @@
         "vault_edit"
       ],
       "purpose": "Regenerate full chronological catalog via vault_edit rewrite CAS (ADR-088)",
-      "example_schema": "aisdlc/slice-index@1",
-      "example": "examples/slice-index.json"
+      "example_schema": "aisdlc/slice-archive-index@1",
+      "example": "examples/slice-archive-index.json"
     }
   ],
   "agents": [],

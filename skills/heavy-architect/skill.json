@@ -210,7 +210,9 @@
         "heavy-architect"
       ],
       "validated_by": [],
-      "purpose": "Heavy-mode actor files with full role-play definitions (Step 2)"
+      "purpose": "Heavy-mode actor files with full role-play definitions (Step 2)",
+      "example_schema": "aisdlc/actor@1",
+      "example": "examples/actor.json"
     }
   ],
   "agents": [],

@@ -17,6 +17,7 @@
     "non_goals": ["refunds", "multi-currency"],
     "actors": [{ "name": "seller", "role": "runs the shop", "top_actions": ["take payment", "view orders"], "needs": ["payment status"], "cannot": ["issue refunds"] }],
     "constraints": { "stack": [{ "choice": "Next.js + Stripe", "reversibility": "expensive", "adr": "ADR-002" }], "infra": "Vercel + managed Postgres.", "team": "solo, 6-week MVP." },
+    "references": [{ "label": "Stripe API docs", "url": "https://stripe.com/docs/api" }],
     "first_slice_candidate": "SC-001"
   },
   "risk-register": {
@@ -74,7 +75,7 @@
   "mission-brief": {
     "_schema": "aisdlc/mission-brief@1",
     "slice": "slice-021", "candidate": "SC-015", "title": "realtime-presence",
-    "mode": "standard", "risk_tier": "medium",
+    "mode": "standard", "risk_tier": "medium", "critic_required": false,
     "intent": "## Intent\nShow which teammates are viewing a doc, live.",
     "acceptance_criteria": [{ "id": "AC1", "text": "Active viewers' avatars appear within 2s.", "verification": "two real browsers, observe avatar within 2s", "status": "pending" }],
     "must_not_defer": ["signed-out users must not leak presence"],
@@ -99,10 +100,15 @@
     "_schema": "aisdlc/design@1",
     "slice": "slice-021",
     "whats_new": "## What's new\nSSE presence endpoint + client subscriber.",
+    "whats_reused": "## What's reused\nExisting session-auth middleware + doc-view's EventSource client.",
     "components_touched": ["presence", "doc-view"],
-    "contracts": [{ "name": "GET /presence/:doc", "kind": "sse", "notes": "emits {userId,joined}" }],
+    "components_detail": [{ "name": "presence", "responsibility": "track + fan out who-is-here per doc", "lives_at": "src/presence.ts", "key_interactions": ["doc-view subscribes via SSE", "auth middleware gates the stream"] }],
+    "contracts": [{ "name": "GET /presence/:doc", "kind": "sse", "auth_model": "session cookie", "error_cases": ["401 unauthenticated", "404 unknown doc"], "notes": "emits {userId,joined}" }],
     "data_model_deltas": [],
-    "wiring_matrix": [{ "module": "presence.ts", "consumer_entrypoint": "doc-view subscribes on mount", "consumer_test": "tests/presence.test.ts" }],
+    "wiring_matrix": [
+      { "module": "presence.ts", "consumer_entrypoint": "doc-view subscribes on mount", "consumer_test": "tests/presence.test.ts" },
+      { "module": "presence_metrics.ts", "consumer_entrypoint": null, "consumer_test": null, "exemption": "internal counter — rationale: emitted to the metrics sink, never called by app code (WIRE-1 exemption variant)" }
+    ],
     "adrs": ["ADR-014"], "auth_model": "session cookie", "error_model": "SSE retry w/ backoff",
     "cross_domain_transfer": {
       "_note": "Optional (Phase 2.1). Present only when this design imports a pattern from another domain. Tier-gated: omit on low/mechanical slices. status per invariant: holds (reasoned true here) | must-verify (empirically decidable, not yet proven -> a /critique focus + re-spike candidate) | fails (precondition does not hold here -> that part of the analogy dropped).",
@@ -176,12 +182,19 @@
   },
   "slice-index": {
     "_schema": "aisdlc/slice-index@1",
-    "_note": "Thin router: active slices + recent-10 one-liners + pointer to action-points + archive. CAS via vault_edit.",
+    "_note": "The LIVE index (slices/_index.json). Thin router: active slices + recent-10 one-liners + pointer to action-points + archive. recent[] = EXACTLY the 10 most recent archived slices (or all if <10); each summary = the slice's mission-brief.json intent, first sentence, <=500 chars. The FULL archive catalog is the separate slice-archive-index shape (examples/slice-archive-index.json). CAS via vault_edit.",
     "project": "<name>", "mode": "standard",
+    "total": 21, "active_count": 1, "archived_count": 20, "updated": "<ts>",
     "active": [{ "slice": "slice-021", "title": "realtime-presence", "stage": "build" }],
-    "recent": [{ "slice": "slice-020", "title": "webhook-receiver", "shipped": "<ts>" }],
+    "recent": [{ "slice": "slice-020", "title": "webhook-receiver", "shipped": "<ts>", "summary": "Stripe webhook receiver with signature verification." }],
     "action_points_ref": "<vault>/slices/action-points.json",
     "archive_ref": "<vault>/slices/archive/_index.json"
+  },
+  "slice-archive-index": {
+    "_schema": "aisdlc/slice-archive-index@1",
+    "_note": "The FULL chronological catalog of ALL archived slices (slices/archive/_index.json) — NOT capped at 10 (that cap is the live slices/_index.json recent[]). Same one-liner source rule (mission-brief intent, first sentence, <=500 chars). CAS via vault_edit.",
+    "total": 20, "updated": "<ts>",
+    "slices": [{ "slice": "slice-020", "title": "webhook-receiver", "shipped": "<ts>", "summary": "Stripe webhook receiver with signature verification." }]
   },
   "critique": {
     "_schema": "aisdlc/critique@1",
@@ -212,7 +225,7 @@
   },
   "spike": {
     "_schema": "aisdlc/spike@1",
-    "_note": "Throwaway proof for one candidate assumption (in-loop slice step-0). Verdict feeds candidates.json + risk-register.",
+    "_note": "Throwaway proof for one candidate assumption (in-loop slice step-0). Verdict feeds candidates.json + risk-register. spikes/ layout: a FEASIBILITY spike writes the FILE <vault>/spikes/spike-<name>.json (this example); a field-recon / design spike writes into the DIR <vault>/spikes/spike-<name>/ (e.g. field-recon.json). The `spike_ref` recorded on a candidate/risk is the BARE id `spike-<name>` (NOT a path) — resolvable to either layout.",
     "name": "spike-ws-presence", "candidate": "SC-015", "assumption": "A1", "date": "<ts>",
     "assumption_under_test": "Managed host holds 500 concurrent WebSockets.",
     "method": "Ramp synthetic WS connections; measure the drop point.",
@@ -349,6 +362,17 @@
     "fields": [{ "name": "id", "type": "uuid" }, { "name": "status", "type": "enum(pending,paid,failed)" }],
     "constraints": ["status transitions: pending -> paid -> failed"],
     "state_diagram": "## States\npending -> paid -> failed"
+  },
+  "actor": {
+    "_schema": "aisdlc/actor@1",
+    "_note": "One file per actor at <vault>/actors/<actor>.json (Heavy mode; /heavy-architect). aggregate.py emits the bundled example at the FLAT path examples/actor.json — it cannot nest examples/actors/, so SKILL.md must cite examples/actor.json, not examples/actors/<x>.json.",
+    "name": "seller", "role": "runs the shop",
+    "goals": ["take a card payment", "see orders update live"],
+    "top_actions": ["create a checkout", "view order status"],
+    "needs": ["clear payment confirmation", "low-latency order updates"],
+    "cannot": ["issue refunds", "see other sellers' data"],
+    "pain_points": ["card declines with no stated reason", "stale order list"],
+    "journeys": ["onboard -> first sale -> daily order review"]
   },
   "user-test": {
     "_schema": "aisdlc/user-test@1",

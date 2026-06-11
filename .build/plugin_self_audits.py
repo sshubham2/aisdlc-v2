@@ -10,8 +10,9 @@ script + 6 subprocess spawns per slice). They belong in plugin CI, run ONCE per 
 to the plugin's own files — not on a user's build.
 
 Each underlying script defaults its own --root to the plugin install dir (parents[3]
-of the script), so no arguments are needed. This aggregator exits non-zero if ANY of
-the six fails, so CI (remediation-plan item 4.4) can gate on a single command.
+of the script), so no arguments are needed (except ARTIFACT-LINT's `--self-check`).
+This aggregator exits non-zero if ANY check fails, so CI (remediation-plan item 4.4)
+can gate on a single command.
 
 Run:  python .build/plugin_self_audits.py
 """
@@ -24,29 +25,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]  # <plugin>/.build/plugin_self_audits.py -> <plugin>
 PY = sys.executable
 
-# (label, script path relative to the plugin root). These are the six evicted from
-# skills/build-slice/SKILL.md Step 6.
-AUDITS: list[tuple[str, str]] = [
-    ("UTF8-STDOUT-1", "skills/build-slice/scripts/utf8_stdout_audit.py"),
-    ("PCA-1",         "skills/build-slice/scripts/pipeline_chain_audit.py"),
-    ("BCI-1",         "scripts/lib/build_checks_integrity.py"),
-    ("STP-1",         "skills/build-slice/scripts/state_transition_pin_audit.py"),
-    ("NAW-1",         "skills/build-slice/scripts/new_agent_warning_audit.py"),
-    ("SVW-1",         "scripts/lib/skill_vault_write_safety_audit.py"),
+# (label, script path relative to the plugin root, args). The first six were evicted
+# from skills/build-slice/SKILL.md Step 6; ARTIFACT-LINT (3.18.7) is the deterministic
+# schema-by-example self-check that must pass on every bundled example.
+AUDITS: list[tuple[str, str, list[str]]] = [
+    ("UTF8-STDOUT-1", "skills/build-slice/scripts/utf8_stdout_audit.py", []),
+    ("PCA-1",         "skills/build-slice/scripts/pipeline_chain_audit.py", []),
+    ("BCI-1",         "scripts/lib/build_checks_integrity.py", []),
+    ("STP-1",         "skills/build-slice/scripts/state_transition_pin_audit.py", []),
+    ("NAW-1",         "skills/build-slice/scripts/new_agent_warning_audit.py", []),
+    ("SVW-1",         "scripts/lib/skill_vault_write_safety_audit.py", []),
+    ("ARTIFACT-LINT", "scripts/lib/artifact_lint.py", ["--self-check"]),
 ]
 
 
 def main() -> int:
     failures: list[tuple[str, int]] = []
     missing: list[str] = []
-    for label, rel in AUDITS:
+    for label, rel, extra in AUDITS:
         script = ROOT / rel
         print(f"\n=== {label} :: {rel} ===", flush=True)
         if not script.is_file():
             print(f"  MISSING: {script}")
             missing.append(label)
             continue
-        cp = subprocess.run([PY, str(script)])
+        cp = subprocess.run([PY, str(script), *extra])
         if cp.returncode != 0:
             failures.append((label, cp.returncode))
 
