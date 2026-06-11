@@ -44,11 +44,13 @@ $PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/slices/_index.json'; print(op
 ```
 
 Project-calibrated overlay (learned from THIS project via `/critic-calibrate`; layered on the base `agents/critique.md`).
-Loads two small sections only, never `runs[]`: `active_checks` (extra checks to APPLY — the Critic was missing these)
-and `calibration_notes` (dimensions to LIGHTEN — they've been low-signal here; weight lower, never a reality sign-off):
+Loads three small sections only, never `runs[]`: `active_checks` (extra checks to APPLY — the Critic was missing these),
+`calibration_notes` (dimensions to LIGHTEN — they've been low-signal here; weight lower, never a reality sign-off), and
+`gate_skips` (model gates this project measured at precision < 0.2 over ≥ 8 runs and chose to stop spawning on
+discretionary slices — 3.2; honored by the gating table below):
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/critic-calibration-log.json'; d=json.load(open(f,encoding='utf-8')) if os.path.exists(f) else {}; print(json.dumps({'active_checks':d.get('active_checks',[]),'calibration_notes':d.get('calibration_notes',[])},indent=2))" "$VAULT" 2>/dev/null || echo "{}"
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/critic-calibration-log.json'; d=json.load(open(f,encoding='utf-8')) if os.path.exists(f) else {}; print(json.dumps({'active_checks':d.get('active_checks',[]),'calibration_notes':d.get('calibration_notes',[]),'gate_skips':d.get('gate_skips',[])},indent=2))" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
 ## Gating — when the Critic runs (tier-driven)
@@ -76,7 +78,16 @@ the SAME scrutiny in any mode — risk drives review, project ceremony does not.
 auth/authz, new API contracts, data model/migrations, multi-device/sync, external integrations,
 security-sensitive paths, methodology surface (`skills/**`, `agents/**`, `scripts/**`).
 
-**`/critique --force`**: run regardless of tier; record the reason in `critique.json`.
+**Calibrated gate-skip (3.2).** If the injected overlay carries a user-accepted `gate_skips[]` entry with
+`target_gate: "critique"` (a project where `/critic-calibrate` measured the first Critic at precision < 0.2 over
+≥ 8 runs with zero real blockers caught), honor it: **SKIP** this slice's Critic when `critic_required == false`
+AND `risk_tier != high` (for `action: "tier-gate-high-only"`, skip on any non-high tier; for `action: "skip"`,
+same). A **compliance-mandatory** trigger (`critic_required: true` — auth/data-model/security/methodology/Heavy) or
+a `high` risk tier **ALWAYS runs the Critic** regardless of any gate-skip — calibration can retire a model gate's
+*discretionary* firing, never its compliance floor, and **never** the reality spine. On a gate-skip SKIP, take the
+**On skip** path below and note `gate-skip <GS-NNN>` in the milestone `current_focus` so the spine shows why.
+
+**`/critique --force`**: run regardless of tier or any gate-skip; record the reason in `critique.json`.
 
 **On skip**: update `milestone.json` (`stage: "critique"`, `next_action: "/slice-story"`) and set the critique
 entry in `progress[]` to exactly `{ "step": "critique", "done": "skipped" }` (the string `"skipped"`, not the
@@ -102,11 +113,13 @@ Read (all from the active slice folder):
 Pattern-recognition inputs (query JSON vault directly; use code-review-graph / CRG for code-graph queries):
 - `<vault>/slices/action-points.json` — curated cross-slice action-points register
 - `<vault>/slices/_index.json` — most-recent-10 slice table
-- `<vault>/critic-calibration-log.json` → **`active_checks[]` + `calibration_notes[]` ONLY** (both injected above).
-  `active_checks` are extra dimensions to APPLY; `calibration_notes` (Phase 4.1) are dimensions this project found
-  low-signal — hand them to the Critic in Step 2 to weight LIGHTER (never to skip). NEVER read `runs[]` (it grows
-  unboundedly). Absent file/keys → no overlay (silent no-op). Note: a calibration_note can only ever lighten a
-  model-on-model dimension — it can NEVER touch the reality gates.
+- `<vault>/critic-calibration-log.json` → **`active_checks[]` + `calibration_notes[]` + `gate_skips[]` ONLY** (all
+  injected above). `active_checks` are extra dimensions to APPLY; `calibration_notes` (Phase 4.1) are dimensions this
+  project found low-signal — hand both to the Critic in Step 2 (apply / weight LIGHTER, never skip). `gate_skips`
+  (3.2) are consumed *earlier*, by the **gating decision** (whether to run the Critic at all — see the gating
+  section) — NOT passed to the agent. NEVER read `runs[]` (it grows unboundedly). Absent file/keys → no overlay
+  (silent no-op). Note: a calibration_note or gate_skip can only ever target a model-on-model gate — NEVER the
+  reality gates.
 - Open individual `reflection.json` files **only** when action-points or _index point to a specific match.
 
 Project-frame (PFS-1): run via Bash and capture stdout:
@@ -195,6 +208,11 @@ The meta-Critic runs BEFORE the TRI-1 gate so its findings feed your triage (BB-
 
 **Advisory (recommended, not refused):** 3+ consecutive `clean` first-Critic verdicts (calibration smell) —
 `/critic-calibrate` handles under-firing empirically across slices. Run it, or skip with a marker.
+
+**Calibrated gate-skip (3.2):** a user-accepted `gate_skips[]` entry with `target_gate: "critique-review"`
+suppresses only this **advisory** trigger (stop running critique-review on the 3-clean smell). The MANDATORY
+triggers in the table above (`high` tier, `critic_required`, findings ≥ 5) ALWAYS hold regardless — CRP-1 enforces
+them at `/build-slice`, and a gate-skip never removes a compliance/quality-floor trigger or touches the reality spine.
 
 **Otherwise SKIP**: no mandatory trigger → `/critique-review` is not required (CRP-1 accepts). If a mandatory
 trigger holds but you are deliberately skipping, add `"critique-review-skip": "skip — rationale: <text>"` to

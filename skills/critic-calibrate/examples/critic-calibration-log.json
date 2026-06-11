@@ -1,6 +1,6 @@
 {
   "_schema": "aisdlc/critic-calibration-log@3",
-  "_note": "Three sections. active_checks[] = the SUMMARIZED, deduped live project overlay /critique reads before every review (the ADD direction — checks the Critic was MISSING). calibration_notes[] = the LIGHTEN direction (Phase 4.1 / Theme 5): per-project signals that a model-on-model dimension/gate has been low-signal here (low precision / quiet over a window); /critique + /code-review read them to weight that dimension lighter — INFORM, never disable. HARD RULE: only critique/critique-review/code-review (+ project active_checks) may be lightened; the reality spine risk-spike/validate-slice is NEVER lightened. runs[] = append-only audit history of every /critic-calibrate run; a new run NEVER overwrites a prior one. /critic-calibrate upserts accepted ADD proposals into active_checks, confirmed LIGHTEN proposals into calibration_notes (or retires a noisy active_check), and appends the run to runs. agents/critique.md (the plugin base Critic) is NEVER edited from a project.",
+  "_note": "Four sections. active_checks[] = the SUMMARIZED, deduped live project overlay /critique reads before every review (the ADD direction — checks the Critic was MISSING). calibration_notes[] = the LIGHTEN direction (Phase 4.1 / Theme 5): per-project signals that a model-on-model dimension/gate has been low-signal here (low precision / quiet over a window); /critique + /code-review read them to weight that dimension lighter — INFORM, never disable. gate_skips[] = the GATE-SKIP direction (Phase 3.2): a model-on-model gate measured at precision < 0.2 over >= 8 verdict runs with ZERO real blockers caught, accepted by the user to STOP its DISCRETIONARY per-slice spawn (/critique reads it in its gating DECISION — whether to run the gate at all, vs active_checks/calibration_notes which only shape an in-progress review). action = skip | tier-gate-high-only. A compliance-mandatory trigger (critic_required / Heavy / high tier) STILL forces the gate; only the discretionary spawns are removed. HARD RULE: only critique/critique-review/code-review (+ project active_checks) may be lightened or skipped; the reality spine risk-spike/validate-slice is NEVER lightened or skipped. runs[] = append-only audit history of every /critic-calibrate run; a new run NEVER overwrites a prior one. /critic-calibrate upserts accepted ADD proposals into active_checks, confirmed LIGHTEN proposals into calibration_notes (or retires a noisy active_check), accepted GATE-SKIP proposals into gate_skips, and appends the run to runs. agents/critique.md (the plugin base Critic) is NEVER edited from a project.",
   "active_checks": [
     {
       "id": "CC-001",
@@ -32,6 +32,29 @@
       "confirmed_at": "<ts>"
     }
   ],
+  "gate_skips": [
+    {
+      "id": "GS-001",
+      "target_gate": "critique-review",
+      "action": "skip",
+      "precision": 0.12,
+      "runs_observed": 9,
+      "real_blockers_caught": 0,
+      "evidence": [
+        "slice-031",
+        "slice-033",
+        "slice-034",
+        "slice-036",
+        "slice-038",
+        "slice-040",
+        "slice-041",
+        "slice-043",
+        "slice-045"
+      ],
+      "rationale": "critique-review FALSE-ALARM 8/9 over 9 verdict runs here and caught zero blockers the first Critic missed — stop its discretionary spawn; compliance-mandatory + high-tier slices still run it; reality spine untouched.",
+      "user_accepted_at": "<ts>"
+    }
+  ],
   "runs": [
     {
       "at": "<ts>",
@@ -58,6 +81,12 @@
           "kind": "lighten",
           "decision": "accepted",
           "note_id": "CN-001"
+        },
+        {
+          "text": "Gate-skip critique-review's discretionary spawn (precision 0.12 over 9 runs, 0 blockers).",
+          "kind": "gate-skip",
+          "decision": "accepted",
+          "skip_id": "GS-001"
         }
       ]
     }
