@@ -220,26 +220,28 @@ skills/<name>/
   SKILL.md             the runnable skill
   examples/            output JSON examples bundled with the skill
   scripts/             single-skill tools
-  skill.json           generated design manifest (see below)
 agents/                named Critic / worker personas (system prompts)
 scripts/lib/           shared Python tooling used by >1 skill (vault_edit, the vault-root resolver, …)
 hooks/                 SessionStart hook: setup-env.sh (bootstrap shim) + setup_env.py (resolver)
 schemas/               artifact schemas-by-example
-skill-graph.json       the whole pipeline as one dependency graph (generated)
-.build/                reproducible build pipeline: source manifests + the aggregator
+.build/                reproducible build pipeline: source manifests + the aggregator + CI audits
 requirements.txt       runtime Python deps (PyYAML; optional code-review-graph)
+tests/ + .github/      pytest suite + CI for the plugin itself
 ```
 
 ### Development
 
-`skill.json` (×30), each skill's `examples/`, and `skill-graph.json` are **generated** from the source manifests
-in `.build/manifests/` — they are the diffable *design record*, not hand-maintained. `SKILL.md` and `scripts/`
-are hand-authored. To change a skill's design metadata, edit its `.build/manifests/batch*.json` entry and
-regenerate:
+Each skill's `examples/` are **generated** from `schemas/artifact-examples.json` by the aggregator; `SKILL.md`
+and `scripts/` are hand-authored. To regenerate the bundled examples:
 
 ```bash
 python3 .build/aggregate.py
 ```
+
+> The aggregator also produces a diffable **design record** (`skill.json` ×30 + `skill-graph.json`) from the
+> source manifests in `.build/manifests/`. That record has no runtime consumers — the harness loads `SKILL.md`,
+> not these — so it is **not shipped** (git-ignored); it is kept locally as authoring history. The runnable
+> contract is the `SKILL.md` set.
 
 A re-runnable cross-block-var audit guards the SKILL.md bash blocks:
 
@@ -249,6 +251,10 @@ python3 .build/cross_block_audit.py skills/*/SKILL.md
 
 ---
 
+## License
+
+Licensed under the **MIT License** — see [LICENSE](LICENSE).
+
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.18.3
+Shubhendu Shubham · plugin `ai-sdlc` v2.21.0

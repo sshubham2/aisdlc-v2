@@ -21,6 +21,13 @@ diagnose-out/
 .code-review-graph/
 graphify-out/
 
+# ── Generated design record — kept LOCAL as the authoring record, NOT shipped (4.10) ──
+# skill.json (×30) + skill-graph.json are regenerated from .build/manifests/ by
+# aggregate.py and have ZERO runtime consumers (the harness loads SKILL.md, not these).
+# Kept local for diffable design history; examples/ stay tracked (SKILL.md references them).
+/skill-graph.json
+skills/*/skill.json
+
 # ── Local graph visualisation (regenerate: $PY .build/render_graph_html.py) ──
 /skill-graph.html
 

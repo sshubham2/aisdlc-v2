@@ -43,11 +43,12 @@ jobs:
         run: python scripts/lib/artifact_lint.py --self-check
       - name: cross-block audit (SKILL.md bash blocks)
         run: python .build/cross_block_audit.py skills/*/SKILL.md
-      - name: aggregate.py is clean (no uncommitted generated drift)
-        # --ignore-cr-at-eol: the committed skill.json / skill-graph.json were
-        # generated on Windows (CRLF); aggregate.py writes platform-native EOL, so
-        # a Linux regen flips them to LF. EOL is not semantic for these artifacts —
-        # only real content drift should fail the gate.
+      - name: aggregate.py is clean (no uncommitted generated drift in examples/)
+        # The design record (skill.json / skill-graph.json) is git-ignored (4.10), so a
+        # regen leaves it untracked and out of `git diff`; this gate now guards the
+        # TRACKED generated artifacts — the bundled examples/. --ignore-cr-at-eol: those
+        # were generated on Windows (CRLF) and aggregate.py writes platform-native EOL,
+        # so a Linux regen flips EOL only; only real content drift should fail.
         run: |
           python .build/aggregate.py
           git diff --ignore-cr-at-eol --exit-code

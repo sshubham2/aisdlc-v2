@@ -1,6 +1,7 @@
 {
   "name": "ai-sdlc",
-  "version": "2.20.3",
+  "version": "2.21.0",
+  "license": "MIT",
   "description": "Spec-driven AI SDLC pipeline (v2). Risk-first slicing with a split in-loop spike gate (feasibility + post-synthesis design), a tier-gated 3-blind-designer design tournament with reality-grounded synthesis, method-heterogeneous adversarial review (Builder + 3 forked Critics independent by method+artifact, not model: forward-checklist /critique vs backward-premortem /critique-review vs post-build /code-review, each with an approach-level reframe, expert-independent), a per-gate measurement spine (precision + recall: gate-log verdict + miss rows, reality-contact ranked), bidirectional Critic calibration (add from misses + safely-lighten low-value model gates, reality spine exempt), grounded product-doc authoring with a drift-check stale-doc loop, JSON vault artifacts, and a unified candidate backlog. Skills, agents, and shared tooling bundled as one plugin.",
   "author": { "name": "Shubhendu Shubham" },
   "keywords": ["sdlc", "spec-driven", "ai-pipeline", "slicing", "code-review"],
