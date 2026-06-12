@@ -60,6 +60,17 @@ Halt and ask via `AskUserQuestion`:
 
 Identify (or confirm) the active slice that supersedes the archived one. Typically the latest `<vault>/slices/slice-NNN-*/` but the user may name a different one.
 
+## Step 2b — Ask whether the code was unwound (revert ref)
+
+**ALWAYS ask** (one question, via `AskUserQuestion` — the skill cannot know this without asking): _"Was
+`<archived-slice-id>`'s shipped code actually unwound (reverted/removed)? If yes, give the revert ref — a
+commit sha, a PR url/number, and/or a one-line note (e.g. 'partially unwound: kept the schema, reverted the
+handler'). If no (fix-forward, or a vault-claim-only contradiction), say so."_
+
+The ASK is mandatory; the FIELD is optional: a "no unwind" answer simply proceeds with no `revert` recorded —
+it never blocks the supersession. At least one of commit / pr / note when a ref is given; the audit (Step 5)
+refuses a malformed shape.
+
 ## Step 3 — Append supersession block to archived reflection.json
 
 Read `<vault>/slices/archive/<archived-slice-id>/reflection.json`.
@@ -70,9 +81,15 @@ Set the `supersession` field (currently `null`) to:
 {
   "superseded_by": "<active-slice-id>",
   "date": "<YYYY-MM-DD>",
-  "reason": "<user-provided reason from Step 2>"
+  "reason": "<user-provided reason from Step 2>",
+  "revert": { "commit": "<sha>", "pr": "<url-or-number>", "note": "<how the code was unwound>" }
 }
 ```
+
+`"revert"` (slice-003) is OPTIONAL — include it only when Step 2b gathered a revert ref (omit the whole key
+otherwise; omit any member not provided, but keep at least one). It records HOW the superseded code was
+unwound; the audit validates the shape when present (members non-empty strings; unknown keys refused — a
+typo'd key would silently lose the revert ref).
 
 Use Edit to update the `"supersession": null` value in place. Do NOT modify any other content — supersession is append-only history, like ADR supersession. The rest of the reflection remains frozen.
 
@@ -134,4 +151,4 @@ Tell the user:
 - predecessor: any slice loop stage (maintenance step, invokable at any point after `/reflect` archives a slice)
 - successor: `/critique` (on the active slice that is doing the superseding)
 - auto-advance: false — user-input gate at Step 2; confirm before advancing
-- user-input gates: Step 2 (supersession reason); Step 1 if no argument supplied (which archived slice)
+- user-input gates: Step 2 (supersession reason); Step 2b (revert ref — optional, never blocking); Step 1 if no argument supplied (which archived slice)
