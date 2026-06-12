@@ -110,6 +110,9 @@
       { "module": "presence_metrics.ts", "consumer_entrypoint": null, "consumer_test": null, "exemption": "internal counter — rationale: emitted to the metrics sink, never called by app code (WIRE-1 exemption variant)" }
     ],
     "adrs": ["ADR-014"], "auth_model": "session cookie", "error_model": "SSE retry w/ backoff",
+    "assumptions_proven": [
+      { "assumption": "A1", "statement": "Safari's EventSource auto-reconnects after a network drop (the SSE retry/backoff premise).", "spike_ref": "spike-safari-sse-retry" }
+    ],
     "cross_domain_transfer": {
       "_note": "Optional (Phase 2.1). Present only when this design imports a pattern from another domain. Tier-gated: omit on low/mechanical slices. status per invariant: holds (reasoned true here) | must-verify (empirically decidable, not yet proven -> a /critique focus + re-spike candidate) | fails (precondition does not hold here -> that part of the analogy dropped).",
       "source_domain": "distributed systems / lattice theory",

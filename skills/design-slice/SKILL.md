@@ -199,6 +199,15 @@ Key fields:
 - `components_touched` + `components_detail` (`name`, `responsibility`, `lives_at`, `key_interactions`)
 - `contracts` (`name`, `kind`, `auth_model`, `error_cases`, `notes`) · `data_model_deltas` · `wiring_matrix` (WIRE-1)
 - `adrs` — ADR ids locked by this slice · `auth_model` · `error_model`
+- `assumptions_proven` — **only when the claimed candidate has spiked assumptions**: the spike→design evidence
+  cross-ref, a PURE PASS-THROUGH of the candidate's assumptions where `spike_status == "proven"` — per
+  assumption `{assumption: <id>, statement: <statement>, spike_ref: <spike_ref>}` (exact mapping:
+  `id`→`assumption`, `statement`→`statement`, `spike_ref`→`spike_ref`; no renames, no other source, **no
+  verdict field** — the spike FILE under `<vault>/spikes/` stays the verdict authority, and risk-spike's
+  TERMINAL `spike_status` recording is binary (`proven`|`failed`) while the spike verdict is ternary, so
+  go-vs-conditional is not recoverable here; never default-fill a verdict).
+  **Omit the whole block** when no assumption has `spike_status == "proven"` (absent = "no spiked
+  assumptions", never an error).
 - `cross_domain_transfer` — **only if the selected design imports a cross-domain pattern** (from
   `designer-crossdomain`): `source_domain`, `pattern`, `rationale`, `invariants[]` (each
   `{precondition, status: holds|must-verify|fails, evidence}`). Omit when no transfer was selected. The
