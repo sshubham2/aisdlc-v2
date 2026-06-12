@@ -1,8 +1,9 @@
 {
   "_schema": "aisdlc/code-review@1",
-  "_note": "Adversarial code-Critic on the slice diff (CRSI-1). Advisory in v1. A perf/complexity finding is a HYPOTHESIS, not an asserted Big-O (model complexity reasoning is hallucination-prone) — mark it measure_at_validate:true so /validate-slice Step 1b benchmarks it on real data (Theme 8: reason→flag here, measure→verdict there).",
+  "_note": "Adversarial code-Critic on the slice diff (CRSI-1). BLOCKER findings are NOT advisory: each must be dispositioned (action `fixed`, or `overridden` + a non-empty rationale) into `triage.dispositions[]` before /validate-slice — CRD-1 refuses an un-dispositioned blocker. A perf/complexity finding is a HYPOTHESIS, not an asserted Big-O (model complexity reasoning is hallucination-prone) — mark it measure_at_validate:true so /validate-slice Step 1b benchmarks it on real data (Theme 8: reason→flag here, measure→verdict there).",
   "slice": "slice-021",
   "reviewed_by": "code-review agent",
+  "result": "FINDINGS",
   "findings": [
     {
       "id": "CR1",
@@ -20,6 +21,14 @@
       "claim": "renderFeed does a .find() per item inside the render loop — hypothesised O(n^2), bites ~>2k items",
       "fix": "index by id into a Map once before the loop; /validate-slice to benchmark at 1x/10x/100x",
       "measure_at_validate": true
+    },
+    {
+      "id": "CR3",
+      "dimension": "security",
+      "severity": "blocker",
+      "file": "src/auth.ts:12",
+      "claim": "session token compared with `==` (timing-unsafe)",
+      "fix": "use a constant-time compare"
     }
   ],
   "dimensions_checked": [
@@ -28,5 +37,16 @@
     "security",
     "contract-gaps",
     "drift"
-  ]
+  ],
+  "triage": {
+    "dispositioned_by": "<user>",
+    "at": "<ts>",
+    "dispositions": [
+      {
+        "finding": "CR3",
+        "action": "fixed",
+        "rationale": "switched to crypto.timingSafeEqual; re-ran the security check"
+      }
+    ]
+  }
 }

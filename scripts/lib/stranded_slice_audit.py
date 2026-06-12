@@ -57,6 +57,7 @@ if str(_PLUGIN_ROOT) not in _sys.path:
 
 from scripts.lib import _stdout
 from scripts.lib._git_default_branch import resolve_default_branch as _resolve_default_branch
+from scripts.lib._git_default_branch import run_git as _run_git
 from scripts.lib._vault_paths import VAULT_ROOT
 from scripts.lib.pulse_worktree_resolver import (
     WorktreeState,
@@ -114,10 +115,7 @@ class StrandedEntry:
 
 
 # ----------------------------- private helpers -----------------------------
-
-
-def _run_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", "-C", str(repo_root), *args], capture_output=True, text=True, check=False)
+# `_run_git` is the shared UTF-8-safe runner imported above (scripts.lib._git_default_branch.run_git).
 
 
 def _read_git_identity(repo_root: Path) -> str | None:

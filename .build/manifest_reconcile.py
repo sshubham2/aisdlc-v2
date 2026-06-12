@@ -18,7 +18,7 @@ file_access paths that look like dropped forward-sync / ~/.claude targets.
 import argparse, glob, json, os, re, sys
 
 sys.stdout.reconfigure(encoding="utf-8")
-ROOT = r"C:\Users\sshub\aisdlc-v2"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # <plugin> (portable; 4.8)
 MAN = os.path.join(ROOT, ".build", "manifests")
 LIB = os.path.join(ROOT, "scripts", "lib")
 

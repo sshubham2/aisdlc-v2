@@ -43,7 +43,7 @@ NOT the main tree (HEAD = default there → an empty diff). The build leaves cha
 
 ```!
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$(ls -1t "$AI_SDLC_VAULT_ROOT/slices/" | grep -v archive | head -1)"
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 paths='src/** skills/** agents/** scripts/** tests/**'
 base="$(git -C "$wt" merge-base HEAD origin/HEAD 2>/dev/null)"   # fork point (real repos w/ origin/HEAD)
@@ -64,7 +64,7 @@ stop. Read any `NEW-UNTRACKED:` files from `"$wt/<path>"` for review (new files 
    nothing wrong gets an explicit "none: <reason>" — never manufacture findings.
 3. Optional code-graph cross-check: use the `code-review-graph` MCP tools (impact-radius / search) for blast-radius
    and INFERRED edges the new code depends on.
-4. Write `<vault>/slices/slice-NNN-<name>/code-review.json` (schema by example: `examples/code-review.json`).
+4. Write `<vault>/slices/slice-NNN-<name>/code-review.json` (schema by example: `examples/code-review.json`). Include `"triage": null` — the per-blocker dispositions are filled by the MAIN thread after you return (you are forked and cannot run the interactive disposition gate).
 5. Update `<vault>/slices/slice-NNN-<name>/milestone.json`: `stage: "code-review"`.
 6. **Record the gate outcome** — one row per slice into `<vault>/gate-log.json` (measurement spine, roadmap
    Theme 8 / plan Phase 0). `code-review` is a **low** reality-contact gate (the model grading a diff);
@@ -81,13 +81,21 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
 
 ## Return
 A 2-line summary to the main thread: `Result` + blocker/major/minor counts. The full review lives in
-`code-review.json`. Findings are **advisory in v1** (they do not block `/validate-slice`).
+`code-review.json`.
+
+**Blocker findings are consequential (CRD-1).** If you filed ≥1 `blocker`, your return MUST instruct the main
+thread: _"N code-review blocker(s) — disposition each in `code-review.json` `triage.dispositions[]` (action
+`fixed` after re-running the relevant check, or `overridden` + a one-line rationale) BEFORE `/validate-slice`;
+`/validate-slice` refuses an un-dispositioned blocker."_ Major/minor findings stay advisory (recorded, not
+gated). You are forked, so you do NOT run the disposition gate yourself — you hand it to the main thread.
 
 **Model-on-model gate (Phase 1.3).** This is LOW reality-contact — the model grading a diff (the CRG cross-check
-reads real code, but the verdict is still the model's judgment). It is advisory by design; the gate that can
-actually say *no* against reality is `/validate-slice` (real device/data). Never present a clean code-review as
-a reality sign-off, and never let it override a reality gate.
+reads real code, but the verdict is still the model's judgment). Its **blockers** are dispositioned, not silently
+ignored (CRD-1 above); its major/minor findings stay advisory. The gate that can actually say *no* against reality
+is still `/validate-slice` (real device/data) — never present a clean code-review as a reality sign-off, and never
+let it override a reality gate.
 
 ## Pipeline position
 - predecessor: `/build-slice` · successor: `/validate-slice` · auto-advance: true
 - on-clean-completion: the main thread advances to `/validate-slice` after this fork returns.
+- user-input gates: none — `/code-review` runs as a forked agent and returns its verdict to the main thread (no mid-fork user prompts; the CRD-1 blocker disposition is gated in `/build-slice`, not here).

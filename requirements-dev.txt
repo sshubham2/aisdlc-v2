@@ -1,0 +1,7 @@
+# Dev/test dependencies for the ai-sdlc plugin's OWN test suite (remediation 4.4).
+#
+# Runtime deps are in requirements.txt; the test suite + the build-consistency CI
+# gate need only pytest + PyYAML (PyYAML is imported by the finding_dedup / assemble
+# CLI paths and by build_backlog's fallback). CRG is NOT needed for tests.
+pytest>=8
+PyYAML>=6.0

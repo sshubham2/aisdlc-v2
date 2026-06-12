@@ -1,0 +1,29 @@
+{
+  "_schema": "aisdlc/actor@1",
+  "_note": "One file per actor at <vault>/actors/<actor>.json (Heavy mode; /heavy-architect). aggregate.py emits the bundled example at the FLAT path examples/actor.json — it cannot nest examples/actors/, so SKILL.md must cite examples/actor.json, not examples/actors/<x>.json.",
+  "name": "seller",
+  "role": "runs the shop",
+  "goals": [
+    "take a card payment",
+    "see orders update live"
+  ],
+  "top_actions": [
+    "create a checkout",
+    "view order status"
+  ],
+  "needs": [
+    "clear payment confirmation",
+    "low-latency order updates"
+  ],
+  "cannot": [
+    "issue refunds",
+    "see other sellers' data"
+  ],
+  "pain_points": [
+    "card declines with no stated reason",
+    "stale order list"
+  ],
+  "journeys": [
+    "onboard -> first sale -> daily order review"
+  ]
+}

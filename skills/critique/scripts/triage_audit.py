@@ -49,8 +49,8 @@ Disposition vocabulary (v2 lowercase):
   - deferred            known issue; later slice — rationale required
   - escalated           spike or redesign needed — rationale required
 
-NFR-1 carry-over: slices whose mission-brief.json mtime predates the rule's
-release date (_TRI_1_RELEASE_DATE) are exempt automatically.
+NFR-1 mtime carry-over was REMOVED (3.9 — it was dead for every post-install user).
+`--no-carry-over` is still accepted as a no-op for CLI compatibility.
 
 Usage:
     python triage_audit.py <slice-folder>
@@ -59,7 +59,7 @@ Usage:
     python triage_audit.py --no-carry-over <slice-folder>
 
 Exit codes:
-    0  clean (or carry-over exempt)
+    0  clean
     1  triage violations
     2  usage error
 """
@@ -80,9 +80,6 @@ from pathlib import Path
 from typing import Any
 
 from scripts.lib import _stdout
-
-# Date this rule shipped. NFR-1 carry-over.
-_TRI_1_RELEASE_DATE: date = date(2026, 5, 6)
 
 # Required fields in the triage header block
 _REQUIRED_HEADER_FIELDS: frozenset[str] = frozenset({"ratified_by", "at", "verdict"})
@@ -149,15 +146,6 @@ class TriageResult:
         }
 
 
-def _slice_is_carry_over(slice_folder: Path) -> bool:
-    """True if the slice was authored before TRI-1 (mtime carry-over)."""
-    brief = slice_folder / "mission-brief.json"
-    if not brief.exists():
-        return False
-    mtime_date = datetime.fromtimestamp(brief.stat().st_mtime).date()
-    return mtime_date < _TRI_1_RELEASE_DATE
-
-
 def _cell_is_empty(cell: str) -> bool:
     return str(cell).strip().lower() in _EMPTY_SENTINELS
 
@@ -187,10 +175,6 @@ def audit_critique_file(
             kind="no-triage", severity="Important",
             message=f"critique.json not found: {critique_path}",
         ))
-        return result
-
-    if skip_if_carry_over and _slice_is_carry_over(critique_path.parent):
-        result.carry_over_exempt = True
         return result
 
     try:

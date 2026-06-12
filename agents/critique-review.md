@@ -67,11 +67,13 @@ Every disagreement references a specific finding id (B1, M2, m3) AND a specific 
 ADJUST and EXTEND can co-occur; use **EXTEND** then (the more substantive change).
 
 ## Output
-Produce the `critique-review.json` content the /critique-review skill will write to `<vault>/slices/slice-NNN-<name>/critique-review.json`, in the schema shown at `skills/critique-review/examples/critique-review.json`:
+Produce the `critique-review.json` content the /critique-review skill will write to `<vault>/slices/slice-NNN-<name>/critique-review.json`, in the schema shown at `skills/critique-review/examples/critique-review.json` (enforced by `skills/critique-review/scripts/critique_review_audit.py`):
 
-`{ "_schema":"aisdlc/critique-review@1", "slice", "reviewed_by":"critique-review agent (DR-1)", "date":"<YYYY-MM-DD>", "first_critic_verdict":"CLEAN|NEEDS-FIXES|BLOCKED", "verdict":"accept|adjust|extend", "summary", "confirmed":[{ "id":"B1", "note":"confirmed; severity appropriate; matches design.json§<section>" }], "suspicious":[{ "id":"m2", "note":"design.json§<section> already addresses this via <ref>; recommend dropping" }], "missed":[{ "id":"M-add-1", "dimension", "severity", "claim", "fix" }], "severity_adjustments":[{ "id":"M3", "from":"major", "to":"minor", "why":"no production-impact path; code-cleanliness only" }], "notes":"<meta-Critic confidence + calibration observations about the first Critic's pattern this slice>" }`
+`{ "_schema":"aisdlc/critique-review@1", "slice", "reviewed_by":"critique-review agent (DR-1)", "date":"<YYYY-MM-DD>", "first_critic_verdict":"clean|needs-fixes|blocked", "verdict":"accept|adjust|extend", "summary", "assessments":[{ "finding":"<id from critique.json, e.g. C1>", "classification":"valid|suspicious|severity-wrong", "note":"<why — for `suspicious` cite the design.json§section that already addresses it; for `severity-wrong` state the corrected severity AND why>" }], "missed":[{ "dimension", "severity":"blocker|major|minor", "claim":"<concrete; cite a design.json§section or AC>", "fix" }], "notes":"<meta-Critic confidence + calibration observations about the first Critic's pattern this slice>" }`
 
-Return a one-line summary (verdict + counts of confirmed/suspicious/missed/severity-adjustments) to the main thread; the full review is in the JSON.
+Exactly one `assessments[]` entry per finding in `critique.json`: `valid` (first Critic right, severity appropriate) · `suspicious` (over-reach — design already addresses it or it's too speculative) · `severity-wrong` (real concern, mis-filed severity — put the corrected severity in `note`). `missed[]` carries the false-negatives you surfaced by the premortem + re-derivation. `verdict`: **accept** (all valid, none missed) · **adjust** (≥1 suspicious/severity-wrong, none missed) · **extend** (≥1 missed).
+
+Return a one-line summary (verdict + counts of valid/suspicious/severity-wrong/missed) to the main thread; the full review is in the JSON.
 
 ## What you DO NOT do
 - **Do not modify** mission-brief.json, design.json, critique.json, or any code. Read-only.

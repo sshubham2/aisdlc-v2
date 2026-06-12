@@ -51,7 +51,8 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/grep_vault.py" --vault "$AI_SDLC_VAUL
 Before designing, run the ephemeral project-frame so the design is direction-aware:
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$AI_SDLC_VAULT_ROOT/slices/<active-slice>"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$VAULT/slices/<active-slice>"
 ```
 
 Emits ≤40 lines: **Identity** / **Trajectory** / **Impact**. First line is an adversarial ATTACK-LENS preamble —
@@ -71,7 +72,7 @@ not buy platinum on a $5 slice:**
 |------|-----------|------|
 | **low / mechanical** (typo, config, rename, obvious CRUD) | **1 (inline)** | **Single flight** — use the "Single flight" path just below, then skip Step 2 (synthesis) → Step 3. No agents spawned, no design spike. **Zero added cost.** |
 | **medium** | **2 blind**: `designer-practice` + `designer-crossdomain` | Tournament |
-| **high / novel / irreversible** | **3 blind**: + `designer-expert` | Tournament + mandatory coherence pass + design spike |
+| **high / novel / irreversible** | **3 blind**: + `designer-expert` | Tournament + mandatory coherence pass + design spike **iff** the synthesis left a `pending` decidable disagreement or a `must-verify` invariant (Step 8) |
 
 **Escalate within medium → full 3** when the slice is genuinely *novel* (no similar prior slice in the injected
 reflections) or locks an *irreversible* ADR — those are exactly the slices where the expert lens earns its cost.
@@ -126,14 +127,25 @@ You now hold 2–3 independent proposals. Compose **one** design — this is the
    keep one and redesign the seam; record it in `coherence_check`.
 3. **Classify the disagreements.**
    - **Empirically decidable** (does the API support X? is it fast enough? does the integration actually work?)
-     → add to `tournament.decidable_disagreements` with `verdict: "pending"`. **Reality adjudicates these** at the
-     post-synthesis design spike (Step 8) — not you, not the Critic.
+     → add to `tournament.decidable_disagreements` with `verdict: "pending"` **only when the losing answer would
+     force a re-synthesis** — a different component boundary, contract, or data model. A cheap question whose
+     answer doesn't change the design (it just needs to hold) is NOT a decidable disagreement; let `/build-slice`'s
+     smoke gate settle it. **Reality adjudicates the material ones** at the post-synthesis design spike (Step 8) —
+     not you, not the Critic.
    - **Taste** (boundary placement, naming, layering) → add to `tournament.taste_disagreements`; these fall
      through to `/critique` + the user.
 4. **Carry the provenance.** Take `designer-crossdomain`'s `cross_domain_transfer` block into `design.json` when
    its pattern is (partly) selected — its `must-verify` invariants are design-spike + `/critique` targets. Take
    `designer-expert`'s `channeled_experts` into `tournament.channeled_experts` (the `/critique` independence guard
    reads it so the Critic is a *different* expert — Phase 3.5).
+5. **Measure the divergence (3.3 — measure "diverse at generation", don't just assert it).** For each designer
+   **pair**, classify how different their proposals actually were: `identical` (same approach modulo wording),
+   `overlapping` (shared core, differing details), or `disjoint` (materially different approaches). Record one
+   entry per pair into `tournament.approach_divergence`. This is the empirical check on the tournament's whole
+   premise — and the **decision rule** it feeds: if a project's `designer-practice ~ designer-expert` pair comes
+   back `identical`/`overlapping` on **most high-tier slices**, the expert lens is converging on practice and not
+   earning its spawn cost → **drop to 2 designers** (the medium-tier default) for this project. `/pulse --full`
+   surfaces the cross-slice aggregate from the design-tournament gate-log row (Step 5).
 
 The synthesized design is "what's new for this slice." **Thin-vault discipline**: reference code locations, don't
 duplicate them; design ONLY what this slice ships. The vault grows with the system, not ahead of it.
@@ -181,8 +193,26 @@ Key fields:
   `must-verify` invariants are what the design spike and `/critique` check.
 - `tournament` — **only on the tournament path** (omit on single-flight low-tier slices): `tier`, `designers[]`,
   `proposals[]` (`designer`, `approach`, `selected: core|partial|none`), `channeled_experts[]`,
-  `selection_rationale`, `coherence_check`, `decidable_disagreements[]`, `taste_disagreements[]`.
+  `selection_rationale`, `coherence_check`, `decidable_disagreements[]`, `taste_disagreements[]`,
+  `approach_divergence[]` (3.3 — per designer-pair `{pair, divergence: identical|overlapping|disjoint}`).
 - `at` — ISO-8601 timestamp
+
+**Gate-log the divergence (tournament path only — 3.3).** After writing design.json, append one *informational*
+`design-tournament` gate-log row so "diverse at generation" is measurable across slices (skip on single-flight
+low-tier slices — no tournament ran):
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+    --gate design-tournament --slice slice-NNN-<name> \
+    --verdict <most-divergent pair: identical|overlapping|disjoint> --findings-count 0 \
+    --approach-divergence "practice~crossdomain:<d>; practice~expert:<d>; crossdomain~expert:<d>" \
+    --mode <minimal|standard|heavy> --tier <medium|high> \
+  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+```
+
+This row raises no findings (it is informational, not a verdict/finding gate — `/pulse` excludes it from the
+quiet/lighten math); `/pulse --full` reads it to surface the project's expert-lens cost over time.
 
 **Wiring matrix (WIRE-1)**: every new module declares a consumer entry point AND a consumer test, or carries an
 explicit `exemption` with substring `"rationale:"`. build-slice treats null-exemption + empty consumer fields as a failure.
@@ -223,10 +253,14 @@ the user: "Scope expanded to touch X; Critic is now mandatory."
 ## Step 8 — design-spike gate (post-synthesis; conditional)
 
 The tournament's empirically-decidable disagreements are settled by **reality**, not by the Critic. Run the
-post-synthesis **design spike** when ANY of these hold (otherwise skip straight to Step 9 → `/critique`):
+post-synthesis **design spike** when EITHER of these has something real to adjudicate (otherwise skip straight to
+Step 9 → `/critique`):
 - `tournament.decidable_disagreements` has any `verdict: "pending"`, OR
-- the selected `cross_domain_transfer` has any invariant `status: "must-verify"`, OR
-- `risk_tier` is `high` or this slice locks an `irreversible` ADR.
+- the selected `cross_domain_transfer` has any invariant `status: "must-verify"`.
+
+**Tier/irreversibility alone does NOT trigger a spike.** A high-tier or irreversible slice with nothing pending
+has nothing for reality to decide — spiking it would be an empty round-trip (it would just write a skip note and
+forward). The two target conditions above are the whole gate.
 
 To run it, invoke **`/risk-spike --mode design`** via the Skill tool. It spikes the chosen composition on the real
 environment, writes verdicts back into `design.json`'s `decidable_disagreements` + the `cross_domain_transfer`
@@ -248,8 +282,8 @@ ADR-NNN (count), milestone.json (stage: design). Next: <design spike | /critique
 
 Then advance — **do not wait for the user** unless Step 3 clarifying questions were asked (those already halted):
 - Step 8 fires → invoke `/risk-spike --mode design` via Skill.
-- Else → invoke `/critique` via Skill (it self-skips per its own mode/tier gate if `critic_required: false` and
-  advances onward).
+- Else → invoke `/critique` via Skill (it self-skips per its own tier gate when the slice is `low`-tier with
+  `critic_required: false`, and advances onward).
 
 ## Critical rules
 

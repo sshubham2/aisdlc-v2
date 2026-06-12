@@ -1,8 +1,8 @@
 """finding_dedup.py — cross-pass / cross-finder finding de-duplication (SHARED).
 
-SKETCH v0 (not yet wired into the build). Shared because >1 skill needs it:
-  - /diagnose  (call from assemble.py, AFTER load_findings(), BEFORE render)
-  - /bug-hunt  (call after the finder fan-out, BEFORE adversarial verify)
+LIVE — wired into the build at two call sites (3.19.3; shared because >1 skill needs it):
+  - /diagnose  (called from scripts/lib/assemble.py, AFTER load_findings(), BEFORE render)
+  - /bug-hunt  (called after the finder fan-out, BEFORE the adversarial refute pass)
 
 ## Why this exists
 
@@ -35,9 +35,9 @@ Merge is **additive and lossless on required fields**:
     passes load_findings()'s required-field check, and the extra fields are
     ignored by consumers that don't know them (e.g. /slice-candidates).
 
-Carryover note for the caller: when this is introduced, teach the carryover step
-to match a merged finding by `id` OR any entry in its `merged_ids` (one-time
-migration so prior per-pass annotations survive the first merged run).
+Carryover note for the caller: the carryover step matches a merged finding by `id`
+OR any entry in its `merged_ids`, so prior per-pass annotations survive a merged run
+(assemble.py carries merged-id annotations over after load_findings()).
 """
 from __future__ import annotations
 

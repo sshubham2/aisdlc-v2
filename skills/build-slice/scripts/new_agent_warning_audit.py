@@ -26,9 +26,11 @@ Results are unioned and deduplicated by path.
 - v1 resolved ``base`` via a locally-defined ``_resolve_default_branch`` that
   duplicated ``branch_workflow_audit``'s logic. v2 imports
   ``resolve_default_branch`` (+ ``run_git``) from the shared
-  ``scripts.lib._git_default_branch`` leaf — single source of truth. There is
-  NO ``main`` literal fallback: ``None`` ⇒ NAW-1 exits 2 per the
-  default-branch-unresolvable semantics.
+  ``scripts.lib._git_default_branch`` leaf — single source of truth. The shared
+  resolver now falls back through ``main``/``master`` refs and the current branch
+  (``git symbolic-ref --short HEAD``), so a fresh ``git init`` repo resolves instead
+  of spuriously tripping NAW-1; ``None`` (no resolvable default branch — e.g. a
+  detached-HEAD CI checkout) ⇒ exit 0 SKIPPED (no slice diff to inspect), not exit 2.
 - git subprocess calls route through the shared ``run_git`` (``git -C <root>``)
   helper rather than ad-hoc ``subprocess.run(cwd=…)``.
 - ``agents/*.md`` is unchanged in v2 (the agents/ directory still exists).
@@ -39,13 +41,16 @@ Results are unioned and deduplicated by path.
 exposes two injectable callables (default to the real resolvers) so a regression
 suite can drive controlled fixture sets without depending on live branch state.
 
-**Semantics** (BINARY exit contract by construction — never exit 1):
+**Semantics** (exit contract by construction — never exit 1):
   - no added ``agents/*.md`` ⇒ exit 0, status ``"clean"``, quiet stdout.
   - ≥1 added ``agents/*.md`` ⇒ exit 0, status ``"warn"``, WARN line(s) on
     stdout (each citing agent path + session-restart instruction + R-18).
-  - usage error ⇒ exit 2 with stderr message (repo root unresolvable,
-    ``git`` unavailable, default-branch resolution returned ``None``, or any of
-    the three git subprocess calls non-zero).
+  - no default-branch diff base ⇒ exit 0, status ``"skipped"`` (NOT APPLICABLE):
+    a detached-HEAD / shallow CI checkout or a repo with no default branch has no
+    slice diff to inspect, so NAW-1 no-ops. NAW-1 is CI-only (1.5); a hard fail here
+    would break plugin CI on every GitHub Actions detached-HEAD checkout.
+  - usage error ⇒ exit 2 with stderr message (repo root unresolvable, or
+    ``git`` unavailable / a git subprocess call non-zero).
 
 **NEVER exit 1** — a new-agent slice is NOT a slice regression; the WARN is
 informational, never a HALT.
@@ -59,9 +64,10 @@ Usage::
 
 Exit codes::
 
-    0  no added `agents/*.md` (clean, quiet) OR ≥1 added (warn, stdout)
-    2  usage error (repo root unresolvable, `git` unavailable, default-branch
-       resolution failed, or any git subprocess call non-zero)
+    0  no added `agents/*.md` (clean, quiet) OR ≥1 added (warn, stdout) OR no
+       default-branch diff base (skipped / not applicable — detached-HEAD CI checkout)
+    2  usage error (repo root unresolvable, `git` unavailable, or a git subprocess
+       call non-zero)
 """
 from __future__ import annotations
 
@@ -105,10 +111,10 @@ _USAGE_GIT_MISSING = (
     "resolve the slice diff."
 )
 _USAGE_DEFAULT_BRANCH_UNRESOLVABLE = (
-    "NAW-1 usage error: default branch unresolvable (neither "
-    "`git symbolic-ref refs/remotes/origin/HEAD` nor "
-    "`git config init.defaultBranch` returned a value). Configure an "
-    "`origin/HEAD` ref or set `init.defaultBranch`."
+    "NAW-1 usage error: default branch unresolvable — `origin/HEAD`, "
+    "`init.defaultBranch`, a `main`/`master` ref, AND the current branch "
+    "(`git symbolic-ref --short HEAD`) all failed. Is this a git repo on a branch? "
+    "Make an initial commit or set `init.defaultBranch`."
 )
 _USAGE_GIT_SUBCOMMAND_FAILED = (
     "NAW-1 usage error: `git {subcommand}` exited non-zero ({rc}): {stderr}"
@@ -218,9 +224,17 @@ def check(
 
     base = default_branch_resolver(root)
     if base is None:
-        result.status = "usage"
-        result.exit_code = 2
-        result.divergences.append(_USAGE_DEFAULT_BRANCH_UNRESOLVABLE)
+        # No default-branch diff base — a detached-HEAD / shallow CI checkout (the normal
+        # GitHub Actions state), or a fresh repo with no default branch. NAW-1 inspects a
+        # SLICE diff; with no base there is no diff to inspect, so it is NOT APPLICABLE
+        # (exit 0, no-op) — NOT a usage error. NAW-1 is CI-only (evicted from the per-slice
+        # gate, 1.5); a hard fail here would break plugin CI on every detached-HEAD checkout.
+        # (A genuinely broken env — git missing / a git subcommand failing — is still exit 2.)
+        result.status = "skipped"
+        result.exit_code = 0
+        result.divergences.append(
+            "NAW-1 not applicable: no default-branch diff base (detached-HEAD / shallow "
+            "checkout, or no default branch) — nothing to diff. (no-op, exit 0)")
         return result
 
     try:
@@ -253,6 +267,11 @@ def check(
 
 
 def _format_human(result: CheckResult) -> str:
+    if result.status == "skipped":
+        return (
+            "NAW-1 new-agent warning audit: not applicable (no-op, exit 0)\n\n"
+            + "".join(f"  {d}\n" for d in result.divergences)
+        )
     if result.status == "usage":
         return (
             "NAW-1 new-agent warning audit: USAGE ERROR\n\n"

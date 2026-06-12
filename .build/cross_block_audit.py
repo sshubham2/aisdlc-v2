@@ -175,7 +175,10 @@ def main(argv):
     print("\n--- summary ---")
     print(f"files audited: {len(files)}   cross-block hits: "
           f"{'YES' if any_cross else 'none'}")
-    return 0
+    # Gate on the [A] cross-block-var-use class only (the real bug — a var assigned
+    # in one ```bash block read in another, where shell state does NOT persist). The
+    # [B] positional-arg notes stay advisory (printed, non-fatal). (4.4 CI)
+    return 1 if any_cross else 0
 
 
 if __name__ == "__main__":

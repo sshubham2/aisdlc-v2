@@ -143,6 +143,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                    help="emit the info dict as JSON (default: one-line text)")
     p.add_argument("--path-only", action="store_true",
                    help="print ONLY the resolved slice folder path (empty if none) — for shell capture")
+    p.add_argument("--folder-only", action="store_true",
+                   help="print ONLY the resolved slice folder NAME (basename; empty if none) — for "
+                        "`_worktree_paths.py --slice-folder` and other name-keyed call sites")
     return p
 
 
@@ -152,6 +155,9 @@ def main(argv: list[str] | None = None) -> int:
     info = resolve_active_slice(_root(args.vault), args.repo_root)
     if args.path_only:  # BB-10: single-value capture for SKILL.md sub-shells (consistent with --json)
         print(info["path"] if info else "")
+        return 0
+    if args.folder_only:  # NAME (basename) for `_worktree_paths.py --slice-folder` and peers
+        print(info["folder"] if info else "")
         return 0
     if args.json:
         print(json.dumps(info if info else {"slice": None, "source": "none", "exists": False},

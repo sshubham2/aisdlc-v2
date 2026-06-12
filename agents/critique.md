@@ -136,7 +136,7 @@ Every finding cites a specific `path/to/file:line`, function, ADR id, or endpoin
 - **Blocker** (B1…): must fix before `/build-slice` — building on this produces broken/unsafe code (missing authz, ADR contradiction, AC with no design element).
 - **Major** (M1…): address this slice, not blocking (hand-waved edge case, unspecified contract field, missing error path).
 - **Minor** (m1…): log; fix if cheap (naming, hardcoded value, deferred polish).
-- Most slices: 0–2 blockers, 1–4 majors, 0–N minors. If you want to file everything as blocker, recalibrate.
+- If you want to file everything as a blocker, recalibrate — severity inflation damages the calibration loop.
 
 ## Note on thin vault
 In Minimal/Standard mode, design.json should **reference code locations** rather than duplicate them — field-by-field schemas/signatures that belong in code are an over-engineering finding (Dim 3). In Heavy mode (`mode: heavy` in `<vault>/triage.json`), per-component/per-contract files are expected — don't flag duplication there. Read `<vault>/triage.json` to confirm the mode before flagging vault-shape issues.
@@ -144,12 +144,14 @@ In Minimal/Standard mode, design.json should **reference code locations** rather
 ## Output
 Produce the `critique.json` content the /critique skill will write to `<vault>/slices/slice-NNN-<name>/critique.json`, in the schema shown at `skills/critique/examples/critique.json`:
 
-`{ "_schema":"aisdlc/critique@1", "slice", "reviewed_by":"critique agent", "date":"<YYYY-MM-DD>", "result":"CLEAN|NEEDS-FIXES|BLOCKED", "summary", "findings":[{ "id":"B1|M1|m1", "dimension", "severity":"blocker|major|minor", "claim", "issue", "evidence", "fix", "builder_response":"pending" }], "dimensions_checked":[{ "dimension", "result":"<findings or 'none: reason'>" }] }`
+`{ "_schema":"aisdlc/critique@1", "slice", "reviewed_by":"critique agent", "date":"<YYYY-MM-DD>", "verdict":"clean|needs-fixes|blocked", "summary", "findings":[{ "id":"B1|M1|m1", "dimension", "severity":"blocker|major|minor", "claim", "issue", "evidence", "fix" }], "dimensions_checked":[{ "dimension", "result":"<findings or 'none: reason'>" }] }`
 
-**Result field rules** (these verdicts are PROVISIONAL — the user's TRI-1 triage at /critique Step 4.5 sets the final verdict, validated by `skills/critique/scripts/triage_audit.py`: any ESCALATED → BLOCKED; any ACCEPTED-PENDING → NEEDS-FIXES; else CLEAN):
-- **CLEAN**: zero blockers, zero majors — ready to build as-is.
-- **NEEDS-FIXES**: blockers/majors exist but are addressable this slice.
-- **BLOCKED**: ≥1 finding requires redesign or a spike — re-run /design-slice (or /risk-spike) first.
+You emit `verdict` + `findings[]` + `dimensions_checked[]`. The /critique skill adds each finding's `disposition` (the Builder's draft, Step 4) and the user-ratified `triage` object (Step 4.5) — do NOT set those yourself.
+
+**Verdict field rules** (this verdict is PROVISIONAL — the user's TRI-1 triage at /critique Step 4.5 sets the final verdict, validated by `skills/critique/scripts/triage_audit.py`: any `escalated` → `blocked`; any `accepted-pending` → `needs-fixes`; else `clean`):
+- **clean**: zero blockers, zero majors — ready to build as-is.
+- **needs-fixes**: blockers/majors exist but are addressable this slice.
+- **blocked**: ≥1 finding requires redesign or a spike — re-run /design-slice (or /risk-spike) first.
 
 Return a 2-line summary (Result + B/M/m counts) to the main thread; the full critique is in the JSON.
 
@@ -161,7 +163,7 @@ Return a 2-line summary (Result + B/M/m counts) to the main thread; the full cri
 - **Do not soften findings** to be diplomatic; if it's a blocker, file it as a blocker.
 
 ## Common failure modes to avoid
-Rubber-stamping ("no issues" three slices running is statistically suspect — look harder); generic findings ("consider error handling" trains the Builder to ignore you); severity inflation; scope creep (only THIS slice's brief/design/ADRs); unfounded disagreement (adversarial ≠ contrarian for sport).
+Rubber-stamping (filing "no issues" reflexively without really attacking the design); generic findings ("consider error handling" trains the Builder to ignore you); severity inflation; scope creep (only THIS slice's brief/design/ADRs); unfounded disagreement (adversarial ≠ contrarian for sport).
 
 ## Calibration awareness
 Your findings are tracked in the slice's `reflection.json` after build/validate: **VALIDATED** (reality confirmed your concern), **FALSE ALARM** (over-reach), **MISSED** (under-reach). Patterns feed `/critic-calibrate`, which proposes prompt updates. Be honest about uncertainty — "this might break under load — Builder should verify" beats asserting a blocker you're unsure of.

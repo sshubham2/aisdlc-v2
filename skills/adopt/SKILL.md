@@ -34,7 +34,9 @@ Verify code-review-graph is installed. Run:
 ```bash
 "${CRG:-code-review-graph}" --version 2>/dev/null && echo "CRG_OK" || echo "CRG_MISSING"
 ```
-If `CRG_MISSING`: **STOP** and tell the user to install it (`pip install code-review-graph`, then `code-review-graph install --platform claude-code`), then re-run `/adopt`.
+If `CRG_MISSING`: do NOT hard-stop with a raw pip command (that contradicts the README's graceful-degrade, `/triage`'s "advisory only", and bypasses the plugin's own doctor). Offer two paths via `AskUserQuestion`:
+- **(a) Install + retry** — run `/ai-sdlc:setup` (it resolves + installs CRG and registers the MCP server, surfacing the resolved version), then re-run `/adopt`.
+- **(b) Degraded adopt** — proceed WITHOUT the code graph: the brownfield interview + a stack-file scan still run, but every code-derived finding is marked **"unconfirmed — CRG absent"** (mirrors `/reduce`'s degraded pattern). Blast-radius / reachability claims are skipped, never guessed.
 
 If injected state shows `EXISTING_VAULT=true`: ask via `AskUserQuestion` — merge with existing vault, or start fresh (user must clean up first)?
 
@@ -129,6 +131,12 @@ Write `<vault>/concept.json` (schema: `examples/concept.json`) grounded in code 
 - `constraints.stack`: derived from STACK_FILE (concrete), NOT README.
 - `constraints.infra`: from user only (code cannot determine this reliably).
 - Add `doc_vs_code_discrepancies` field if /diagnose found README contradictions.
+
+**Pin the vault (4.7, NEW vault only — skip when merging into an existing one).** Record the tier-2
+git-common-dir pin so a later repo move/rename does not orphan this vault:
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" write-pin
+```
 
 ## Step 8 — capture historical ADRs (firsthand only)
 

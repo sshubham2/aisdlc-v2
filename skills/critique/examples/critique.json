@@ -31,7 +31,7 @@
     "dispositions": [
       {
         "finding": "C1",
-        "action": "fix-now"
+        "action": "accepted-pending"
       }
     ]
   }

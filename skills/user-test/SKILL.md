@@ -17,7 +17,7 @@ files are hypotheses; this skill retires UX risk with evidence.
 
 Current risk register (for deduplication in Step 6):
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" "$AI_SDLC_VAULT_ROOT/risk-register.json" 2>/dev/null || echo "{}"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"; $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" "$VAULT/risk-register.json" 2>/dev/null || echo "{}"
 ```
 
 ## Step 1 — confirm fit (user-input gate)
@@ -105,8 +105,9 @@ For each "Surprised" or "Stuck" finding that represents a new risk not already i
 construct a new risk entry and append it via vault_edit (the SVW-1 safe channel):
 
 ```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-    --file "$AI_SDLC_VAULT_ROOT/risk-register.json" \
+    --vault "$VAULT" --file risk-register.json \
     --array risks \
     --content-file <tmp-json-with-new-risk-entries>
 ```

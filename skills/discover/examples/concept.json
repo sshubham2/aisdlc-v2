@@ -34,5 +34,11 @@
     "infra": "Vercel + managed Postgres.",
     "team": "solo, 6-week MVP."
   },
+  "references": [
+    {
+      "label": "Stripe API docs",
+      "url": "https://stripe.com/docs/api"
+    }
+  ],
   "first_slice_candidate": "SC-001"
 }

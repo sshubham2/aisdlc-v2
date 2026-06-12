@@ -100,6 +100,13 @@ def _file_lock(target: Path) -> Iterator[None]:
     itself) for the duration of the block. Cross-platform: ``msvcrt.locking``
     (Windows; mandatory byte-range) / ``fcntl.flock`` (POSIX; advisory). Blocks
     up to ``_LOCK_TIMEOUT`` polling non-blocking attempts, then ``TimeoutError``.
+
+    Lifecycle (3.19.4): the ``.lock`` sidecar is intentionally IMMORTAL — created on
+    first use, NEVER deleted at unlock. Unlinking it would race a concurrent locker
+    that already holds the old inode (the classic unlink-race), so it is left in place
+    as a zero-content coordination file. Stale ``.lock`` sidecars are harmless; an
+    OFFLINE maintenance sweep (when no writer is active — e.g. an ``/archive`` cleanup)
+    is the only safe time to remove them.
     """
     lockpath = target.with_name(target.name + _LOCK_SUFFIX)
     lockpath.parent.mkdir(parents=True, exist_ok=True)
@@ -150,7 +157,14 @@ def safe_write_text(path: Path | str, text: str, *, encoding: str = "utf-8") -> 
     """Whole-file write: lock the sidecar → write a temp file → atomic
     ``os.replace`` onto the target, with bounded exponential-backoff retry on
     ``PermissionError`` (Windows EPERM when a handle is held by OneDrive / AV /
-    indexer). Never leaves a truncated target (the replace is atomic)."""
+    indexer).
+
+    CONCURRENCY guarantee, not a crash-durability one (3.19.4): the atomic
+    ``os.replace`` means no concurrent reader ever observes a half-written target —
+    a reader sees either the old file or the new one, never a truncation. It does
+    NOT fsync the temp, so a crash / power-loss in the write→replace window can lose
+    the just-written content (the prior target survives intact); it never corrupts
+    the target into a partial state."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _file_lock(path):
@@ -198,7 +212,16 @@ def safe_append_text(path: Path | str, text: str, *, encoding: str = "utf-8") ->
                 f"(OneDrive / antivirus / Search indexer?). Last error: {last_exc}"
             )
         try:
-            os.write(fd, data)
+            # os.write may SHORT-write (large appends, interrupted syscalls) — loop to
+            # completion or raise, so the tail of an append is never silently dropped (3.19.4).
+            written = 0
+            while written < len(data):
+                n = os.write(fd, data[written:])
+                if n <= 0:
+                    raise OSError(
+                        f"safe_append_text: short write to {path} "
+                        f"({written}/{len(data)} bytes) — append truncated")
+                written += n
         finally:
             os.close(fd)
 

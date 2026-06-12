@@ -19,7 +19,8 @@
   ],
   "shippability_regression": {
     "ran": true,
-    "failed_rows": []
+    "failed_rows": [],
+    "deferral": null
   },
   "at": "<ts>"
 }

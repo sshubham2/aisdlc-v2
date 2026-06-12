@@ -9,11 +9,25 @@ backslashes (`C:\\Users` -> `C:Users`), PowerShell-written config files carry a
 UTF-8 BOM, and the PATH `C:`-vs-`:` separator collides. In Python these are
 `str.replace`, `shlex.quote`, `find_spec`, and `utf-8`/`-sig` - no traps.
 
-Contract (identical OUTPUTS to the old bash hook, so nothing downstream changes):
-  - Persists POSIX `export` lines to $CLAUDE_ENV_FILE (git-bash sources it):
+Contract:
+  - Persists ONLY `export PY` / `export CRG` to $CLAUDE_ENV_FILE (git-bash sources it) inside ONE
+    marked, idempotently-rewritten managed block (4.6.2 — the old `open(..., "a")` appended
+    duplicates on every clear/compact since the file persists across re-fires):
+      # >>> ai-sdlc managed (PY/CRG/vault) >>>
       export PY=<forward-slash abs interpreter>
       export CRG=<forward-slash abs code-review-graph entry point>   (when resolvable)
-      export AI_SDLC_VAULT_ROOT=<forward-slash vault root>           (when resolvable)
+      # <<< ai-sdlc managed <<<
+    Non-ai-sdlc lines other tools wrote to the shared file are preserved.
+  - 4.6.1: the hook does NOT export AI_SDLC_VAULT_ROOT. Freezing a session-start-cwd value made
+    mid-session work on a DIFFERENT repo silently route vault writes to the FIRST repo's vault.
+    The vault now resolves PER-INVOCATION (skills use `${AI_SDLC_VAULT_ROOT:-$($PY
+    .../_vault_paths.py --path)}`; scripts fall back to their own cwd-keyed VAULT_ROOT). An
+    explicit user-set AI_SDLC_VAULT_ROOT is still honored. `_write_env_block` still STRIPS a
+    legacy exported AI_SDLC_VAULT_ROOT (via _OUR_VARS) so an upgrade de-leaks the env-file.
+  - 4.6.3 short-circuit: a re-fire whose managed block already names a PY that still exists
+    returns immediately — zero re-probe subprocesses (cuts the per-clear/compact tax).
+  - 3.19.8: the deliberate `WARN` `_vault_paths` emits when keying the vault on a non-git cwd
+    now surfaces per-invocation when a skill resolves the vault (was swallowed by the hook).
   - Install moved to /ai-sdlc:setup. Here we only PROBE deps; if missing, emit a
     one-line nudge to stdout (SessionStart context Claude relays). Opt back into the
     old silent install with AI_SDLC_AUTO_INSTALL=1.
@@ -45,6 +59,14 @@ NUDGE_DEPS = (
 )
 DEP_PROBE = ('import importlib.util as u, sys; '
              'sys.exit(0 if u.find_spec("yaml") and u.find_spec("code_review_graph") else 1)')
+
+# CLAUDE_ENV_FILE is sourced before every Bash call and PERSISTS across clear/compact, so
+# the old `open(..., "a")` re-appended duplicate exports on every SessionStart re-fire (4.6.2).
+# We now write a single MARKED managed block and rewrite it in place each fire — idempotent,
+# and it preserves any non-ai-sdlc lines other tools wrote to the shared file.
+_MANAGED_START = "# >>> ai-sdlc managed (PY/CRG/vault) >>>"
+_MANAGED_END = "# <<< ai-sdlc managed <<<"
+_OUR_VARS = ("PY", "CRG", "AI_SDLC_VAULT_ROOT")  # also strip legacy un-markered copies on migration
 
 
 def _fwd(p: str) -> str:
@@ -103,20 +125,75 @@ def resolve_crg(interp: str) -> str | None:
     return "code-review-graph" if shutil.which("code-review-graph") else None
 
 
-def resolve_vault_root(interp: str, plugin_root: str) -> str | None:
-    """Delegate to the leaf resolver `_vault_paths.py --path` (the established
-    interface). Captured as BYTES, decoded utf-8, leading BOM stripped defensively."""
-    vp = os.path.join(plugin_root, "scripts", "lib", "_vault_paths.py")
-    if not os.path.isfile(vp):
-        return None
+# NOTE (4.6.1): the hook used to resolve + export AI_SDLC_VAULT_ROOT here via
+# `_vault_paths.py --path`. That is GONE \u2014 the vault now resolves per-invocation (see main()).
+# `_vault_paths` still emits its deliberate cwd-keying WARN, which now surfaces to the user when a
+# skill resolves the vault, rather than being captured-and-discarded by the hook (3.19.8).
+
+
+def _existing_managed_py(env_file: str) -> str | None:
+    """The `export PY=<path>` value inside an already-written managed block, or None.
+    Used by the 4.6.3 short-circuit: a re-fire (clear/compact) whose block already names a
+    PY that still exists on disk needs NO re-resolution (cheap file read + isfile, zero
+    subprocesses)."""
     try:
-        out = subprocess.run([interp, vp, "--path"], capture_output=True, timeout=25)
-        if out.returncode != 0:
-            return None
-        val = _fwd(out.stdout.decode("utf-8", "replace").lstrip("\ufeff").strip())
-        return val or None
-    except Exception:
+        with open(env_file, encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
         return None
+    in_block = False
+    for line in content.splitlines():
+        s = line.strip()
+        if s == _MANAGED_START:
+            in_block = True
+            continue
+        if s == _MANAGED_END:
+            break
+        if in_block and s.startswith("export PY="):
+            try:
+                parts = shlex.split(s[len("export PY="):].strip())
+            except ValueError:
+                return None
+            return parts[0] if parts else None
+    return None
+
+
+def _write_env_block(env_file: str, body_lines: list[str]) -> None:
+    """Rewrite the ai-sdlc managed block in CLAUDE_ENV_FILE idempotently (4.6.2). Reads the
+    file, drops any prior managed block AND any legacy un-markered copies of our own vars
+    (migration from the old append format), preserves every other line, then appends one
+    fresh marked block. N fires -> exactly one block."""
+    try:
+        with open(env_file, encoding="utf-8") as f:
+            existing = f.readlines()
+    except OSError:
+        existing = []
+
+    def _is_ours(line: str) -> bool:
+        s = line.strip()
+        return any(s.startswith(f"export {v}=") for v in _OUR_VARS)
+
+    kept: list[str] = []
+    skipping = False
+    for ln in existing:
+        s = ln.strip()
+        if s == _MANAGED_START:
+            skipping = True
+            continue
+        if s == _MANAGED_END:
+            skipping = False
+            continue
+        if not skipping and not _is_ours(ln):
+            kept.append(ln)
+
+    block = [_MANAGED_START + "\n", *body_lines, _MANAGED_END + "\n"]
+    if kept and not kept[-1].endswith("\n"):
+        kept[-1] += "\n"
+    try:
+        with open(env_file, "w", encoding="utf-8") as f:  # utf-8, NO bom
+            f.writelines(kept + block)
+    except OSError:
+        pass
 
 
 def main() -> None:
@@ -126,6 +203,12 @@ def main() -> None:
 
     here = os.path.dirname(os.path.abspath(__file__))
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(here)
+
+    # 4.6.3 short-circuit: a clear/compact re-fire whose managed block already names a PY that
+    # still exists needs no re-resolution — skip the ~5 probe subprocesses entirely.
+    prior_py = _existing_managed_py(env_file)
+    if prior_py and os.path.isfile(prior_py):
+        return
 
     chosen = resolve_interpreter()
     if not chosen:
@@ -155,15 +238,17 @@ def main() -> None:
     if crg:
         lines.append(f"export CRG={shlex.quote(_fwd(crg))}\n")
 
-    vault = resolve_vault_root(chosen, plugin_root)
-    if vault:
-        lines.append(f"export AI_SDLC_VAULT_ROOT={shlex.quote(vault)}\n")
+    # 4.6.1: the hook NO LONGER resolves or exports AI_SDLC_VAULT_ROOT. Freezing a session-start-cwd
+    # value made mid-session work on a DIFFERENT repo (cd / `/bug-hunt <path>` / `/diagnose <path>`)
+    # silently route every vault write to the FIRST repo's vault (the env var has tier-1 precedence in
+    # `_vault_paths`). The vault now resolves PER-INVOCATION: each skill bash block uses the
+    # `${AI_SDLC_VAULT_ROOT:-$($PY .../_vault_paths.py --path)}` fallback, and the scripts fall back to
+    # their own cwd/git-keyed VAULT_ROOT. An EXPLICIT user-set AI_SDLC_VAULT_ROOT is still honored
+    # (inherited from the shell). `_write_env_block` still STRIPS any legacy exported AI_SDLC_VAULT_ROOT
+    # (via _OUR_VARS) so an upgrade from the old hook de-leaks the env-file. The deliberate cwd-keying
+    # WARN now surfaces per-invocation when a script resolves the vault (3.19.8, structurally).
 
-    try:
-        with open(env_file, "a", encoding="utf-8") as f:  # utf-8, NO bom
-            f.writelines(lines)
-    except OSError:
-        pass
+    _write_env_block(env_file, lines)  # 4.6.2 idempotent managed-block write (was blind append)
 
     if not deps_ok:
         sys.stdout.write(NUDGE_DEPS + "\n")  # stdout = SessionStart context for Claude

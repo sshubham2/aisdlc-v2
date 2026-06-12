@@ -2,14 +2,31 @@
   "_schema": "aisdlc/design@1",
   "slice": "slice-021",
   "whats_new": "## What's new\nSSE presence endpoint + client subscriber.",
+  "whats_reused": "## What's reused\nExisting session-auth middleware + doc-view's EventSource client.",
   "components_touched": [
     "presence",
     "doc-view"
+  ],
+  "components_detail": [
+    {
+      "name": "presence",
+      "responsibility": "track + fan out who-is-here per doc",
+      "lives_at": "src/presence.ts",
+      "key_interactions": [
+        "doc-view subscribes via SSE",
+        "auth middleware gates the stream"
+      ]
+    }
   ],
   "contracts": [
     {
       "name": "GET /presence/:doc",
       "kind": "sse",
+      "auth_model": "session cookie",
+      "error_cases": [
+        "401 unauthenticated",
+        "404 unknown doc"
+      ],
       "notes": "emits {userId,joined}"
     }
   ],
@@ -19,6 +36,12 @@
       "module": "presence.ts",
       "consumer_entrypoint": "doc-view subscribes on mount",
       "consumer_test": "tests/presence.test.ts"
+    },
+    {
+      "module": "presence_metrics.ts",
+      "consumer_entrypoint": null,
+      "consumer_test": null,
+      "exemption": "internal counter — rationale: emitted to the metrics sink, never called by app code (WIRE-1 exemption variant)"
     }
   ],
   "adrs": [
@@ -50,7 +73,7 @@
     ]
   },
   "tournament": {
-    "_note": "Optional (Phase 3). Present only when the tier-gated multi-designer tournament ran (omit on low/mechanical single-flight slices). selected: core|partial|none. decidable_disagreements (verdict pending here) are adjudicated by the post-synthesis /risk-spike --mode design (reality fills go/no-go); taste_disagreements fall through to /critique + the user. channeled_experts feeds the /critique expert-independence guard (the Critic must be a DIFFERENT expert).",
+    "_note": "Optional (Phase 3). Present only when the tier-gated multi-designer tournament ran (omit on low/mechanical single-flight slices). selected: core|partial|none. decidable_disagreements (verdict pending here) are adjudicated by the post-synthesis /risk-spike --mode design (reality fills go/no-go); taste_disagreements fall through to /critique + the user. channeled_experts feeds the /critique expert-independence guard (the Critic must be a DIFFERENT expert). approach_divergence (3.3) classifies each designer-PAIR's proposals as identical|overlapping|disjoint — it MEASURES the 'diverse at generation' claim instead of asserting it; the synthesis also appends it to a design-tournament gate-log row so /pulse --full can track, over a project, whether the expert lens earns its cost (if practice~expert is identical/overlapping on most high-tier slices, drop to 2 designers).",
     "tier": "high",
     "designers": [
       "designer-practice",
@@ -88,6 +111,29 @@
     ],
     "taste_disagreements": [
       "presence set keyed by userId vs sessionId — boundary choice deferred to /critique + user"
+    ],
+    "approach_divergence": [
+      {
+        "pair": [
+          "designer-practice",
+          "designer-crossdomain"
+        ],
+        "divergence": "disjoint"
+      },
+      {
+        "pair": [
+          "designer-practice",
+          "designer-expert"
+        ],
+        "divergence": "overlapping"
+      },
+      {
+        "pair": [
+          "designer-crossdomain",
+          "designer-expert"
+        ],
+        "divergence": "overlapping"
+      }
     ]
   },
   "at": "<ts>"

@@ -1,0 +1,14 @@
+{
+  "_schema": "aisdlc/slice-archive-index@1",
+  "_note": "The FULL chronological catalog of ALL archived slices (slices/archive/_index.json) — NOT capped at 10 (that cap is the live slices/_index.json recent[]). Same one-liner source rule (mission-brief intent, first sentence, <=500 chars). CAS via vault_edit.",
+  "total": 20,
+  "updated": "<ts>",
+  "slices": [
+    {
+      "slice": "slice-020",
+      "title": "webhook-receiver",
+      "shipped": "<ts>",
+      "summary": "Stripe webhook receiver with signature verification."
+    }
+  ]
+}

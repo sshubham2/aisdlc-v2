@@ -147,13 +147,9 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file build-ch
 ```
 Schema by example: `examples/build-checks.json`.
 
-**BCI-1 post-write gate (mandatory when a rule was promoted)**:
-1. Also add the rule to the canonical fixture `tests/methodology/fixtures/build_checks/canonical_project_checks.json`.
-2. Reconstruct the live file from the fixture (byte-copy), then run:
-   ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/build_checks_integrity.py"
-   ```
-3. Exit non-zero → STOP, reconstruct from fixture, re-run until exit 0.
+The `vault_edit append` above is the whole promotion — the rule is now live for the next slice's
+`/build-slice` BC-1 gate to enforce. (BCI-1, the build-checks **integrity** audit, is a plugin self-audit run
+in CI against the plugin's own fixtures — it is NOT a per-project step and references no user-side fixture.)
 
 ---
 
@@ -172,9 +168,9 @@ Schema by example: `examples/shippability.json`. The `machine_cmd` must be runna
 ## Step 5.8 — Update milestone.json
 
 Edit `<vault>/slices/slice-NNN/milestone.json`:
-- `stage: "complete"`, `next_action: "none"`, `updated: <today>`
+- `stage: "complete"`, `next_action: "/commit-slice"`, `updated: <today>`
 - Check progress step `reflect: done: true`
-- `current_focus`: "Slice shipped. Lessons captured. Auto-archiving next."
+- `current_focus`: "Slice validated; lessons captured. Run /commit-slice to land the code."
 
 Schema by example: `examples/milestone.json`.
 
@@ -184,6 +180,13 @@ Schema by example: `examples/milestone.json`.
 
 After `reflection.json` is written and `milestone.json` is complete:
 
+0. **Lint the slice's artifacts (3.18.7)** before archiving — a malformed / enum-invalid artifact must not be
+   frozen into the archive:
+   ```bash
+   VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --dir "$VAULT/slices/slice-NNN-<name>" --skip-unknown
+   ```
+   Non-zero → fix the offending artifact (required key / known enum), then proceed to the move.
 1. **Move the slice folder** (R-32 seam-routed, ADR-103):
    ```bash
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" move --from slices/slice-NNN --to slices/archive/
@@ -202,33 +205,33 @@ After `reflection.json` is written and `milestone.json` is complete:
 3. **Prepend to `<vault>/slices/archive/_index.json`** (newest-first, CAS-rewrite):
    ```bash
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file slices/archive/_index.json --out-file base.bin
-   # insert the thin one-liner row at TOP of recent[] (after table separator), then:
+   # insert the thin one-liner row at the TOP of slices[] (newest-first), then:
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file slices/archive/_index.json --base-file base.bin --content-file edited.json
    ```
    NOT `vault_edit append` — appending at EOF would put the row at the oldest position.
+   Schema by example: `examples/slice-archive-index.json` — the FULL catalog; its array is `slices[]`, NOT the
+   live index's `recent[]` (3.18.1).
 
 ---
 
-## Step 6b — Move shipped candidate to archive (CAND-1)
+## Step 6b — Mark the candidate VALIDATED (CAND-1)
 
-After the slice folder is archived, move the candidate that was claimed for this slice from the live
-backlog to the archive, so the live backlog stays small (Direction #3):
+**The code is NOT committed yet at `/reflect`** — the worktree changes land at `/commit-slice`. So the candidate
+is **not `shipped` here; it is `validated`.** Set its status to `validated` in the LIVE backlog and LEAVE it in
+`candidates.json`. `/commit-slice` is what marks it `shipped` and moves it to `archive/candidates.json` once the
+code actually lands (so a `shipped` candidate always means the code is committed — "shipped" means shipped).
 
-1. Read `<vault>/candidates.json`, identify the candidate whose `slice` field matches `slice-NNN`
-   and `status` is `shipped` (or set it to `shipped` first if it is still `spiking`/`in-progress`).
-2. Write the candidate entry to `<vault>/archive/candidates.json` via append:
+1. Read `<vault>/candidates.json`, find the candidate whose `slice` field matches `slice-NNN`.
+2. Set its `status` to `"validated"` via CAS-rewrite (do NOT archive it here):
    ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file archive/candidates.json --array candidates --content-file shipped-candidate.json
-   ```
-3. Remove the entry from `<vault>/candidates.json` via CAS-rewrite:
-   ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read   --file candidates.json --out-file base.bin
-   # remove the candidate entry from candidates[], then:
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file candidates.json --out-file base.bin
+   # set the matching candidate's status to "validated", then:
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file candidates.json --base-file base.bin --content-file updated.json
    # exit 3 → re-read + re-apply + retry (max 5)
    ```
 
-Schema by example: `examples/slice-candidates.json`.
+Schema by example: `examples/slice-candidates.json`. (The `validated → shipped` move to
+`archive/candidates.json` happens at `/commit-slice`, after the commit lands.)
 
 ---
 
@@ -272,4 +275,4 @@ State:
 - successor: `/commit-slice` (then `/slice` for next cut)
 - auto-advance: **false** — this is the auto-advance terminus
 - user-input gates: build-checks promotion (Step 5b, opt-in y/N)
-- on-clean-completion: present the hand-off summary ("slice complete; run `/commit-slice` to generate the audit-grade commit") and the next-slice candidate preview. NEVER auto-invoke `/commit-slice` — it is always user-invoked by contract (PCA-1).
+- on-clean-completion: present the hand-off summary leading with **"Slice validated — run `/commit-slice --merge` (or `--push`) to land the code and mark the candidate shipped, then `/slice` for the next cut"**, plus the next-slice candidate preview. The candidate is `validated`, NOT `shipped`, until the code is committed. NEVER auto-invoke `/commit-slice` — it is always user-invoked by contract (PCA-1).

@@ -59,9 +59,9 @@
         "purpose": "NAW-1 gate: warns if any agents/*.md were added in this slice's diff."
       },
       {
-        "name": "test_first_audit",
-        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/test_first_audit.py\" <vault>/slices/slice-NNN-<name> --strict-pre-finish",
-        "purpose": "TF-1 gate: verifies every AC maps to a PASSING test when Test-first is declared."
+        "name": "brief_variants_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/brief_variants_audit.py\" <vault>/slices/slice-NNN-<name> --variant test_first --strict-pre-finish",
+        "purpose": "TF-1 gate (merged variant audit, 3.7): verifies every AC maps to a PASSING test when Test-first is declared."
       },
       {
         "name": "build_checks_audit",
@@ -341,14 +341,9 @@
         "purpose": "VAL-1 gate: Layer A credential scan (Critical) and Layer B Python dependency hallucination check (Important)."
       },
       {
-        "name": "walking_skeleton_audit",
-        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/walking_skeleton_audit.py\" <vault>/slices/slice-NNN-<name> --strict-pre-finish",
-        "purpose": "WS-1 gate: verifies every architectural layer was EXERCISED at runtime when Walking-skeleton declared."
-      },
-      {
-        "name": "exploratory_charter_audit",
-        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/scripts/exploratory_charter_audit.py\" <vault>/slices/slice-NNN-<name> --strict-pre-finish",
-        "purpose": "ETC-1 gate: verifies every charter is COMPLETED or DEFERRED with findings recorded."
+        "name": "brief_variants_audit",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/brief_variants_audit.py\" <vault>/slices/slice-NNN-<name> --variant walking_skeleton --execute --repo-root \"$wt\"  ·  --variant exploratory_charter --strict-pre-finish",
+        "purpose": "WS-1 + ETC-1 gates (merged variant audit, 3.7): WS-1 RUNS each architectural layer's verification (--execute reality run) when Walking-skeleton declared; ETC-1 verifies every charter is COMPLETED or DEFERRED with findings recorded."
       },
       {
         "name": "shippability_decoupling_audit",

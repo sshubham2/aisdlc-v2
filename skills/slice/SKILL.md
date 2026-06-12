@@ -69,11 +69,51 @@ failing test to the MAIN tree; **Step 5 relocates it into `$wt`** on the slice b
 - **Risk tier**: `low | medium | high` (Step 3a). **Acceptance criteria** ≤5, testable. **Verification plan** per AC.
   **Must-not-defer** (auth/validation/error paths/logging — EVERY slice). **Out of scope**. Mid-slice smoke gate.
 
-### Step 3a — risk tier (controls /critique)
-`low` = pure CSS/copy/docs/test-only; `medium` = default; `high` = novel domain / first integration / extra scrutiny.
+### Step 3a — risk tier (the per-slice cost lever)
+Tier drives in-loop cost — the design-tournament size AND whether `/critique` runs — so pick it honestly:
+`low` = pure CSS/copy/docs/test-only OR a genuinely small bug-fix / small feature; `medium` = a normal change;
+`high` = novel domain / first integration / irreversible / needs extra scrutiny.
+
+**Default tier by mode** (mode is NOT a per-slice cost lever — it only sets this default + Heavy's floor):
+read `mode` from `triage.json` / `mission-brief.json` → **Minimal ⇒ default `low`** (small solo work is cheap by
+default; bump up for a genuinely risky cut), **Standard ⇒ default `medium`**, **Heavy ⇒ default `medium`**. Offer
+the default; let the user override.
+
 **Always set `critic_required: true`** (even if tier=low) when the slice touches: auth/authz, new API contracts, data
 model/migrations, multi-device/sync, external integrations, security paths, or the methodology surface
-(`skills/**`, `agents/**`, `scripts/**`). Tell the user when low-tier still triggers the Critic and why.
+(`skills/**`, `agents/**`, `scripts/**`). **Heavy mode forces `critic_required: true` on EVERY slice** (its
+compliance/audit floor — the Critic runs even on a low-tier Heavy slice, with sign-off). Tell the user when
+low-tier still triggers the Critic and why.
+
+### Step 3b — slice-discipline variants (the producer; 3.18.3)
+
+Offer the three opt-in slice disciplines via ONE `AskUserQuestion` (multi-select; **default: none** — most slices
+are standard). Each opted-in flag activates its own build/validate gate, so only opt in when the discipline earns
+its cost. **Pre-suggest** by slice shape: a bug-fix → suggest `test_first`; a first integration / new transport →
+`walking_skeleton`; an unknown-shaped area → `exploratory_charter`; otherwise none.
+
+- **`test_first`** (TDD) — write the failing tests BEFORE the implementation. Activates TF-1 (build gate: the test
+  files must exist + cover the ACs) and TPHD-1 (test-plan harmonization).
+- **`walking_skeleton`** (Cockburn) — the thinnest end-to-end cut that exercises EVERY architectural layer.
+  Activates WS-1, which at `/validate-slice` **actually runs** each layer's verification command (`--execute`,
+  reality contact — 3.1).
+- **`exploratory_charter`** — timeboxed exploration missions with recorded findings. Activates ETC-1 (each charter
+  must end `completed` with findings, or `deferred` with a rationale).
+
+Write the result into `mission-brief.json` (Step 5.3):
+- Set `variants.<flag>: true` for each chosen discipline (default all `false` — a standard slice).
+- **walking_skeleton chosen** → also write `architectural_layers[]`: one row per layer the cut spans (`layer`,
+  `component`, `verification` as a **runnable command** — like a shippability `machine_cmd`, since WS-1 `--execute`
+  runs it — `status: "pending"`). Draft the standard tiers (API / service / data / UI) the slice touches; build
+  fills the exact commands.
+- **exploratory_charter chosen** → also write `exploratory_charters[]`: one row per mission (`mission`, `timebox`,
+  `status: "pending"`, `findings: ""`).
+- **test_first chosen** → no extra field; the ACs' tests are written first and TF-1 verifies them at build.
+
+Shapes (omitted from the standard mission-brief example — present only when opted in; `artifact_lint` validates
+their `status` enums when present): `architectural_layers[]` = `{layer, component, verification (a runnable
+command), status: "pending"|"exercised"}` (WS-1 docstring); `exploratory_charters[]` = `{mission, timebox,
+status: "pending"|"in-progress"|"completed"|"deferred", findings}` (ETC-1 docstring).
 
 ## Step 4 — scope check
 ≤5 ACs, ≤1 day, system stays shippable. If it exceeds → split.
@@ -114,4 +154,4 @@ Once the candidate is settled AND scope passes, in order:
 - predecessor: `/reflect` (or `/discover` for slice 1) · successor: **`/risk-spike`** · auto-advance: true
 - on-clean-completion: once the scaffold is written, the candidate is claimed, and a candidate was settled,
   invoke **`/risk-spike`** via the Skill tool — its in-loop spike gate must pass before `/design-slice`.
-- user-input gates (halt auto-advance): candidate selection (Step 1); BFRD-1 confirm (Step 2).
+- user-input gates (halt auto-advance): candidate selection (Step 1); BFRD-1 confirm (Step 2); slice-discipline variants (Step 3b — one quick multi-select, default none).

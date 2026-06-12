@@ -318,10 +318,11 @@ def audit(slice_folder: Path, repo_root: Path | None = None) -> AuditResult:
         result.violations.append(BranchViolation(
             kind="default-branch-unresolvable", severity="Important",
             message=(
-                "cannot resolve repo default branch via "
-                "`git symbolic-ref refs/remotes/origin/HEAD` or "
-                "`git config init.defaultBranch`. Set `git config init.defaultBranch <name>` "
-                "or add `origin` remote with HEAD reference, then retry."
+                "cannot resolve repo default branch — `git symbolic-ref "
+                "refs/remotes/origin/HEAD`, `git config init.defaultBranch`, a `main`/`master` "
+                "ref, AND `git symbolic-ref --short HEAD` all failed (is this a git repo on a "
+                "branch?). `git init` + an initial commit, or set "
+                "`git config init.defaultBranch <name>`, then retry."
             ),
         ))
         return result

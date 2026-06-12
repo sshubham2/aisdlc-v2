@@ -17,10 +17,26 @@ scaffold the vault, write `./CLAUDE.md`, hand off.
 
 ## Live state — injected
 
-Existing triage (re-triage detection):
+Existing triage (re-triage detection — UX-2 fail-closed, 3.19.7):
 ```!
-cat "$AI_SDLC_VAULT_ROOT/triage.json" 2>/dev/null || echo "NOT_FOUND"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+if [ -z "$VAULT" ]; then echo "VAULT_UNRESOLVED"
+elif [ -f "$VAULT/triage.json" ]; then echo "RE_TRIAGE (existing vault: $VAULT)"; cat "$VAULT/triage.json"
+else echo "FRESH (vault: $VAULT)"; fi
 ```
+
+> **UX-2 fail-closed (3.19.7) — read before any write.** This used to be a bare
+> `cat "$AI_SDLC_VAULT_ROOT/triage.json" 2>/dev/null || echo NOT_FOUND`: when
+> `$AI_SDLC_VAULT_ROOT` was unset (hook not fired / fresh session) it printed `NOT_FOUND`,
+> so triage thought an **already-opened** project was fresh and **raw-wrote over its vault**
+> (data loss). The block above resolves the vault via the env var OR `_vault_paths.py`:
+> - `VAULT_UNRESOLVED` → **STOP. Do NOT write** triage.json / risk-register.json. The vault
+>   root can't be determined (usually `$PY` / the SessionStart hook isn't set up). Tell the
+>   user to run `/ai-sdlc:setup` (or `export AI_SDLC_VAULT_ROOT=…`), then retry. Refuse rather
+>   than guess — a wrong guess overwrites an existing project's vault.
+> - `RE_TRIAGE …` → an opened project EXISTS. Take the **re-triage** path (Step 5a append to
+>   `history`; never raw-overwrite triage.json / risk-register.json).
+> - `FRESH …` → genuinely new; the Step 5a single-shot raw-write is safe. Write to that `$VAULT`.
 
 Project-root CLAUDE.md (append vs fresh-create):
 ```!
@@ -89,6 +105,14 @@ Pick mode:
 | **Minimal** | solo dev AND (MVP or exploration or one-off) |
 | **Standard** | everything else (default) |
 
+**What mode actually controls (be honest with the user).** Mode is NOT the per-slice review cost — that is set
+by each slice's **risk tier** (`/slice` Step 3a; the design tournament + `/critique` key on tier, not mode). Mode
+controls three things: (1) the **default tier** for new slices — Minimal ⇒ `low` (small work is cheap by default;
+bump up for risky cuts), Standard/Heavy ⇒ `medium`; (2) **vault structure** — Heavy creates components/contracts/
+threat-model/etc., Standard/Minimal stay thin; (3) **Heavy's compliance floor** — Heavy forces `critic_required`
+on every slice + requires human sign-off. So Minimal mostly saves cost by *defaulting slices to low tier*, not by
+weakening review on a slice you mark `medium`/`high`.
+
 State the mode + 2–3 sentence rationale. **Wait for user confirmation** via `AskUserQuestion` before
 writing any files.
 
@@ -138,6 +162,10 @@ Do NOT create those dirs for Minimal or Standard.
 
 ### Step 5a — Write triage.json and risk-register.json
 
+**Gate (UX-2, 3.19.7):** the single-shot raw-writes below run **only on the `FRESH` signal** from the re-triage
+injection above, targeting that resolved `$VAULT`. On `RE_TRIAGE` use the append/update path (end of this step); on
+`VAULT_UNRESOLVED` you already STOPped — never raw-write a guessed path.
+
 Write `<vault>/triage.json` — schema: `examples/triage.json`. Required top-level fields:
 `_schema`, `mode`, `date`, `classification` (domain_clarity / compliance / audience), `mode_rationale`,
 `pipeline_path`, `deferred_steps`, `history`.
@@ -150,6 +178,14 @@ or the audit will reject. These are project-open single-shot writes (no parallel
 On **re-triage**: append a new `history` entry to `triage.json` via
 `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" --file triage.json --array history --json '<entry>'`.
 Update `risk-register.json` via `scripts.lib.vault_edit update --file risk-register.json --array risks --id <R-NN> --set ...` (or `append` for a new risk) for any changed/new risks.
+
+**Pin the vault (4.7, FRESH only).** After the FRESH writes, record the tier-2 git-common-dir pin so a later
+repo move/rename does NOT orphan this vault (the pin survives a rename; `_vault_paths` reads it at tier 2):
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" write-pin
+```
+It also drops a `.source-repo` back-ref in the vault (for `vault_admin list`'s orphan detection) and WARNs if a
+same-name / different-hash sibling vault already exists (a likely prior-rename orphan to migrate + clean up).
 
 ### Step 5b-pre — Offer code-review-graph integration
 

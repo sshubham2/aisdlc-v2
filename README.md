@@ -13,6 +13,9 @@ review + designer agents, a shared Python tooling library, and a SessionStart ho
 The guiding philosophy: ground the model in **executable reality** (the code graph, throwaway spikes on the real
 environment, tests, drift-checks) — never in external authority. Generate freely, then *prove against reality*; and
 trust a gate exactly as much as it touches something that is **not the model** (reality > code-graph > model-critic).
+*One deliberate exception:* authority may be **channeled at generation time** inside the design tournament (the
+`designer-expert` flight) to widen the sample of approaches — never at **selection**. Reality and the synthesis
+rules select; channeling an expert to *generate* a candidate is diversity, not deference.
 
 The pipeline writes its artifacts to an **external vault** (outside your code repo) so the design record never
 pollutes your source tree, and every project gets its own isolated, worktree-shared vault.
@@ -25,9 +28,16 @@ pollutes your source tree, and every project gets its own isolated, worktree-sha
 |------|-----|-------|
 | **Claude Code** | the host runtime | desktop / CLI / IDE |
 | **Python 3** | the bundled tooling scripts | resolved automatically; see [Python interpreter](#python-interpreter) to override |
-| **PyYAML** | only `/diagnose` (+ a YAML fallback in `slice-candidates`) | installed for you by `/ai-sdlc:setup`; everything else is stdlib-only |
+| **PyYAML** | `/diagnose` + `/bug-hunt` (shared pass/finding tooling) + a YAML fallback in `slice-candidates` | installed for you by `/ai-sdlc:setup`; everything else is stdlib-only |
 | **git** | recommended | gives each repo a stable, worktree-shared vault key (works without it, but the vault then keys on the current directory) |
 | **code-review-graph** *(recommended)* | code-graph queries (blast-radius, reachability) in ~15 skills + the CRG MCP server | installed & registered by `/ai-sdlc:setup`; absent → graceful degrade |
+
+> **Supply-chain / trust boundary.** `code-review-graph` is a **third-party** package
+> ([github.com/tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph), not this
+> project's author). `/ai-sdlc:setup` installs it and registers it as a **trusted MCP server** in your
+> project's gitignored `.mcp.json`, and it feeds the "reality > code-graph" trust tier — so it has real
+> blast radius. It is pinned to `>=2.3,<3` in `requirements.txt`; setup prints the resolved version before
+> registering, and you approve a one-time trust prompt. For a reproducible install, pin an exact version.
 
 ---
 
@@ -143,6 +153,21 @@ mkdir -p /collab/.aisdlc                                     # ensure it exists 
 
 Every project then resolves to `/collab/.aisdlc/<slug>-<hash>`.
 
+**Lifecycle, backup & GC.** The vault is plain JSON outside your repo, so it is **not** covered by your repo's
+git history. To version or back it up, `git init` inside the vault dir (`cd "$(… _vault_paths.py --path)" && git init`)
+or copy it anywhere. `/triage` and `/adopt` write the **tier-2 pin** automatically so a repo move/rename doesn't
+orphan the vault. To audit or GC machine-wide:
+
+```bash
+$PY scripts/lib/vault_admin.py list                 # every vault under the base + orphan status
+$PY scripts/lib/vault_admin.py uninstall <name> --yes   # delete an orphaned vault
+```
+
+**Captured evidence is secret-swept (4.7).** `/validate-slice` and `/risk-spike` run commands against real
+environments; before any captured output is stored as `evidence`, pipe it through
+`scripts/lib/secret_scrub.py`, which redacts credentials (`[REDACTED:<type>]`) using the same VAL-1 patterns —
+so tokens/keys don't persist plaintext in the vault.
+
 **Example — pin just one repo** (tier 2):
 
 ```bash
@@ -217,26 +242,28 @@ skills/<name>/
   SKILL.md             the runnable skill
   examples/            output JSON examples bundled with the skill
   scripts/             single-skill tools
-  skill.json           generated design manifest (see below)
 agents/                named Critic / worker personas (system prompts)
 scripts/lib/           shared Python tooling used by >1 skill (vault_edit, the vault-root resolver, …)
 hooks/                 SessionStart hook: setup-env.sh (bootstrap shim) + setup_env.py (resolver)
 schemas/               artifact schemas-by-example
-skill-graph.json       the whole pipeline as one dependency graph (generated)
-.build/                reproducible build pipeline: source manifests + the aggregator
+.build/                reproducible build pipeline: source manifests + the aggregator + CI audits
 requirements.txt       runtime Python deps (PyYAML; optional code-review-graph)
+tests/ + .github/      pytest suite + CI for the plugin itself
 ```
 
 ### Development
 
-`skill.json` (×30), each skill's `examples/`, and `skill-graph.json` are **generated** from the source manifests
-in `.build/manifests/` — they are the diffable *design record*, not hand-maintained. `SKILL.md` and `scripts/`
-are hand-authored. To change a skill's design metadata, edit its `.build/manifests/batch*.json` entry and
-regenerate:
+Each skill's `examples/` are **generated** from `schemas/artifact-examples.json` by the aggregator; `SKILL.md`
+and `scripts/` are hand-authored. To regenerate the bundled examples:
 
 ```bash
 python3 .build/aggregate.py
 ```
+
+> The aggregator also produces a diffable **design record** (`skill.json` ×30 + `skill-graph.json`) from the
+> source manifests in `.build/manifests/`. That record has no runtime consumers — the harness loads `SKILL.md`,
+> not these — so it is **not shipped** (git-ignored); it is kept locally as authoring history. The runnable
+> contract is the `SKILL.md` set.
 
 A re-runnable cross-block-var audit guards the SKILL.md bash blocks:
 
@@ -246,6 +273,10 @@ python3 .build/cross_block_audit.py skills/*/SKILL.md
 
 ---
 
+## License
+
+Licensed under the **MIT License** — see [LICENSE](LICENSE).
+
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.18.3
+Shubhendu Shubham · plugin `ai-sdlc` v2.21.0

@@ -1,14 +1,14 @@
 ---
 name: drift-check
-description: "Audits vault claims against code reality and flags divergence in four categories: DRIFT (blocker), UNSPECIFIED CODE (major), STALE CLAIM (major), and STALE DOC (major — a /product-doc-generated doc that no longer matches the code surface it documented, via the doc-manifest.json provenance anchor). Runs in fast mode (<2s, pre-commit) or full mode (on-demand audit). Appends findings to drift-log.json via the SVW-1 safe channel. Detect-only, all-modes counterpart to the Heavy-mode-only /sync skill."
-when_to_use: "Trigger phrases: /drift-check, 'check for drift', 'vault sync check', 'is the vault still accurate', 'audit vault vs code'. Use as pre-commit hook (auto, --fast), as the /build-slice pre-finish gate, or on-demand before starting a new slice or after external changes."
+description: "Audits vault claims against code reality and flags divergence in four categories: DRIFT (blocker), UNSPECIFIED CODE (major), STALE CLAIM (major), and STALE DOC (major — a /product-doc-generated doc that no longer matches the code surface it documented, via the doc-manifest.json provenance anchor). Runs in fast mode (<2s, for the /build-slice pre-finish gate) or full mode (on-demand audit). Appends findings to drift-log.json via the SVW-1 safe channel. Detect-only, all-modes counterpart to the Heavy-mode-only /sync skill."
+when_to_use: "Trigger phrases: /drift-check, 'check for drift', 'vault sync check', 'is the vault still accurate', 'audit vault vs code'. Use in --fast mode as the /build-slice pre-finish gate (DCE-1), or on-demand (full mode) before starting a new slice or after external changes. (Not a git pre-commit hook — nothing installs one; hooks/ is SessionStart-only.)"
 argument-hint: "[--fast] [--resolve] [path]"
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion, Skill
 ---
 
 # /drift-check — Vault vs Code Sync Audit
 
-Compares vault claims against code reality. Runs fast enough for pre-commit hooks and thorough enough for full audits.
+Compares vault claims against code reality. Runs fast enough for the in-loop `/build-slice` gate and thorough enough for full audits.
 
 > Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / the git config `aisdlc/vault-root`).
 
@@ -49,6 +49,15 @@ Read only the live-claim surfaces. Always included:
 
 For each vault claim, check against code reality. Prefer CRG MCP tools when available; fall back to Grep/Read.
 
+**Schema-by-example lint (3.18.7):** also run `artifact_lint` over the in-scope vault artifacts — a
+malformed / enum-invalid artifact (e.g. an unknown `verdict`, a missing required key) is vault↔contract drift the
+claim checks won't catch. In `--fast` mode scope it to the active slice folder; full mode can sweep the vault:
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --dir "$VAULT/slices/slice-NNN-<name>" --skip-unknown
+```
+Non-zero → surface each violation as a STALE CLAIM finding (Step 4). Detect-only; `--fast` writes nothing.
+
 | Claim type | Verification |
 |---|---|
 | ADR chose library `X` | CRG search for `X` in imports/pyproject.toml/package.json; fallback: `Grep "X" pyproject.toml` |
@@ -80,7 +89,7 @@ In `--fast` mode: only check claims in files touched by the injected diff. Skip 
 
 ## Step 5 — Output
 
-### `--fast` mode (pre-commit)
+### `--fast` mode (build-gate / on-demand)
 
 Print to stdout. Exit 0 if clean, 1 if blockers, 2 if warns only. Format:
 
@@ -161,7 +170,7 @@ In Heavy mode only, after the main audit, run:
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/cross_spec_parity_audit.py" --root .
 ```
 
-This validates `Implementation:` / `Verification:` cross-references in `threat-model.json`, `requirements.json`, `non-functional.json` against real file paths. Findings are appended to `drift-log.json` via the same `scripts.lib.vault_edit append --array entries` channel. This is complementary to `/sync`'s Step 3b — `/drift-check` is fast and pre-commit-friendly; CSP-1 is per-artifact-deep.
+This validates `Implementation:` / `Verification:` cross-references in `threat-model.json`, `requirements.json`, `non-functional.json` against real file paths. Findings are appended to `drift-log.json` via the same `scripts.lib.vault_edit append --array entries` channel. This is complementary to `/sync`'s Step 3b — `/drift-check` is fast and in-loop-friendly; CSP-1 is per-artifact-deep.
 
 ## Critical rules
 
@@ -174,13 +183,13 @@ This validates `Implementation:` / `Verification:` cross-references in `threat-m
 
 ## /sync vs /drift-check
 
-`/drift-check` is **detect-only** and works in **all modes** (Minimal / Standard / Heavy). It's pre-commit-safe.
+`/drift-check` is **detect-only** and works in **all modes** (Minimal / Standard / Heavy). Its `--fast` mode is the `/build-slice` pre-finish gate (DCE-1).
 
-`/sync` is **bidirectional** (regenerates code-derived vault files) and **Heavy mode only**. Use `/drift-check` for fast pre-commit; use `/sync` periodically for deeper reconciliation including component/contract/schema regeneration.
+`/sync` is **bidirectional** (regenerates code-derived vault files) and **Heavy mode only**. Use `/drift-check` for the fast in-loop gate; use `/sync` periodically for deeper reconciliation including component/contract/schema regeneration.
 
 ## Pipeline position
 
-- predecessor: invoked by `/build-slice` (pre-finish gate); also standalone on-demand or as pre-commit hook
+- predecessor: invoked by `/build-slice` (pre-finish gate, `--fast`); also standalone on-demand (full mode)
 - successor: none (`hands_off_to: []`) — clean means continue; blockers mean resolve via `--resolve` or create a fix slice
 - auto-advance: no (detect-only; user decides resolution path)
 - user-input gates: `--resolve` mode gates on each finding (AskUserQuestion per finding)

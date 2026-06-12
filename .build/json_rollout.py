@@ -8,7 +8,7 @@
 - Does NOT touch ./CLAUDE.md, README.md, methodology-changelog.md, diagnose-out/* (md), tests/*, VERSION.
 Idempotent; re-run aggregate.py afterwards."""
 import json, os, re, html
-MAN = r"C:\Users\sshub\aisdlc-v2\.build\manifests"
+MAN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".build", "manifests")  # portable (4.8)
 ROUTE = "<!-- route: tools.vault_edit append -->"
 
 ART = ["triage","concept","risk-register","mission-brief","design","build-log","validation","reflection",

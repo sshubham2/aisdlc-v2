@@ -47,8 +47,20 @@ BCSG-1 strict gate (ADR-072): under `--strict`, each applicable Critical rule
 whose id is NOT in `--ack-critical` becomes an `unacknowledged-critical`
 violation, so the exit code (`1 if violations else 0`) gates the slice.
 
-NFR-1 carry-over: slices whose mission-brief.json mtime predates the rule's
-release date (_BC_1_RELEASE_DATE) are exempt automatically.
+MODEL-TIER self-attestation (3.1c): BCSG-1 checks that the Builder *acknowledged*
+each applicable Critical rule (echoed its id into `--ack-critical`), NOT that
+reality verified it — "was-it-MARKED, not was-it-RUN". So its green is a
+`low` reality-contact (model-on-model) green, NOT a reality green. The hard STOP
+is KEPT (a forcing function that makes the Builder enumerate + confront each
+Critical project rule), but `/build-slice` now gate-logs a `build-checks` row at
+`low` contact so the measurement spine (`gate_log.GATE_CONTACT["build-checks"]`,
+`/pulse`, `/critic-calibrate`) MEASURES it instead of trusting an unmeasured gate.
+A future demote-to-advisory remains a deliberate USER call informed by that data —
+it is NOT auto-skippable (a project-author Critical rule is closer to
+compliance-mandatory than the discretionary critique spawn).
+
+NFR-1 mtime carry-over was REMOVED (3.9 — it was dead for every post-install user).
+`--no-carry-over` is still accepted as a no-op for CLI compatibility.
 
 Usage:
     python build_checks_audit.py --slice <slice-folder> [options]
@@ -83,9 +95,6 @@ from typing import Any
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
 
-# Date this rule shipped. Slices with mission-brief.json mtime BEFORE this date
-# are carry-over exempt automatically. NFR-1 pattern.
-_BC_1_RELEASE_DATE: date = date(2026, 5, 6)
 
 # Required fields per rule
 _REQUIRED_FIELDS: frozenset[str] = frozenset({"id", "severity", "rule"})
@@ -163,15 +172,6 @@ class AuditResult:
                 ),
             },
         }
-
-
-def _slice_is_carry_over(slice_folder: Path) -> bool:
-    """True if the slice was authored before BC-1 (mtime carry-over)."""
-    brief = slice_folder / "mission-brief.json"
-    if not brief.exists():
-        return False
-    mtime_date = datetime.fromtimestamp(brief.stat().st_mtime).date()
-    return mtime_date < _BC_1_RELEASE_DATE
 
 
 def _matches_glob(path: str, pattern: str) -> bool:
@@ -472,10 +472,6 @@ def audit_slice(
     result = AuditResult()
     changed_files = changed_files or []
 
-    if skip_if_carry_over and _slice_is_carry_over(slice_folder):
-        result.carry_over_exempt = True
-        return result
-
     slice_text = _read_slice_text(slice_folder)
 
     if project_checks is None:
@@ -512,7 +508,6 @@ def audit_slice(
 
     # BCSG-1 (ADR-072): under --strict, an applicable Critical rule that is NOT
     # acknowledged via --ack-critical becomes a violation (gate-failure exit 1).
-    # Unreachable on carry-over-exempt slices (early-returned above).
     if strict:
         acked = set(ack_critical)
         for r in result.applicable:

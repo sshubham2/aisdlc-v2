@@ -43,7 +43,8 @@ Prerequisite: archived slice folder has `reflection.json` (slice completed) — 
 From `<vault>/slices/archive/slice-NNN-<name>/` (or active slice folder for mid-slice):
 
 - `mission-brief.json` → intent (one-line), AC count
-- `critique.json` (if present) → blocker count + addressed status
+- `critique.json` (if present) → design-Critic blocker count + addressed status
+- `code-review.json` (if present) → code-Critic blocker count + each blocker's CRD-1 disposition (`fixed` / `overridden` + rationale)
 - `build-log.json` → `files_changed`, `deferrals`
 - `validation.json` → per-AC PASS/FAIL, shippability regression status
 - `reflection.json` → validated items, design corrections
@@ -58,13 +59,13 @@ Also:
 Type from intent verb: add→`feat`, fix→`fix`, refactor/reduce→`refactor`, improve/perf→`perf`, test→`test`, migrate→`chore` (or `feat` if user-facing), docs→`docs`. Default: `feat`.
 Scope: derived from the slice name area (e.g., `slice-023-add-receipt-ocr` → `receipt`).
 
-## Step 4 — generate commit message via Haiku dispatch
+## Step 4 — generate the commit message (inline)
 
-Per **COST-1**: dispatch to a Haiku subagent via the Agent tool (`model: haiku`). Hand the agent:
-- Input dict from Step 2: `{type, scope, slice_id, slice_path, intent_one_line, body_2_3_sentences, ac_pass, ac_total, critic_blockers, adrs, shippability_entry_n, shippability_entry_text, deferrals, regressions}`
-- The template below as fill spec
-
-The main thread gathers input (Step 2) and executes (Step 5); Haiku fills the template.
+Fill the template below **directly in the main thread** from the Step 2 input dict
+`{type, scope, slice_id, slice_path, intent_one_line, body_2_3_sentences, ac_pass, ac_total, critic_blockers,
+adrs, shippability_entry_n, shippability_entry_text, deferrals, regressions}`. This is a ~12-line mechanical fill —
+the old COST-1 Haiku-subagent dispatch cost more in spawn overhead than the ~500 tokens it saved, so it is done
+inline. (The defensible Haiku dispatch stays in `/archive`'s index regeneration.)
 
 **Commit message template:**
 ```
@@ -74,7 +75,8 @@ The main thread gathers input (Step 2) and executes (Step 5); Haiku fills the te
 
 Slice: [slice-NNN-<name>](<vault>/slices/archive/slice-NNN-<name>/)
 Acceptance criteria: <X>/<Y> PASS (see validation.json)
-Critic blockers addressed: <list or "none">
+Critic blockers addressed: <design-Critic list or "none">
+Code-review blockers: <code-Critic list + disposition (fixed / overridden + rationale) or "none">
 ADRs: <ADR-NNN, …> (or "none")
 Shippability entry: #<N> — <one-line>
 <if deferrals:   Deferred: <summary> (see reflection.json)>
@@ -88,7 +90,7 @@ Reviewer sign-offs: <from critique.json + validation.json>
 ```
 (Read `<vault>/non-functional.json` if present; omit the Compliance line entirely if the file does not exist — it is a Heavy-mode-only optional artifact.)
 
-**Minimal mode** (no critique): `Critic: skipped (Minimal mode)` (never omit the line).
+**Critic skipped** (low-tier slice, no mandatory trigger → no critique.json): `Critic: skipped (low-tier, no mandatory trigger)` (never omit the line).
 
 **Bug-fix slice** (preceded by `/repro`): body notes the reproduction test path and that it now passes.
 
@@ -175,12 +177,13 @@ No git operations are executed.
    - **Fast-forward no-op** or **clean replay**: proceed to sub-step 3.
    - **Conflict**: STOP — do NOT proceed to sub-step 3. Print conflicting U-files + `git rebase --abort` hint. Then:
 
-     **PCR dispatch**: run `$PY "${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py" --resolve-soft --json`.
+     **PCR dispatch**: run `$PY "${CLAUDE_SKILL_DIR}/scripts/parallel_conflict_resolver.py" --classify --json`.
      In v2 the vault is an external, untracked store, so a vault file can NEVER be a rebase stage — every rebase
-     conflict is a CODE conflict. `--resolve-soft` therefore NEVER auto-resolves; it only classifies and routes:
-     - `exit 0` + `action: STOP` + `conflict_class: HARD` (any unmerged path): enter **PCR-2b gate** (below).
-     - `exit 0` + `action: STOP` + `conflict_class: UNKNOWN` (no unmerged paths / unreadable rebase state): fall through to SOAD-1 block.
-     - `exit 1/2`: print stderr verbatim; fall through to SOAD-1 block.
+     conflict is a CODE conflict, hand-resolved via the PCR-2b gate (PCR NEVER auto-merges). `--classify` returns
+     `conflict_class`:
+     - `conflict_class: HARD` (any unmerged path): enter **PCR-2b gate** (below).
+     - `conflict_class: UNKNOWN` (no unmerged paths / unreadable rebase state): fall through to SOAD-1 block.
+     - non-zero exit (resolver unavailable / import failure): print stderr verbatim; fall through to SOAD-1 block.
 
      **PCR-2b HARD gate** (ADR-075 / TRI-RESOLVE-1):
      1. Bootstrap guard: if resolver unavailable → fall through to SOAD-1 (no weaker than pre-PCR-2b).
@@ -273,10 +276,32 @@ Skips Steps 1–4 (no commit generated).
 
 **Critical rules — `--sync-after-pr`**: NEVER `-D`, NEVER omit `--ff-only`, NEVER omit explicit fetch refspec, NEVER skip both-signal AND, NEVER `--no-verify`.
 
+## Step 6 — mark the candidate shipped + archive it (CAND-1)
+
+Run this **only when a commit was actually created** (modes `--merge` / `--push`). `/reflect` left the candidate
+`validated` in `candidates.json`; now that the code has landed, mark it `shipped` and move it to the archive so
+the live backlog stays small (Direction #3) and a `shipped` candidate ALWAYS means committed code.
+
+1. Read `<vault>/candidates.json`, find the candidate whose `slice` matches this slice; set its `status` to `"shipped"`.
+2. Append the shipped entry to `<vault>/archive/candidates.json`:
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file archive/candidates.json --array candidates --content-file shipped-candidate.json
+   ```
+3. Remove it from `<vault>/candidates.json` via CAS-rewrite:
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file candidates.json --out-file base.bin
+   # drop the shipped candidate from candidates[], then:
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file candidates.json --base-file base.bin --content-file updated.json
+   # exit 3 → re-read + re-apply + retry (max 5)
+   ```
+
+(In default mode 5a — which only PRINTS the commit command — the candidate stays `validated` until the user
+actually commits and re-runs `/commit-slice --merge`/`--push`.)
+
 ## Critical rules (all modes)
 
 - NEVER fabricate content — every field sourced from a vault file.
-- Missing field (e.g., no critique.json in Minimal): write `Critic: skipped (Minimal mode)` — never omit the line.
+- Missing field (e.g., no critique.json — Critic skipped on a low-tier slice with no mandatory trigger): write `Critic: skipped (low-tier, no mandatory trigger)` — never omit the line.
 - CONSISTENT FORMAT — every slice commit looks the same shape (audit tools scan for these patterns).
 - NEVER `--no-verify` (pre-commit hooks like `/drift-check` exist for a reason).
 - One slice per commit — if two are ready, two commits.
@@ -289,3 +314,4 @@ Skips Steps 1–4 (no commit generated).
 - successor: `/slice` (next slice) or `/pulse` (re-orient)
 - auto-advance: false — `/commit-slice` is never auto-invoked by any skill; it is always user-triggered
 - user-input gates: always user-invoked; `--merge`/`--push`/`--sync-after-pr` each require explicit yes/no confirmations before any git state change; PCR-2b HARD gate uses TRI-RESOLVE-1 (AskUserQuestion, 3 options)
+- on-clean-completion: after the chosen mode's git actions succeed, write `changelog.json` into the archived slice + report the result; hand back to the user for `/slice` (next) or `/pulse` (re-orient) — never auto-advances.

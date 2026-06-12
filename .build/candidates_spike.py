@@ -5,7 +5,7 @@
 #4: /risk-spike becomes the blocking slice step-0, driven by each candidate's assumptions[].
 Re-run aggregate.py afterwards."""
 import json, os
-MAN = r"C:\Users\sshub\aisdlc-v2\.build\manifests"
+MAN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".build", "manifests")  # portable (4.8)
 ROUTE = "<!-- route: tools.vault_edit append -->"
 CAND  = "<vault>/candidates.json"
 CARCH = "<vault>/archive/candidates.json"

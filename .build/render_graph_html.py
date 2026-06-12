@@ -8,7 +8,7 @@ vanilla JS embedded inline. Output is UNTRACKED (see .gitignore). Read-only.
 """
 import json, os, sys
 sys.stdout.reconfigure(encoding="utf-8")
-ROOT = r"C:\Users\sshub\aisdlc-v2"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # <plugin> (portable; 4.8)
 GRAPH = os.path.join(ROOT, "skill-graph.json")
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "skill-graph.html")
 

@@ -3,7 +3,7 @@
 Operates ONLY on summary / context_rationale / harness_tools.purpose / local_scripts.purpose.
 Leaves external_tools (incl. the intentional 'Replaces graphify' provenance notes) untouched."""
 import json, os, re
-MAN = r"C:\Users\sshub\aisdlc-v2\.build\manifests"
+MAN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".build", "manifests")  # portable (4.8)
 
 # exact sentence rewrites for DROPPED features (vault-graph build, multimodal ingest, vault query)
 KNOWN = [

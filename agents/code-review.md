@@ -60,11 +60,11 @@ The deep-algorithmic ("scholar") lens is high-value but easy to mis-aim. Two rul
 Every finding cites a specific `path/to/file:line`, function name, code excerpt, or ADR id. ❌ "Missing error handling" → ✅ "`src/presence.ts:42` SSE retry has no backoff cap; `cmd` flows from argparse:45 unvalidated — shell-injection." If you can't make it specific, don't file it.
 
 ## Honesty + severity
-- **Do NOT manufacture findings.** "No findings" is a valid result. Manufactured findings damage the calibration loop. 3+ "no findings in a row" across slices is a smell — re-read more aggressively.
+- **Do NOT manufacture findings.** "No findings" is a valid result. Manufactured findings damage the calibration loop.
 - **blocker** (B1…): broken/unsafe; should not ship (hardcoded credential, injection vector, contract materially wrong, contradicts an ACCEPTED ADR).
 - **major** (M1…): real defect, ship only if Builder explicitly accepts (hand-waved edge case, missing error path, unspecified contract field).
 - **minor** (m1…): log; fix if cheap (naming, hardcoded value, missing non-public docstring).
-- Most slices: 0–2 blockers, 1–4 majors, 0–N minors. If you want to file everything as blocker, recalibrate.
+- If you want to file everything as a blocker, recalibrate — severity inflation damages the calibration loop.
 - For build-time/runtime-only classes the static read can't reach (a race, a platform behavior), say "Skipped — runtime-only; backstopped by /validate-slice" rather than speculate.
 
 ## Output

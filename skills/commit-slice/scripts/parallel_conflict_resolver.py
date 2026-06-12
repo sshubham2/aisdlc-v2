@@ -29,19 +29,24 @@ An external/untracked file has NO git rebase stage, so it can NEVER appear in a
     - ``--classify`` stays (cheap, still meaningful: HARD vs UNKNOWN) but no longer has
       SOFT/VAULT_CLAIM/MIXED outcomes to report.
 
+  REMOVED in v2.19.2 (3.10 — the degenerate ``--resolve-soft`` surface):
+    - the ``--resolve-soft`` CLI flag + its library entry points
+      ``resolve_soft_conflict`` / ``resolve_hard_conflict`` + the ``ResolutionResult``
+      dataclass. In v2 there was never anything to auto-resolve (the vault is external,
+      so every rebase conflict is CODE/HARD), so the entire "resolve" verb was dead
+      surface that kept a v1 model alive. ``/commit-slice`` now routes off
+      ``--classify`` (HARD → PCR-2b hand-resolve gate; UNKNOWN → SOAD-1 block) directly.
+
   KEPT (the code-conflict path — the only live case in v2):
     - HARD classification: ANY unmerged path in a v2 rebase is a CODE conflict
       (src / tests / SKILL.md / etc.) → STOP, gate-on-hand-resolve. ``skills/
-      commit-slice/SKILL.md`` sub-step 2.5 drives: resolve markers → ``--verify-
-      resolution`` → ``code-review`` agent → TRI-RESOLVE-1 user gate → ``git rebase
-      --continue`` → ``--record-hard-resolution``. PCR never auto-merges.
-    - the full CLI surface ``/commit-slice`` invokes: ``--diagnose`` / ``--classify`` /
-      ``--resolve-soft`` / ``--verify-resolution`` / ``--record-hard-resolution``,
-      ``--json``, ``--repo-root``, ``--verdict``, ``--disposition``.
-      ``--resolve-soft`` is now DEGENERATE: there is nothing to auto-resolve, so it
-      reports "no auto-resolvable vault conflicts in v2 — all rebase conflicts are
-      CODE; hand-resolve via the PCR-2b gate" and exits cleanly (STOP/HARD when U-files
-      exist, STOP/UNKNOWN when none).
+      commit-slice/SKILL.md`` sub-step 2.5 drives: ``--classify`` (HARD → gate) →
+      resolve markers → ``--verify-resolution`` → ``code-review`` agent → TRI-RESOLVE-1
+      user gate → ``git rebase --continue`` → ``--record-hard-resolution``. PCR never
+      auto-merges.
+    - the CLI surface ``/commit-slice`` invokes: ``--diagnose`` / ``--classify`` /
+      ``--verify-resolution`` / ``--record-hard-resolution``, ``--json``,
+      ``--repo-root``, ``--verdict``, ``--disposition``.
     - the append-only audit log, now JSON at ``<vault>/parallel-conflict-resolution-
       log.json`` (an ``{"entries": [...]}`` object), appended via the SVW-1 locked
       read-modify-write primitive ``scripts.lib._vault_write.safe_mutate_text`` — the
@@ -138,16 +143,6 @@ class ConflictDiagnostic:
     concerned_slices: dict[str, tuple[ConcernedSlice, ...]]
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class ResolutionResult:
-    """Result of resolve_soft_conflict / resolve_hard_conflict."""
-
-    action: str  # "STOP" (v2 never auto-resolves a rebase conflict)
-    conflict_class: ConflictClass
-    regenerated_files: tuple[str, ...]
-    reason: str | None
-
-
 # ---------------------------------------------------------------------------
 # Public library API
 # ---------------------------------------------------------------------------
@@ -183,79 +178,6 @@ def classify_conflict(diag: ConflictDiagnostic) -> ConflictClass:
     if not diag.u_files:
         return ConflictClass.UNKNOWN
     return ConflictClass.HARD
-
-
-def resolve_soft_conflict(
-    diag: ConflictDiagnostic,
-    repo_root: Path | None = None,
-) -> ResolutionResult:
-    """DEGENERATE in v2 — there is nothing to auto-resolve.
-
-    v1 auto-resolved SOFT-class conflicts on the in-tree ``slice-queue.md`` /
-    ``shippability.md`` vault files. In v2 those files are external JSON (never in a
-    rebase), so the SOFT class is dead. This entry point is KEPT because
-    ``skills/commit-slice/SKILL.md`` sub-step 2.5 invokes ``--resolve-soft``; it now
-    reports that all rebase conflicts are CODE and routes to the PCR-2b
-    hand-resolve gate (it NEVER mutates rebase state).
-
-    Returns STOP/HARD when U-files exist (→ the SKILL keys the PCR-2b gate on
-    ``action=="STOP" AND conflict_class==HARD``), STOP/UNKNOWN when none.
-    """
-    if repo_root is None:
-        repo_root = Path.cwd()
-    cls = classify_conflict(diag)
-    if cls is ConflictClass.HARD:
-        return resolve_hard_conflict(diag, repo_root)
-    return ResolutionResult(
-        action="STOP",
-        conflict_class=ConflictClass.UNKNOWN,
-        regenerated_files=(),
-        reason=(
-            "no auto-resolvable vault conflicts in v2 — the vault is an external, "
-            "untracked store (slice-queue.md / shippability.md became external JSON), "
-            "so it never appears in a git rebase. No U-files present (rebase not in "
-            "progress, or already resolved). Nothing to do."
-        ),
-    )
-
-
-def resolve_hard_conflict(
-    diag: ConflictDiagnostic,
-    repo_root: Path | None = None,
-) -> ResolutionResult:
-    """Dispatch target for HARD (code) conflicts — gate-on-hand-resolve (PCR-2b).
-
-    Per PCR-2b (slice-083 / ADR-075): code conflicts are NEVER auto-merged. This
-    returns a STOP carrying gate context; the resolution flow — resolve markers →
-    ``--verify-resolution`` → the ``code-review`` agent → the TRI-RESOLVE-1 user gate
-    → ``git rebase --continue`` → ``--record-hard-resolution`` — is orchestrated by
-    ``skills/commit-slice/SKILL.md`` sub-step 2.5 (Python cannot spawn skill agents).
-    This function NEVER mutates rebase state and NEVER runs ``git rebase --continue``.
-    """
-    if repo_root is None:
-        repo_root = Path.cwd()
-    cls = classify_conflict(diag)
-    if cls is not ConflictClass.HARD:
-        return ResolutionResult(
-            action="STOP",
-            conflict_class=ConflictClass.UNKNOWN,
-            regenerated_files=(),
-            reason=(
-                f"resolve_hard_conflict invoked on non-HARD class ({cls.value}) — "
-                f"no U-files / unparseable rebase state, fail-closed"
-            ),
-        )
-    return ResolutionResult(
-        action="STOP",
-        conflict_class=ConflictClass.HARD,
-        regenerated_files=(),
-        reason=(
-            "HARD (code) conflict — gate-on-hand-resolve via /commit-slice "
-            "sub-step 2.5 (resolve markers -> --verify-resolution -> code-review "
-            "agent -> TRI-RESOLVE-1 user gate -> git rebase --continue). PCR-2b "
-            "never auto-merges code conflicts."
-        ),
-    )
 
 
 def _verify_resolution_clean(repo_root: Path) -> tuple[bool, str | None]:
@@ -528,8 +450,7 @@ def _to_jsonable(obj):
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI: --diagnose | --classify | --resolve-soft | --verify-resolution |
-    --record-hard-resolution. (v2: --resolve-soft is degenerate; see module docstring.)"""
+    """CLI: --diagnose | --classify | --verify-resolution | --record-hard-resolution."""
     _stdout.reconfigure_stdout_utf8()
 
     parser = argparse.ArgumentParser(
@@ -539,11 +460,6 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--diagnose", action="store_true", help="Emit ConflictDiagnostic")
     mode.add_argument("--classify", action="store_true", help="Emit ConflictClass (HARD|UNKNOWN)")
-    mode.add_argument(
-        "--resolve-soft",
-        action="store_true",
-        help="DEGENERATE in v2: no auto-resolvable vault conflicts; routes code conflicts to the PCR-2b gate",
-    )
     mode.add_argument(
         "--verify-resolution",
         action="store_true",
@@ -586,25 +502,6 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"action": "CLASSIFY", "conflict_class": cls.value}, indent=2, ensure_ascii=False))
         else:
             print(f"ConflictClass: {cls.value}")
-        return 0
-
-    if args.resolve_soft:
-        result = resolve_soft_conflict(diag, repo_root=repo_root)
-        if args.json:
-            payload = {
-                "action": result.action,
-                "conflict_class": result.conflict_class.value,
-                "regenerated_files": list(result.regenerated_files),
-                "reason": result.reason,
-            }
-            print(json.dumps(payload, indent=2, ensure_ascii=False))
-        else:
-            print(f"Action: {result.action} (class: {result.conflict_class.value})")
-            if result.reason:
-                print(f"Reason: {result.reason}")
-        # Exit semantics: 0 for a coherent STOP (HARD → PCR-2b gate, or UNKNOWN
-        # no-op when nothing to resolve). The SKILL keys the gate on the JSON
-        # action/conflict_class, not the exit code.
         return 0
 
     if args.verify_resolution:

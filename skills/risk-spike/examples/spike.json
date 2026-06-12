@@ -1,6 +1,6 @@
 {
   "_schema": "aisdlc/spike@1",
-  "_note": "Throwaway proof for one candidate assumption (in-loop slice step-0). Verdict feeds candidates.json + risk-register.",
+  "_note": "Throwaway proof for one candidate assumption (in-loop slice step-0). Verdict feeds candidates.json + risk-register. spikes/ layout: a FEASIBILITY spike writes the FILE <vault>/spikes/spike-<name>.json (this example); a field-recon / design spike writes into the DIR <vault>/spikes/spike-<name>/ (e.g. field-recon.json). The `spike_ref` recorded on a candidate/risk is the BARE id `spike-<name>` (NOT a path) — resolvable to either layout.",
   "name": "spike-ws-presence",
   "candidate": "SC-015",
   "assumption": "A1",

@@ -60,9 +60,10 @@ from pathlib import Path  # noqa: E402
 
 from scripts.lib import _stdout  # noqa: E402
 
-# Canonical regex for the milestone.json `drift-check-skip` value. Byte-faithful
-# clone of CRP-1's `_SKIP_VALUE_RE` (em-dash `—`, NOT a hyphen).
-_SKIP_VALUE_RE = re.compile(r"^skip — rationale: .+")
+# Canonical regex for the milestone.json `drift-check-skip` value. 3.8: the
+# separator is hyphen-TOLERANT — em-dash `—`, en-dash `–`, or plain hyphen `-`
+# all pass (same rule as CRP-1's `_SKIP_VALUE_RE`; typography never blocks the gate).
+_SKIP_VALUE_RE = re.compile(r"^skip\s*[—–-]\s*rationale:\s*.+")
 
 # Modes for which a mandatory /drift-check is enforced. MINIMAL skips by default.
 _ENFORCED_MODES = {"STANDARD", "HEAVY"}

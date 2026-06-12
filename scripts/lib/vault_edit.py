@@ -143,6 +143,16 @@ def _dump(data: Any) -> str:
     return json.dumps(data, **_JSON_DUMP) + "\n"
 
 
+def _current_plugin_version() -> str | None:
+    """The running plugin version from .claude-plugin/plugin.json (4.5 artifact stamping).
+    Read lazily — only when CREATING a vault file — so vault_edit's hot path is untouched."""
+    try:
+        with open(_PLUGIN_ROOT / ".claude-plugin" / "plugin.json", encoding="utf-8") as fh:
+            return json.load(fh).get("version")
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def _detect_array_key(data: Any) -> str | None:
     """The sole top-level list-valued key, or ``None`` when zero or multiple."""
     if not isinstance(data, dict):
@@ -278,6 +288,7 @@ def _cmd_append(args: argparse.Namespace) -> int:
         _err(f"cannot read content: {exc}"); return 2
 
     def mutate(text: str) -> str:
+        was_create = not text.strip()  # 4.5: a brand-new file gets a _plugin_version stamp
         try:
             data = json.loads(text) if text.strip() else {}
         except json.JSONDecodeError as exc:
@@ -297,6 +308,10 @@ def _cmd_append(args: argparse.Namespace) -> int:
             arr.extend(element)
         else:
             arr.append(element)
+        if was_create and "_plugin_version" not in data:
+            ver = _current_plugin_version()
+            if ver:
+                data["_plugin_version"] = ver  # skew detection (4.5); readers WARN on a newer stamp
         return _dump(data)
 
     return _run_mutate(target, mutate)
@@ -411,7 +426,12 @@ def _cmd_list(args: argparse.Namespace) -> int:
         target = _resolve_in_vault(_root(args), args.dir, arg_name="--dir")
     except ValueError as exc:
         _err(str(exc)); return 2
-    entries = sorted(p.name for p in target.iterdir()) if target.is_dir() else []
+    if not target.is_dir():
+        # Fail-visible (R-7): a missing / typo'd --dir was previously indistinguishable
+        # from an empty one (both printed nothing + exited 0). An EXISTING empty dir still
+        # prints nothing and exits 0; a non-existent / non-directory target exits 2.
+        _err(f"--dir {target} does not exist or is not a directory — cannot list."); return 2
+    entries = sorted(p.name for p in target.iterdir())
     if args.count:
         print(len(entries))
     else:
@@ -429,8 +449,14 @@ def _cmd_count(args: argparse.Namespace) -> int:
     key = args.array or _detect_array_key(data)
     if key is None:
         _err("specify --array (the doc has zero or multiple array fields)"); return 2
-    arr = data.get(key, []) if isinstance(data, dict) else []
-    print(len(arr) if isinstance(arr, list) else 0)
+    arr = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(arr, list):
+        # Fail-visible (R-7): printing `0` for a non-array field hid typos and schema
+        # drift (the field was scalar/dict/absent, not an empty array).
+        found = "no such field" if arr is None else f"a {type(arr).__name__}"
+        _err(f"field `{key}` is not a JSON array in {target} (found {found}) — "
+             f"count needs an array field."); return 2
+    print(len(arr))
     return 0
 
 

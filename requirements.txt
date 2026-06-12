@@ -16,4 +16,9 @@ PyYAML>=6.0
 # blast-radius coupling in /slice-candidates (build_backlog.py -> _crg_impact.py ->
 # get_impact_radius). /slice-candidates still degrades gracefully to shared-evidence coupling
 # and reports "crg":"absent" if it is ever missing.
-code-review-graph>=2.3
+#
+# SUPPLY-CHAIN NOTE (4.3): code-review-graph is THIRD-PARTY (github.com/tirth8205/code-review-graph,
+# not this author's) and is auto-registered as a TRUSTED MCP server by /ai-sdlc:setup — it feeds the
+# "reality > code-graph" trust tier. So it is bounded to a major version: review the diff before bumping
+# the ceiling, and prefer pinning an EXACT version (==X.Y.Z) for a reproducible install.
+code-review-graph>=2.3,<3

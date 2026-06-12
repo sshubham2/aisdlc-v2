@@ -482,6 +482,7 @@ def _lint_typescript(
 
     _walk(tree.root_node)
 
+    file_scope_mocks: list[MockCall] = []  # 3.19.1: hoisted module-level vi.mock/jest.mock
     for byte_pos, mock in mock_calls:
         innermost = None
         for scope in test_scopes:
@@ -491,8 +492,29 @@ def _lint_typescript(
                     innermost = scope
         if innermost is not None:
             innermost["mocks"].append(mock)
+        else:
+            # A `vi.mock('...')` / `jest.mock('...')` hoisted to module scope belongs to no
+            # it()/test() — the DOMINANT JS pattern. Pre-3.19.1 it was silently DROPPED. Treat
+            # it as a file-scope mock + run the boundary check below (it applies to every test).
+            file_scope_mocks.append(mock)
 
     violations: list[LintViolation] = []
+    # 3.19.1: module-level (hoisted) mocks apply to the WHOLE file — boundary-check each
+    # (an internal-target module mock is the thing TDD-2 forbids). The per-test <=1 budget
+    # does not apply (they live in no test).
+    for mock in file_scope_mocks:
+        if _is_ts_boundary(mock.target):
+            continue
+        in_seam = mock.target in seam_allowlist
+        violations.append(LintViolation(
+            path=str(path), line=mock.line, test_function="<file-scope>",
+            kind="internal-mock", severity=("Critical" if in_seam else "Important"),
+            message=(
+                f"module-level mock of internal target '{mock.target}'"
+                + (" — target is a documented cross-chunk seam (.cross-chunk-seams)" if in_seam else "")
+                + " (hoisted vi.mock/jest.mock applies to every test in the file)"
+            ),
+        ))
     for scope in test_scopes:
         mocks = scope["mocks"]
         if not mocks:
@@ -741,6 +763,12 @@ def main(argv: list[str] | None = None) -> int:
 
     violations = lint_files(args.files, seam_allowlist)
 
+    # 3.19.1: Go linting is mock-budget-only (no internal-mock boundary detection like
+    # Python/TS) — state that reduced coverage so a clean Go result is not over-trusted.
+    go_present = any(str(f).lower().endswith(".go") for f in args.files)
+    go_note = ("note: Go files are linted mock-budget-only (>1 mock per test); the "
+               "internal-mock boundary check is Python/TS-only — Go coverage is reduced.")
+
     if args.json:
         payload = {
             "violations": [v.to_dict() for v in violations],
@@ -750,8 +778,12 @@ def main(argv: list[str] | None = None) -> int:
                 "important": sum(1 for v in violations if v.severity == "Important"),
             },
         }
+        if go_present:
+            payload["coverage_note"] = go_note
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
     else:
+        if go_present:
+            sys.stdout.write(go_note + "\n")
         sys.stdout.write(format_human(violations))
 
     has_critical = any(v.severity == "Critical" for v in violations)

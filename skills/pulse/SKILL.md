@@ -92,22 +92,23 @@ Read the following JSON files if not fully covered by the injections above (skip
 | `<vault>/gate-log.json` | per-gate outcome log (Phase 0 measurement spine) — **read the file FULLY** here (do NOT rely on a truncated snapshot); aggregate per gate in Step 2 |
 | `<vault>/threat-model.json` · `requirements.json` · `non-functional.json` · `cost-estimation.json` · `diagrams.json` · `actors/` | **Heavy-mode upfront architecture** — presence-probed above (existence + counts, not full-read). Their existence = `/heavy-architect` has run; their absence in Heavy mode = it has not. |
 
-**Active slice:** Read `<vault>/slices/slice-NNN-<name>/milestone.json` first (primary source: `stage`, `next_action`, progress checkboxes, `on_resume`). If `stage` is `build` or later and `build-log.json` exists, read the last ~15 lines of its `events` array — the events trace is the durable record; compare its latest timestamp to `milestone.json.updated_at`. If events are newer, milestone is stale — flag it.
+**Active slice:** Read `<vault>/slices/slice-NNN-<name>/milestone.json` first (primary source: `stage`, `next_action`, progress checkboxes, `on_resume`). If `stage` is `build` or later and `build-log.json` exists, read the last ~15 lines of its `events` array — the events trace is the durable record; compare its latest timestamp to `milestone.json.at`. If events are newer, milestone is stale — flag it.
 
 Do NOT read individual slice design/mission files (active slice excepted). Do NOT read ADRs. Do NOT descend into `slices/archive/`.
 
 ## Step 2 — Compute derived metrics
 
-**Active slice stage + next action:** Read directly from `milestone.json` fields (`stage`, `next_action`, progress checkboxes, `on_resume`). If `milestone.json` is missing, derive stage from file existence as fallback (WARN: milestone absent) using this chain:
+**Active slice stage + next action:** Read directly from `milestone.json` fields (`stage`, `next_action`, progress checkboxes, `on_resume`). If `milestone.json` is missing, derive stage from file existence as fallback (WARN: milestone absent) using the **canonical stage-derivation rule** (shared verbatim with `/archive` Step 3 — keep the two identical): check the **highest** stage first (first match wins); `critique.json` is **OPTIONAL** (a low-tier slice with no mandatory trigger skips it — 1.1), so `build-log.json` presence decides `build` regardless of whether `critique.json` exists:
 
-| Files present in `<vault>/slices/slice-NNN-<name>/` | Derived stage |
+| Highest-present file in `<vault>/slices/slice-NNN-<name>/` | Derived stage |
 |---|---|
+| `reflection.json` | `reflect` (complete) |
+| `validation.json` | `validate` |
+| `build-log.json` | `build` |
+| `critique.json` (only when `build-log.json` is **absent**) | `critique` |
+| `design.json` | `design` |
+| `mission-brief.json` | `spike` (awaiting `/risk-spike`) |
 | none (directory missing or empty) | `none` — slice not started |
-| `mission-brief.json` only | `spike` (awaiting `/risk-spike`) |
-| `mission-brief.json` + `design.json` | `design` |
-| above + `build-log.json` | `build` |
-| above + `validation.json` | `validate` |
-| above + `reflection.json` | `reflect` (complete) |
 
 **Regression health:**
 - Shippability count from `shippability.json`.
@@ -142,6 +143,9 @@ deflate `raised_rate`. Group by `gate` and compute per gate:
 Order the gates by `reality_contact` **high → medium → low** (reality-touching gates read first — Theme 2
 seed). Mark a gate `(quiet)` when `runs >= 5` AND `raised_rate == 0` — it has flagged nothing for many slices
 (a future lighten candidate, Phase 4/5). This is descriptive only — pulse changes nothing.
+**Exclude the `design-tournament` gate from this whole section** (the precision/raised/quiet math): it is
+INFORMATIONAL (3.3) — it raises no findings by design, so a zero raised_rate is expected, never a lighten signal.
+Its rows carry `approach_divergence`, not a verdict; report them separately in `--full` (see below).
 
 **Reality-approved vs model-approved (active slice — Phase 1.2):** From the active slice's gate-log rows
 (filter on the **canonical** `slice == slice-NNN` — gate-log rows store the canonical id, NOT the
@@ -307,9 +311,16 @@ Recent lessons: <3 one-liners>
 Balanced view plus:
 - All active HIGH risks with detail
 - All deferred items from last 5 reflections
+- **Supersession links** — for any reflection read above whose `supersession` block is set, show
+  `slice-NNN superseded by slice-MMM — <reason>` (this is the only surface for supersession; `/supersede-slice`
+  no longer stamps `_index.json` — 3.12). No extra file reads beyond the reflections already loaded.
 - All cross-slice action-points from `action-points.json`
 - Full shippability catalog listing
 - Critic calibration history (all past runs)
+- **Designer divergence (3.3)** — from the `design-tournament` gate-log rows, the per-pair `approach_divergence`
+  distribution (`identical` / `overlapping` / `disjoint`). Flag when `designer-practice ~ designer-expert` is
+  `identical`/`overlapping` on **most high-tier slices**: the expert lens is converging on practice and not earning
+  its spawn cost → note "consider dropping to 2 designers (medium-tier default)". Omit if no tournament has run.
 - Stranded slice branches in detail (every `halt: true` entry with its class)
 - Full gate-log history: every row, newest first — verdict rows (gate · slice · verdict · findings_count · reality_contact) and recall rows (gate · slice · `miss` · severity · caught_by)
 

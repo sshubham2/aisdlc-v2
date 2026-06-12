@@ -101,7 +101,10 @@ If `field-recon.json` contains an authoritative contradiction, note in the spike
 If the target environment is available (connected device, local server, cloud account with credentials):
 
 1. Write throwaway code to `<vault>/spikes/code/spike-<name>/`. Mark every file: `# THROWAWAY — not for production`.
-2. Execute via Bash; capture output/logs.
+2. Execute via Bash; capture output/logs. **Redact before persisting (4.7):** spikes run against REAL
+   environments (cloud accounts, devices), so captured output can carry live credentials that would sit in
+   the vault as plaintext. Pipe any captured output you store as `evidence` through the redactor:
+   `<cmd> 2>&1 | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/secret_scrub.py"`.
 3. Decide: **GO** / **NO-GO** / **CONDITIONAL**
 
    - **GO** — assumption holds; proceed with design
@@ -187,13 +190,14 @@ One row per slice into `<vault>/gate-log.json` (roadmap Theme 8 / plan Phase 0).
 # findings-count: number of assumptions that came back NO-GO (FAILED)
 # --cross-domain (Phase 2.3): set ONLY when re-spiking a cross-domain-transfer invariant — i.e. design.json
 # already exists and carries a cross_domain_transfer (absent on the normal step-0 spike, before any design).
-SLICE_DIR="$AI_SDLC_VAULT_ROOT/slices/<slice-NNN-name>"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+SLICE_DIR="$VAULT/slices/<slice-NNN-name>"
 CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate risk-spike --slice <slice-NNN-name> \
     --verdict <go|no-go|conditional> --findings-count <N failed> $CD \
   | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+        --vault "$VAULT" --file gate-log.json --array entries --stdin
 ```
 
 ---
@@ -208,11 +212,12 @@ risk that selection alone can't).
 
 ## Step D1 — identify design-spike targets
 
-Read the active slice's `design.json` (latest `<vault>/slices/slice-*/design.json`). Collect targets:
+Read the active slice's `design.json` (the active slice is resolved via `active_slice.py` — branch-first, never mtime). Collect targets:
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-$PY -c "import json,glob,sys; v=sys.argv[1]; fs=sorted(glob.glob(f'{v}/slices/slice-*/design.json')); f=fs[-1] if fs else None; d=json.load(open(f,encoding='utf-8')) if f else {}; t=d.get('tournament',{}); dd=[x for x in t.get('decidable_disagreements',[]) if x.get('verdict','pending')=='pending']; mv=[i for i in (d.get('cross_domain_transfer') or {}).get('invariants',[]) if i.get('status')=='must-verify']; print(json.dumps({'design':f,'decidable_disagreements':dd,'must_verify_invariants':mv},indent=2))" "$VAULT"
+SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only 2>/dev/null)"
+$PY -c "import json,sys; sd=sys.argv[1]; f=(sd+'/design.json') if sd else None; d=json.load(open(f,encoding='utf-8')) if f else {}; t=d.get('tournament',{}); dd=[x for x in t.get('decidable_disagreements',[]) if x.get('verdict','pending')=='pending']; mv=[i for i in (d.get('cross_domain_transfer') or {}).get('invariants',[]) if i.get('status')=='must-verify']; print(json.dumps({'design':f,'decidable_disagreements':dd,'must_verify_invariants':mv},indent=2))" "$SDIR"
 ```
 
 - **Decidable disagreements** (`tournament.decidable_disagreements` with `verdict: pending`) — "API supports X?",
@@ -300,3 +305,4 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
   - No spiking candidate in context (feasibility) → `AskUserQuestion` for target (Step 1)
   - Any NO-GO (feasibility) → `AskUserQuestion` for fallback decision (Step 6)
   - Environment unavailable → halt and tell the user what's needed (Step 3 / D2–D4)
+- on-clean-completion: feasibility — all assumptions proven → write the spike record + advance to `/design-slice`; design (`--mode design`) — all targets GO → `/critique` (any NO-GO → `/design-slice` to re-synthesize).

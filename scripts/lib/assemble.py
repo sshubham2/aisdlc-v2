@@ -40,6 +40,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
+from scripts.lib import _stdout  # noqa: E402
 from scripts.lib.finding_dedup import dedupe_findings  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -2084,6 +2085,16 @@ def assemble(out_dir: Path) -> None:
         current_ids.update(f.get("merged_ids", []) or [])
     resolved_ids = sorted(prior_finding_ids - current_ids)
 
+    # 3.19.2: a CURRENT finding PERSISTS from the prior run if its id — or any constituent
+    # id it was merged from — was seen last run (prior_finding_ids). This is INDEPENDENT of
+    # whether the owner annotated it: carried_anno (below) is annotation carryover ONLY, not
+    # the persistence signal. Keying status off carried_anno mislabeled every UNANNOTATED
+    # persisting finding as NEW and inflated the `new` count in the verdict line.
+    def _is_persisting(f: dict) -> bool:
+        if f["id"] in prior_finding_ids:
+            return True
+        return any(mid in prior_finding_ids for mid in (f.get("merged_ids") or []))
+
     findings_by_pass: dict[str, list[dict]] = {p: [] for p in PASS_ORDER}
     for f in findings:
         findings_by_pass.setdefault(f["pass"], []).append(f)
@@ -2125,7 +2136,7 @@ def assemble(out_dir: Path) -> None:
 
     # ----- Stats / verdict -----
     sev_counts = Counter(f["severity"] for f in findings)
-    persisting_count = len(carried_anno)
+    persisting_count = sum(1 for f in findings if _is_persisting(f))  # 3.19.2: not len(carried_anno)
     new_count = len(findings) - persisting_count
     verdict_line = (
         f"{len(findings)} findings — "
@@ -2157,8 +2168,8 @@ def assemble(out_dir: Path) -> None:
         else:
             sections_html_parts.append(f"<h2>{esc(label)}</h2>")
         for f in items:
-            anno = carried_anno.get(f["id"], {})
-            status = "PERSISTING" if f["id"] in carried_anno else "NEW"
+            anno = carried_anno.get(f["id"], {})  # annotation carryover only (may be empty)
+            status = "PERSISTING" if _is_persisting(f) else "NEW"  # 3.19.2: persistence != annotation
             sections_html_parts.append(render_finding_card(f, anno, status))
         sections_html_parts.append("</section>")
     sections_html = "\n".join(sections_html_parts)
@@ -2257,13 +2268,9 @@ def assemble(out_dir: Path) -> None:
 
 
 def main() -> None:
-    # BB-12: UTF-8 stdout/stderr so non-ASCII YAML-error snippets + vault paths don't
-    # raise UnicodeEncodeError on a cp1252 console. (Self-contained — no scripts.lib.)
-    for _stream in (sys.stdout, sys.stderr):
-        try:
-            _stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError):
-            pass
+    # UTF8-STDOUT-1: UTF-8 stdout/stderr so non-ASCII YAML-error snippets + vault
+    # paths don't raise UnicodeEncodeError on a cp1252 console.
+    _stdout.reconfigure_stdout_utf8()
     ap = argparse.ArgumentParser(description="Assemble diagnose-out/diagnosis.html")
     ap.add_argument("--out", required=True, help="Path to diagnose-out directory")
     args = ap.parse_args()

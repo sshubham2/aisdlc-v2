@@ -1,8 +1,8 @@
 {
   "_schema": "aisdlc/slice-candidates@1",
-  "_doc": "Single source of truth for LIVE slice candidates only (status in {candidate, spiking, active, blocked, deferred}). Replaces v1's scattered sources: diagnose-out/backlog.md, risk-register.md-as-candidate-source, and slice-queue.md's candidate section. Lives at <vault>/candidates.json. When a candidate SHIPS (or is rejected) it is MOVED out to <vault>/archive/candidates.json (mirrors slices/ vs slices/archive/) via the vault_edit seam-routed move, keeping the live file small. Written by /diagnose->/slice-candidates, /discover, /reflect, /risk-spike, /validate-slice (append via the vault_edit-append safe channel); /reflect performs the move-to-archive on ship. Read by /slice (picks the next cut) and /pulse (surfaces the backlog).",
+  "_doc": "Single source of truth for LIVE slice candidates only (status in {candidate, spiking, active, blocked, deferred}). Replaces v1's scattered sources: diagnose-out/backlog.md, risk-register.md-as-candidate-source, and slice-queue.md's candidate section. Lives at <vault>/candidates.json. When a candidate SHIPS (or is rejected) it is MOVED out to <vault>/archive/candidates.json (mirrors slices/ vs slices/archive/) via the vault_edit seam-routed move, keeping the live file small. Written by /diagnose->/slice-candidates, /discover, /reflect, /risk-spike, /validate-slice (append via the vault_edit-append safe channel); /reflect marks the candidate `validated` (code not yet committed) and /commit-slice performs the `validated`->`shipped` move-to-archive once the code lands. Read by /slice (picks the next cut) and /pulse (surfaces the backlog).",
   "_fields": {
-    "status": "lifecycle: candidate | spiking | active | blocked | deferred  (LIVE file)  ->  shipped | rejected  (MOVED to <vault>/archive/candidates.json)",
+    "status": "lifecycle: candidate | spiking | active | blocked | deferred | validated  (LIVE file; validated = /reflect complete, code NOT yet committed)  ->  shipped | rejected  (MOVED to <vault>/archive/candidates.json by /commit-slice once the code lands)",
     "progress": "slice-loop stage of an active candidate: not-started | spike | design | critique | build | code-review | validate | reflect | complete",
     "claimed_by": "git identity that picked the candidate via /slice: {git_user, git_email}; null until claimed",
     "started_at": "timestamp the slice started (set when /slice claims the candidate); null until claimed",
@@ -66,7 +66,7 @@
           "risk_ref": "R-27",
           "blocking": true,
           "spike_status": "failed",
-          "spike_ref": "spikes/spike-ws-presence",
+          "spike_ref": "spike-ws-presence",
           "spike_evidence": "Host capped at ~120 concurrent WS before 503s; see spike output.",
           "fallback": "Switch transport to SSE + short-poll fallback, OR move presence to a managed pub/sub (Ably/Pusher). Re-spike before unblocking."
         }
@@ -75,7 +75,7 @@
       "history": [
         { "event": "created", "by": "reflect", "at": "<ts>", "ref": "slice-018" },
         { "event": "picked", "by": "slice", "at": "<ts>", "ref": "slice-021" },
-        { "event": "spike-failed", "by": "risk-spike", "at": "<ts>", "ref": "spikes/spike-ws-presence" }
+        { "event": "spike-failed", "by": "risk-spike", "at": "<ts>", "ref": "spike-ws-presence" }
       ]
     },
     {

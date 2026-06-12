@@ -1,6 +1,6 @@
 ---
 name: critic-calibrate
-description: "Meta-skill that mines 'Missed by Critic' + 'Critic calibration' entries from the last N archived reflections, classifies blind-spot patterns (>=3-distinct-slices threshold), and produces 0-3 evidence-backed Critic checks reviewed one-at-a-time. Accepted checks are persisted to the project's vault overlay (active_checks[] in critic-calibration-log.json), which /critique reads before every review — it NEVER edits the plugin's agents/critique.md (that base is the maintainer's, shipped per plugin version; a project edit would be lost on upgrade and dirty the repo). Every run is appended to runs[] (audit history, never overwritten); the user is prompted to mail the log to the maintainer to fold recurring checks into the next plugin version. Spawns a 'critic-calibrate' subagent for the analysis."
+description: "Meta-skill that mines 'Missed by Critic' + 'Critic calibration' entries from the last N archived reflections, classifies blind-spot patterns (>=3-distinct-slices threshold), and produces 0-3 evidence-backed Critic checks reviewed one-at-a-time. Accepted proposals are persisted to the project's vault overlay (active_checks[] / calibration_notes[] / gate_skips[] in critic-calibration-log.json), which /critique reads before every review — it NEVER edits the plugin's agents/critique.md (that base is the maintainer's, shipped per plugin version; a project edit would be lost on upgrade and dirty the repo). Every run is appended to runs[] (audit history, never overwritten); the user is prompted to mail the log to the maintainer to fold recurring checks into the next plugin version. Spawns a 'critic-calibrate' subagent for the analysis."
 when_to_use: "Trigger phrases: /critic-calibrate, 'calibrate the Critic', 'improve Critic prompt based on misses', 'analyze Critic blind spots'. Run every 10-20 slices as a routine calibration pass, after repeated misses in the same Critic category, or after a serious post-ship bug. Runs in all pipeline modes (minimal/standard/heavy). No predecessor or successor — standalone maintenance skill."
 argument-hint: "[--window N]  (default: 15 reflections)"
 allowed-tools: Read, Bash, Agent, AskUserQuestion
@@ -18,7 +18,8 @@ Mine Critic miss patterns from archived reflections, produce targeted prompt-upd
 Archive must have >= 5 slices (can't find patterns in fewer). Run this Bash gate:
 
 ```bash
-count=$(ls -t "${AI_SDLC_VAULT_ROOT}/slices/archive/" 2>/dev/null | wc -l)
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+count=$(ls -t "${VAULT}/slices/archive/" 2>/dev/null | wc -l)
 if [ "$count" -lt 5 ]; then
   echo "INSUFFICIENT_ARCHIVE count=$count"
 fi
@@ -36,7 +37,8 @@ Parse `--window N` from invocation args; default N=15.
 
 List the last N archived slice folders:
 ```bash
-ls -t "${AI_SDLC_VAULT_ROOT}/slices/archive/" | head -N
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+ls -t "${VAULT}/slices/archive/" | head -N
 ```
 
 For each folder, read `<vault>/slices/archive/<folder>/reflection.json`. Extract the `critic_calibration` and `missed_by_critic` fields. Concatenate into one block tagged by slice id.
@@ -69,7 +71,8 @@ model-on-model gates/checks that have added no value. Hand the agent the recent 
 **model-on-model gates ONLY** — it computes precision and quiet-rate and proposes any lightening:
 
 ```bash
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; M={'critique','critique-review','code-review'}; print(json.dumps([e for e in rows if e.get('gate') in M and e.get('kind') != 'miss'],indent=2))" "$AI_SDLC_VAULT_ROOT"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; M={'critique','critique-review','code-review'}; print(json.dumps([e for e in rows if e.get('gate') in M and e.get('kind') != 'miss'],indent=2))" "$VAULT"
 ```
 
 **HARD RULE — the reality spine never lightens.** The filter passes ONLY `critique` / `critique-review` /
@@ -87,7 +90,8 @@ reflection mining in 1a–1d — a *post-ship* miss (`caught_by` in `post-ship`/
 error that passed every gate, the **highest-signal ADD evidence** there is. Extract them for the agent prompt:
 
 ```bash
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; print(json.dumps([e for e in rows if e.get('kind')=='miss'],indent=2))" "$AI_SDLC_VAULT_ROOT"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; print(json.dumps([e for e in rows if e.get('kind')=='miss'],indent=2))" "$VAULT"
 ```
 
 The agent weighs these alongside the reflection misses when proposing ADD checks (the `>=3-distinct-slices` threshold
@@ -126,22 +130,25 @@ Slice range: slice-<first> through slice-<last>
 <contents of calibration_notes[] from critic-calibration-log.json, or "none">
 ```
 
-The subagent returns: pattern summary, effectiveness section, **0–3 ADD proposals** (a missing Critic check) AND
-**0–2 LIGHTEN proposals** (a model-on-model dimension/gate or a noisy active_check to lighten/retire), plus a
-"watching but not proposing" list. **Reality gates (`risk-spike`/`validate-slice`) are never lighten candidates.**
+The subagent returns: pattern summary, effectiveness section, **0–3 ADD proposals** (a missing Critic check),
+**0–2 LIGHTEN proposals** (a model-on-model dimension/gate or a noisy active_check to lighten/retire), AND
+**0–1 GATE-SKIP proposal** (stop a model gate's discretionary per-slice spawn — precision < 0.2 over ≥ 8 runs with
+zero real blockers), plus a "watching but not proposing" list. **Reality gates (`risk-spike`/`validate-slice`) are
+never lighten OR skip candidates.**
 
 **Zero-proposal is a valid result** in BOTH directions. If the agent returns no proposals, skip to Step 4 (log the run). Do not push the agent to find something.
 
 ## Step 3 — present proposals one-at-a-time (user gate)
 
-Present each proposal — **ADD and LIGHTEN alike** — as a separate `AskUserQuestion` gate — do NOT bundle.
+Present each proposal — **ADD, LIGHTEN, and GATE-SKIP alike** — as a separate `AskUserQuestion` gate — do NOT bundle.
 
-**ADD proposal** (a missing Critic check):
+**ADD proposal** (a new `active_checks[]` overlay check):
 1. Show the pattern (evidence: slice numbers + miss count).
-2. Show the relevant excerpt from `agents/critique.md` the proposal targets.
-3. Show the exact proposed text change.
-4. Explain why this addition would have caught the observed misses.
-5. Wait: **accept / modify / reject**.
+2. Show the proposed overlay check — `trigger` / `check` / `example` — and, for orientation only, the closest base
+   `agents/critique.md` dimension it sharpens. The base file is **never edited**; the check layers on via the vault
+   overlay (Step 4a), and `/critique` applies it on top of its 9 fixed dimensions.
+3. Explain why this check would have caught the observed misses.
+4. Wait: **accept / modify / reject**.
 
 **LIGHTEN proposal** (a model-on-model dimension/gate or a noisy project check that has added no value):
 1. Show the evidence: the gate/dimension, its **precision** + **quiet-rate** over the window, and the slice list.
@@ -152,8 +159,19 @@ Present each proposal — **ADD and LIGHTEN alike** — as a separate `AskUserQu
    reality spine (`risk-spike`/`validate-slice` can never be lightened).
 4. Wait: **accept / modify / reject**.
 
-Capture each decision (with any modification text) for the log. A LIGHTEN proposal needs strong evidence —
-if the user is unsure, default to rejecting (under-lightening is safe; over-lightening erodes the floor).
+**GATE-SKIP proposal** (stop a model gate's discretionary per-slice spawn — the heaviest lever; Phase 3.2):
+1. Show the evidence: the model gate, its **precision** over **≥ 8 verdict runs** (must be < 0.2), that it caught
+   **zero** real blockers, and the slice list.
+2. Name the target (`critique` / `critique-review` / `code-review`) and the action (`skip` discretionary firing, or
+   `tier-gate-high-only`). A gate-skip persists as a `gate_skips[]` entry (Step 4d) — the only overlay `/critique`
+   reads to decide whether to *run* a model gate.
+3. State plainly: a **compliance-mandatory** trigger (`critic_required` / Heavy / `high` tier) STILL forces the gate;
+   the skip removes only the discretionary spawns where the gate measurably produced nothing. The reality spine
+   (`risk-spike`/`validate-slice`) can **never** be skipped at any precision.
+4. Wait: **accept / reject** (default-reject if unsure — this is the strongest lever; under-skipping is safe).
+
+Capture each decision (with any modification text) for the log. LIGHTEN and GATE-SKIP proposals need strong evidence —
+if the user is unsure, default to rejecting (under-lightening/under-skipping is safe; over-doing it erodes the floor).
 
 ## Step 4 — persist accepted checks to the vault overlay
 
@@ -162,7 +180,7 @@ plugin version). A project-side edit would be **lost on the next plugin upgrade*
 `master`, breaking the slice-worktree contract (the main tree must stay clean). Accepted checks instead live in the
 **EXTERNAL vault**, where `/critique` reads them before every review and they survive plugin upgrades.
 
-Two writes to `<vault>/critic-calibration-log.json` (both SVW-1 via `vault_edit`; neither overwrites prior data):
+Writes to `<vault>/critic-calibration-log.json` (all SVW-1 via `vault_edit`; none overwrite prior data):
 
 **4a. Upsert each accepted/modified proposal into `active_checks[]`** — the small, deduped overlay `/critique` reads.
 Assign a stable `id` = next `CC-NNN` after the highest existing (you read `active_checks` in Step 1c). Append **only**
@@ -221,15 +239,36 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SD
 **NEVER** write a `calibration_note` targeting `risk-spike` or `validate-slice` — the reality spine does not lighten.
 If the agent ever proposed one, drop it (agent bug); do not persist it.
 
+**4d. Persist each accepted GATE-SKIP proposal (Phase 3.2)** — append a `gate_skips[]` entry. Assign the next
+`GS-NNN` after the highest existing (read in Step 1c); dedup by `target_gate` (one skip per gate). This is the ONLY
+overlay array `/critique` reads to decide whether to *run* a model gate (`active_checks`/`calibration_notes` only
+shape an in-progress review). It targets a model-on-model gate ONLY — the same `{critique, critique-review,
+code-review}` set the 1e filter passes:
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" \
+    --file critic-calibration-log.json --array gate_skips --json '{
+      "id": "GS-NNN", "target_gate": "critique-review", "action": "skip",
+      "precision": <0..0.2>, "runs_observed": <N >= 8>, "real_blockers_caught": 0,
+      "evidence": ["slice-NNN", ...], "rationale": "<one line>",
+      "user_accepted_at": "<ISO-8601>"
+    }'
+```
+
+`action` is `skip` (suppress discretionary firing) or `tier-gate-high-only` (run only on `high`-tier slices).
+**NEVER** write a `gate_skips` entry targeting `risk-spike` or `validate-slice` — the reality spine cannot be
+skipped at any precision. If the agent ever proposed one, drop it (agent bug).
+
 ## Step 5 — suggest mailing the log to the maintainer
 
 Accepted checks are now live for THIS project via the overlay. To improve the **base Critic for every project** in the
 next plugin version, the maintainer needs the log. Print the suggestion + the absolute path to attach:
 
 ```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
 echo "Mail your calibration log to the maintainer (s2.shubh2@gmail.com) so recurring checks can be folded into the"
 echo "base agents/critique.md in the next plugin version. Attach:"
-echo "${AI_SDLC_VAULT_ROOT}/critic-calibration-log.json"
+echo "${VAULT}/critic-calibration-log.json"
 ```
 
 This is a **suggestion, not a gate** — the project already benefits now via the vault overlay; mailing the log is only
@@ -243,7 +282,7 @@ how generic checks reach the shipped `agents/critique.md`. Never send mail autom
 - TRUST the agent's zero-proposal outcome. Don't re-prompt.
 - EVIDENCE-BASED only. Every proposal cites miss counts (ADD) or precision/quiet-rate + slice numbers (LIGHTEN), never hypothetical.
 - ALWAYS append the run to `runs[]` (Step 4b), including zero-proposal runs. Never overwrite a prior run.
-- **The reality spine never lightens.** LIGHTEN proposals may target only `critique`/`critique-review`/`code-review` dimensions + project `active_checks`. `risk-spike`/`validate-slice` are excluded by the 1e filter and must never be lightened — lightening *informs* the Critic / retires a noisy check; it never disables a gate or overrides the mode/tier table.
+- **The reality spine never lightens or skips.** LIGHTEN and GATE-SKIP proposals may target only `critique`/`critique-review`/`code-review` dimensions/gates + project `active_checks`. `risk-spike`/`validate-slice` are excluded by the 1e filter and must never be lightened or skipped — LIGHTEN *informs* the Critic / retires a noisy check; GATE-SKIP stops a model gate's *discretionary* per-slice spawn but never removes a compliance-mandatory trigger (`critic_required`/Heavy/high-tier), disables a gate wholesale, or overrides the mode/tier table.
 
 ## Anti-patterns
 
@@ -257,4 +296,4 @@ how generic checks reach the shipped `agents/critique.md`. Never send mail autom
 - predecessor: none (standalone maintenance; typically run every 10-20 slices after `/reflect`)
 - successor: none (`hands_off_to: []`)
 - auto-advance: false
-- user-input gates: proposal review in Step 3 (one gate per proposal — up to 3 ADD + 2 LIGHTEN per run)
+- user-input gates: proposal review in Step 3 (one gate per proposal — up to 3 ADD + 2 LIGHTEN + 1 GATE-SKIP per run)

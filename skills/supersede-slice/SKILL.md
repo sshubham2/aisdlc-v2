@@ -22,7 +22,7 @@ Skip when: adding a feature on top of a shipped slice (normal new slice); fixing
 
 Active slice (latest):
 ```!
-ls "$AI_SDLC_VAULT_ROOT/slices/" 2>/dev/null | grep -v archive | sort | tail -1
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --folder-only 2>/dev/null
 ```
 
 ---
@@ -32,7 +32,8 @@ ls "$AI_SDLC_VAULT_ROOT/slices/" 2>/dev/null | grep -v archive | sort | tail -1
 If `<archived-slice-id>` was supplied as an argument, check it exists:
 
 ```bash
-test -d "$AI_SDLC_VAULT_ROOT/slices/archive/<archived-slice-id>"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+test -d "$VAULT/slices/archive/<archived-slice-id>"
 ```
 
 If not found: STOP. List available archived slices via Glob (`<vault>/slices/archive/*/`) and tell the user which IDs are available.
@@ -99,32 +100,18 @@ Expected: 1 link validated, no violations.
 
 If audit reports `one-way-link` or `missing-target`: fix the reflection.json or mission-brief.json and re-run. Do not advance until the audit is clean.
 
-## Step 6 — Mark archived row in _index.json
+> **No `_index.json` stamp (3.12).** Earlier versions CAS-wrote `superseded_by` into a `slices/_index.json`
+> `recent[]` row here. That write was doomed: `/archive` and `/reflect` regenerate `recent[]` from a fixed field
+> set that drops the field, and rows age out of `recent[]` within 10 slices anyway. The supersession link is
+> **already durable** in the two files Steps 3–4 wrote (the archived `reflection.json` `supersession` block + the
+> active `mission-brief.json` `supersedes` field), validated by Step 5's audit. `/pulse --full` surfaces the link
+> by reading `reflection.json` when it lists recent reflections — no index row is needed.
 
-Update `<vault>/slices/_index.json` to mark the archived slice row as superseded. This is a CAS full-file rewrite — route through `vault_edit rewrite` (SVW-1, ADR-088). Note: `_index.json` is a CAS-rewrite target (not append-only), because supersession modifies an existing row field rather than appending a new entry.
-
-```bash
-# 1. Read with CAS token (use --out-file, NOT shell > which produces UTF-16LE+BOM → CAS livelock)
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read --file slices/_index.json --out-file base.bin
-
-# 2. Edit the archive row to add superseded_by field:
-#    In the archive_ref or a supplementary archive index, find the row for <archived-slice-id>
-#    and add: "superseded_by": "<active-slice-id>"
-
-# 3. Rewrite with CAS
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file slices/_index.json \
-    --base-file base.bin --content-file <edited>
-```
-
-On exit 3 (CAS conflict): re-read → re-apply the change → retry (bounded ~5 attempts).
-
-The `_index.json` schema (`examples/slice-index.json`) shows the `recent[]` array where archived rows may appear. Add `"superseded_by": "<active-slice-id>"` to the matching entry.
-
-## Step 7 — Confirm and hand off
+## Step 6 — Confirm and hand off
 
 Tell the user:
 - "Slice `<archived-slice-id>` superseded by `<active-slice-id>`."
-- "reflection.json in archive updated; mission-brief.json `supersedes` field set; _index.json row updated; audit clean."
+- "reflection.json in archive updated; mission-brief.json `supersedes` field set; audit clean. (The durable link lives in those two files — `/pulse --full` reads it from reflection.json.)"
 - "Run `/critique` on the active slice next — cite the supersession reason in design.json if it informs design choices."
 
 ## Critical rules
@@ -134,7 +121,7 @@ Tell the user:
 - VALIDATE the archived slice id strictly — it must match an existing folder under `slices/archive/`. A typo creates an orphan claim.
 - BIDIRECTIONAL link is required, not optional. The audit rejects one-way links.
 - DO NOT use for in-flight corrections (slice not yet archived) — those are deviations recorded in build-log.json per `/build-slice`.
-- _index.json writes MUST go through `vault_edit` (SVW-1). Never do a plain whole-file overwrite.
+- The supersession link lives ONLY in `reflection.json` + `mission-brief.json` (audit-validated) — do NOT stamp it into `slices/_index.json` (the next `/archive` or `/reflect` regen erases it; 3.12).
 
 ## Anti-patterns
 

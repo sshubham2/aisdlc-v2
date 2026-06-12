@@ -36,10 +36,13 @@ if str(_PLUGIN_ROOT) not in _sys.path:
 # --- end plugin-root bootstrap ---
 
 from scripts.lib import _stdout
+from scripts.lib._git_default_branch import run_git
 
 
 def _git(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    # Thin signature shim over the shared UTF-8-safe runner (scripts.lib._git_default_branch.run_git):
+    # `_git(["worktree","list"], cwd=X)` -> `git -C X worktree list`. No second runner definition.
+    return run_git(cwd if cwd is not None else ".", *args)
 
 
 def _main_tree(ref_dir: str) -> str | None:
