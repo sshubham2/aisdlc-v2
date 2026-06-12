@@ -336,8 +336,11 @@ CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if 
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate validate-slice --slice <slice-NNN-name> \
     --verdict <pass|partial|fail> --findings-count <N fail+partial> $CD \
+    --reality-proxy <real-device|real-account|real-sandbox|staging|local-real-data|simulator|docs-only> \
   | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
         --vault "$VAULT" --file gate-log.json --array entries --stdin
+# --reality-proxy (§2.7): the WEAKEST environment any criterion was checked on (a slice validated
+# on a simulator must not log the same green as one validated on real devices).
 ```
 
 ## Main-thread deferral resolution (post-return — runs OUTSIDE the fork) (3.17)

@@ -1,0 +1,58 @@
+# ai-sdlc merge gate (roadmap §2.1) — refuse to merge a slice PR without reality evidence.
+#
+# INSTALL: copy this file to .github/workflows/aisdlc-merge-gate.yml in your project repo,
+# then make the "aisdlc merge gate" check REQUIRED in your branch-protection rules.
+# Once present, /commit-slice detects it and emits .aisdlc/receipts/<slice-NNN>.json
+# into every slice commit (the receipt records the /validate-slice result + gate-log rows).
+#
+# SELF-CONTAINED on purpose: CI does not have the ai-sdlc plugin installed, so the check
+# is inlined here (it mirrors scripts/lib/ship_receipt.py::verify_receipt — keep in sync).
+# Non-slice branches pass trivially, so this can run on every PR.
+
+name: aisdlc merge gate
+
+on:
+  pull_request:
+
+jobs:
+  receipt:
+    name: aisdlc merge gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify ship receipt for slice branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        shell: python
+        run: |
+          import json, os, re, sys
+          branch = os.environ.get("HEAD_REF", "")
+          m = re.match(r"^slice/(\d+)(?:-.+)?$", branch)
+          if not m:
+              print(f"branch {branch!r} is not a slice/* branch - gate not applicable.")
+              sys.exit(0)
+          canon = f"slice-{m.group(1)}"
+          path = os.path.join(".aisdlc", "receipts", f"{canon}.json")
+          if not os.path.isfile(path):
+              print(f"GATE FAIL  no ship receipt at {path}.")
+              print("This slice branch carries no reality-validation evidence. Run the pipeline")
+              print("through /validate-slice and /commit-slice (which emits the receipt when this")
+              print("workflow file is present in the repo), then update the PR.")
+              sys.exit(1)
+          with open(path, encoding="utf-8") as fh:
+              r = json.load(fh)
+          problems = []
+          if str(r.get("slice", "")) != canon:
+              problems.append(f"receipt slice {r.get('slice')!r} does not match branch slice {canon!r}")
+          if str(r.get("result", "")).lower() != "pass":
+              problems.append(f"validation result is {r.get('result')!r}, not 'pass'")
+          ship = r.get("shippability_regression") or {}
+          if int(ship.get("failed_rows") or 0) > 0 and not ship.get("deferral_approved"):
+              problems.append(f"{ship.get('failed_rows')} shippability regression row(s) without an approved deferral")
+          if problems:
+              for p in problems:
+                  print(f"GATE FAIL  {p}")
+              sys.exit(1)
+          gates = r.get("gates") or []
+          print(f"GATE PASS  {canon}: validation result=pass, criteria={r.get('criteria')}, "
+                f"{len(gates)} gate row(s) attached.")

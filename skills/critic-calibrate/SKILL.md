@@ -97,6 +97,34 @@ $PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.loa
 The agent weighs these alongside the reflection misses when proposing ADD checks (the `>=3-distinct-slices` threshold
 still applies); a single post-ship escape is a strong prior but still needs the pattern to cross the bar.
 
+**1g. DR-1 unique-catch rate — does the meta-critic earn its spawn? (§2.5)**
+
+The one decorrelation claim the spine doesn't otherwise measure: does `/critique-review`'s premortem method ever
+catch what the first Critic missed? From the recent archived slices' `critique.json` files: count slices where
+DR-1 ran, and `M-add-*` findings whose ratified disposition is real (accepted-*/deferred/escalated). Pass the
+ratio + sample to the agent. **~0 unique catches over ≥10 DR-1 runs is legitimate evidence for a
+`gate_skips` proposal targeting `critique-review`'s ADVISORY trigger** (the mandatory triggers — high tier,
+critic_required, findings ≥5 — are a floor that never lightens). The other direction matters equally: a healthy
+unique-catch rate is the documented answer to "why pay for two critics?".
+
+**1h. User-override calibration — the human gate gets measured too (§6.4)**
+
+From the recent reflections' calibration sections: count `FALSE-ALARM` (user override vindicated by reality) vs
+`OVERRIDE-MISJUDGED` (user override refuted by reality). Pass both counts to the agent. A run of
+OVERRIDE-MISJUDGED is the inverse of alert fatigue — the user is dismissing real findings — and warrants an
+ADD-side proposal phrased as a TRI-1 presentation change (e.g. "require a second look before overriding
+findings in dimension X"), never an automatic block: the user stays the final authority; this only makes the
+trend visible to them.
+
+**1i. Sampled low-tier audit — calibrate the skip rule itself (§2.6)**
+
+Gate precision is measured only on slices the Critic actually reviewed — survivorship bias: the 50 skipped
+low-tier slices contribute nothing, so the SKIP rule is never tested. Recommendation to surface to the user
+(not auto-run): roughly **every 10th low-tier skipped slice, run `/critique --force` on it** and let the row
+land in the gate-log like any other. If sampled low-tier critiques keep coming back clean, the skip rule is
+validated cheaply; if they keep finding real issues, the tier default is mis-set — propose raising it via
+re-triage. Note in the run record when the user declines (that is data too).
+
 ## Step 2 — invoke the critic-calibrate subagent
 
 Use the Agent tool with `subagent_type: "critic-calibrate"`. Pass all four inputs as the prompt body:

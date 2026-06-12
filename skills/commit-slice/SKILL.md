@@ -1,6 +1,6 @@
 ---
 name: commit-slice
-description: "Generate an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, ADRs, shippability.json). Dispatches message rendering to a Haiku subagent (COST-1). Supports three mutually exclusive modes: --merge (solo-dev local merge + safe-delete), --push (push slice branch + display PR hint), --sync-after-pr (post-PR local cleanup). No-flag default: generate and show only. Also writes a per-slice changelog.json audit record into the archived slice folder (Step 4.5); never writes to the code repo root."
+description: "Generate an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, ADRs, shippability.json). Dispatches message rendering to a Haiku subagent (COST-1). Supports three mutually exclusive modes: --merge (solo-dev local merge + safe-delete), --push (push slice branch + display PR hint), --sync-after-pr (post-PR local cleanup). No-flag default: generate and show only. Also writes a per-slice changelog.json audit record into the archived slice folder (Step 4.5); never writes to the code repo root EXCEPT the opt-in CI ship receipt (.aisdlc/receipts/, Step 4.8 — emitted only when the repo carries the aisdlc-merge-gate workflow)."
 when_to_use: "Trigger phrases: /commit-slice, 'generate commit message', 'audit commit', 'slice commit message', '/commit-slice --merge', '/commit-slice --push', '/commit-slice --sync-after-pr'. Run after /reflect (which archives the slice). User-invoked only — never auto-advanced into."
 argument-hint: "[--merge | --push | --sync-after-pr]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, AskUserQuestion
@@ -138,6 +138,27 @@ just shipped may have made them stale — the per-slice `changelog.json` from St
 Skip silently when `doc-manifest.json` is absent (the project doesn't generate docs yet — `/product-doc` is how to
 start). This is a reminder, never a gate; never block the commit flow on it. `/drift-check`'s `stale-doc` category
 is the backstop for docs that drift when this hook is declined.
+
+## Step 4.8 — CI ship receipt (opt-in — roadmap §2.1: discipline the SYSTEM maintains)
+
+**Keyed on the workflow file's presence** — check `.github/workflows/aisdlc-merge-gate.yml` in the repo:
+
+- **Present** (the project opted into the CI merge gate): emit the receipt into the worktree so it rides the
+  slice commit and the PR carries its own reality evidence:
+  ```bash
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/ship_receipt.py" emit \
+      --slice slice-NNN-<name> --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$wt"
+  ```
+  It writes `.aisdlc/receipts/slice-NNN.json` (validation result + criteria counts + shippability/deferral
+  state + this slice's gate-log rows). **Stage it with the commit** (add it to the Step 5b/5c `git add` set).
+  On exit 2 (no validation.json — mid-slice commit): surface the message; the CI gate will then rightly fail
+  the PR until validation runs.
+- **Absent**: skip silently — this skill writes nothing to the code repo root without the opt-in. If the user
+  asks how to get a merge gate, point them to the bundled template:
+  `cp "${CLAUDE_SKILL_DIR}/assets/aisdlc-merge-gate.yml" .github/workflows/` (then make the check required in
+  branch protection). Offer once, never auto-install — workflow files are repo policy, owned by the user.
+
+`--sync-after-pr` skips this step (no commit is generated).
 
 ## Step 5 — present or execute
 

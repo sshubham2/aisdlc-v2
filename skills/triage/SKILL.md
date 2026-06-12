@@ -113,6 +113,16 @@ threat-model/etc., Standard/Minimal stay thin; (3) **Heavy's compliance floor** 
 on every slice + requires human sign-off. So Minimal mostly saves cost by *defaulting slices to low tier*, not by
 weakening review on a slice you mark `medium`/`high`.
 
+**Regulated-domain guard (§2.4) — applies in BOTH 3a and the pre-declared path (Step 2).** If the answers (or
+the pre-declared project description) name a regulated domain — health/medical (HIPAA), payments/cards (PCI),
+PII at scale / children's data (GDPR/COPPA), finance (SOX/SOC2), government — and the chosen/declared mode is
+**Minimal or Standard**, do NOT silently accept it. Say plainly: *"This looks regulated (<signal>). Minimal/
+Standard has no compliance floor — no forced Critic, no human sign-off, no threat model. Heavy is the designed
+mode for this; the pipeline is NOT an audit-grade compliance process in any mode (no sign-off workflow, no
+audit-trail enforcement) — regulated projects need their own compliance review on top."* If the user keeps the
+lighter mode, record the override in `triage.json` (`mode_override: {signal, declined: "heavy", rationale}`).
+Their call — but never an uninformed one.
+
 State the mode + 2–3 sentence rationale. **Wait for user confirmation** via `AskUserQuestion` before
 writing any files.
 

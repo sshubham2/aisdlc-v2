@@ -124,7 +124,11 @@ If the environment is NOT available: stop, tell the user exactly what setup is n
 Write `<vault>/spikes/spike-<name>.json`. **Schema by example**: `examples/spike.json`.
 
 Key fields: `name`, `candidate`, `assumption` (id), `date`, `assumption_under_test`, `method`,
-`verdict` (`go`/`no-go`/`conditional`), `evidence`, `fallback` (required on NO-GO), `risk_ref`.
+`verdict` (`go`/`no-go`/`conditional`), `evidence`, `fallback` (required on NO-GO), `risk_ref`, and
+`reality_proxy` (§2.7 — WHAT stood in for reality, strongest → weakest: `real-device` | `real-account` |
+`real-sandbox` | `staging` | `local-real-data` | `simulator` | `docs-only`). Reality is graduated: a
+simulator GO is honestly weaker than a two-device GO — record which one this was; the gate-log row
+(Step 6b) carries the same value so `/pulse` renders the green at its true strength.
 
 ## Step 5 — update vault artifacts
 
@@ -200,8 +204,11 @@ CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if 
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate risk-spike --slice <slice-NNN-name> \
     --verdict <go|no-go|conditional> --findings-count <N failed> $CD \
+    --reality-proxy <real-device|real-account|real-sandbox|staging|local-real-data|simulator|docs-only> \
   | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
         --vault "$VAULT" --file gate-log.json --array entries --stdin
+# --reality-proxy (§2.7): the WEAKEST proxy used across this run's spikes — a simulator green
+# must never be indistinguishable from a real-device green in the measurement spine.
 ```
 
 ---

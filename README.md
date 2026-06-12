@@ -168,6 +168,34 @@ $PY scripts/lib/vault_admin.py list                 # every vault under the base
 $PY scripts/lib/vault_admin.py uninstall <name> --yes   # delete an orphaned vault
 ```
 
+**Export / import (backup + team handoff).** The design record is the most valuable thing the pipeline
+produces — give it at least the durability of the code it explains:
+
+```bash
+$PY scripts/lib/vault_admin.py export                       # -> ./<vault-name>-vault.tgz (this repo's vault)
+$PY scripts/lib/vault_admin.py import <archive>.tgz         # restore on another machine / for a new teammate
+$PY scripts/lib/vault_admin.py write-pin                    # then pin the imported vault to the repo
+```
+
+`import` refuses a non-empty target without `--force`. Put `export` in a cron/backup job if the project is
+long-lived — a machine wipe should never be able to erase the project's risk ledger and decision history.
+
+### CI merge gate (optional — make the pipeline enforced, not just followed)
+
+By default nothing stops a slice branch from merging without `/validate-slice` — the vault is external, so CI
+can't see it. The **ship receipt** closes that: install the bundled workflow once,
+
+```bash
+cp <plugin>/skills/commit-slice/assets/aisdlc-merge-gate.yml .github/workflows/
+# then mark the "aisdlc merge gate" check as REQUIRED in branch protection
+```
+
+and from then on `/commit-slice` detects it and emits `.aisdlc/receipts/<slice-NNN>.json` into every slice
+commit — a slim evidence record (validation result, criteria counts, shippability/deferral state, the slice's
+gate-log rows). The workflow refuses to merge a `slice/*` PR whose receipt is missing, non-passing, or carries
+an unapproved regression. Non-slice branches pass trivially. Without the workflow file, nothing is written to
+your repo — the gate is strictly opt-in.
+
 **Captured evidence is secret-swept.** `/validate-slice` and `/risk-spike` run commands against real
 environments; before any captured output is stored as `evidence`, pipe it through
 `scripts/lib/secret_scrub.py`, which redacts credentials (`[REDACTED:<type>]`) using the same VAL-1 patterns —
@@ -234,6 +262,35 @@ Backlog of work lives in `<vault>/candidates.json` (live) and `<vault>/archive/c
 risk ledger is `<vault>/risk-register.json`.
 
 Invoke any skill with its slash command — the plugin namespaces them, so `/diagnose` is `/ai-sdlc:diagnose`, etc.
+
+### What a slice actually costs (be honest before adopting)
+
+Per-slice review cost keys on the slice's **risk tier**, not the project mode (mode only sets the default tier
++ Heavy's sign-off floor). Rough expectations, including your own think time:
+
+| Tier | Agent spawns | Your gates | Wall-clock overhead |
+|------|-------------|-----------|---------------------|
+| **low / mechanical** | 0–1 | plan approval | ~10–20 min |
+| **medium** | ~5–7 (tournament ×2, recon, Critic, code-Critic, narrator) | candidate pick · plan approval · TRI-1 triage | ~1–2 h |
+| **high / novel** | ~7–9 (+ expert designer, meta-Critic, design spike) | + spike/validation failure gates | ~2–4 h |
+
+One-time: `/triage` ~15 min · `/discover` ~30 min · `/heavy-architect` (Heavy only) ~2 h. Maintenance
+(`/drift-check`, `/critic-calibrate`, `/sync`) is signal-driven, not per-slice. If these numbers feel heavy for
+your project, run Minimal mode and let low-tier defaults do their job — the cost story holds only when slices
+stay genuinely thin.
+
+### What this is NOT for
+
+- **Teams > ~3 without the CI merge gate installed** — the vault has no locking or ownership beyond
+  claim/heartbeat surfacing in `/pulse`; coordination is social.
+- **Audit-grade compliance processes** — Heavy mode adds rigor (forced Critic, human sign-off, threat model),
+  but there is no compliance sign-off workflow or audit-trail enforcement. Regulated projects need their own
+  compliance review on top; `/triage` will tell you so.
+- **Projects whose validation surface is unreachable from a dev machine** (production-only hardware, app-store
+  release trains): the reality spine degrades to weaker proxies — the gate-log records that honestly
+  (`reality_proxy`), but the strongest greens are simply unavailable to you.
+- **Drive-by contributions** — the loop pays off across slices (calibration, lessons, shippability compound);
+  a one-afternoon fix doesn't amortize the vault.
 
 ---
 

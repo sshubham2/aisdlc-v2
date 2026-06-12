@@ -124,6 +124,18 @@ Do NOT read individual slice design/mission files (active slice excepted). Do NO
 - Count of `not-started` + `in-flight` candidates from `candidates.json`.
 - Top-priority candidate (highest `priority.score`, not blocked-on-spike).
 - Count of `blocked-on-spike` candidates.
+- **Stale-claim heartbeat (§2.3):** for every CLAIMED candidate (`claimed_by` set, status `spiking`/`active`),
+  surface `claimed_by.git_user` and the freshest activity timestamp for its slice (max of `milestone.json.at`
+  and the last `build-log.json` event). Activity older than **5 days** → flag
+  `STALE-CLAIM: SC-NNN (<user>, idle <N>d)` — claimed-but-idle work blocks the DAG silently; the vault has no
+  locking, so this surfacing IS the team-awareness mechanism. Descriptive only — pulse changes nothing.
+
+**Retired-risk freshness (§6.1 — reality sign-offs are perishable):** from `risk-register.json`, risks with
+`status: retired` whose retiring spike (`notes`/`discovered.at`) is older than **6 months** AND whose title names
+an external technology (API / SDK / platform / quota): list as `AGING-GREEN: R-NN (retired <when> via <spike>)` —
+the spike proved the assumption against THAT day's external reality, which drifts. Recommend a re-spike
+(`/risk-spike R-NN`) only when the slice being planned touches the same technology. Cap at 3 rows; omit the
+section when none qualify.
 
 **Gate hit-rate (GATE-LOG — Phase 0 measurement spine):** From the FULL `<vault>/gate-log.json` `entries[]`
 (skip this whole metric if the file is absent or empty), **first split rows by kind**: a row is a RECALL row
@@ -153,13 +165,24 @@ Its rows carry `approach_divergence`, not a verdict; report them separately in `
 **passing** verdict by what signed off:
 - **Reality-approved** — `reality_contact` in {high, medium} with a pass-class verdict (`go`/`conditional`,
   `pass`, or drift `clean`): the spike / real-device validation / code-vs-claims check said yes against
-  something that is *not the model*.
+  something that is *not the model*. When the row carries `reality_proxy` (§2.7), render it WITH the green —
+  `reality-approved (real-device)` vs `reality-approved (simulator)` are different strengths; a
+  `simulator`/`docs-only` proxy gets an explicit qualifier: "reality-approved on a WEAK proxy — real-device
+  check still owed."
 - **Model-approved** — `reality_contact == low` with a pass-class verdict (`clean`/`accept`, or code-review
   `clean`): a review signed off, but reality has not.
 - **Pending reality** — reality gates (risk-spike, validate-slice) this slice has **not yet** recorded a pass
   (e.g. `validate-slice` absent pre-build). Name them so it is clear reality has not signed off yet.
 Trust a green exactly as much as it touches something that is not the model — so a slice with only
 model-approvals is NOT the same as one reality has signed off on, even if every box is checked.
+
+**DR-1 unique-catch rate (§2.5 — `--full` only; the meta-critic earning its spawn or not):** across recent
+archived slices' `critique.json` files (last ~10): `dr1_runs` = slices where critique-review ran (an `M-add-*`
+finding exists OR a critique-review gate-log row exists for the slice); `unique_catches` = `M-add-*` findings
+whose ratified disposition is in {accepted-fixed, accepted-pending, deferred, escalated} (the meta-critic
+surfaced something real the first Critic missed AND the user kept it). Report `unique_catches / dr1_runs` with
+the sample size. ~0 over 10+ runs = the premortem pass is duplicating the first Critic — a `/critic-calibrate`
+lighten/gate-skip candidate (never auto-acted on here).
 
 **Cross-domain transfer validity ratio (Phase 2.3 — the number that decides the Phase 3 tournament):** From
 `gate-log.json` rows with `cross_domain == true`, restricted to **reality gates** (`reality_contact` in

@@ -106,6 +106,11 @@ GATE_CONTACT: dict[str, str] = {
 # filter by construction (that filter passes only critique/critique-review/code-review).
 INFORMATIONAL_GATES: frozenset[str] = frozenset({"design-tournament"})
 _CONTACTS = {"high", "medium", "low"}
+# Reality is GRADUATED, not binary (roadmap §2.7 / philosophy §6.1): a simulator pass and a
+# two-real-device pass should not be the same green. `--reality-proxy` records WHAT stood in
+# for reality on a high/medium-contact gate row, ordered strongest -> weakest:
+_PROXIES = {"real-device", "real-account", "real-sandbox", "staging", "local-real-data",
+            "simulator", "docs-only"}
 _SLICE_RE = re.compile(r"^(slice-\d+)(?:-.+)?$")
 
 # Recall rows (plan Phase 0.2 recall half / roadmap Theme 8). A `--kind miss` row
@@ -162,6 +167,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--tier", default=None, help="low | medium | high (slice risk tier, context)")
     p.add_argument("--reality-contact", default=None, dest="reality_contact",
                    help="override the gate->contact default (high|medium|low); normally omit")
+    p.add_argument("--reality-proxy", default=None, dest="reality_proxy",
+                   help="(§2.7, verdict kind) WHAT stood in for reality on this run, strongest->weakest: "
+                        + ", ".join(sorted(_PROXIES)) + " — a simulator green is not a device green")
     p.add_argument("--cross-domain", action="store_true", dest="cross_domain",
                    help="mark this row as a cross-domain-transfer outcome — set by risk-spike / "
                         "validate-slice when the slice's design.json carries a cross_domain_transfer "
@@ -266,6 +274,13 @@ def main(argv: list[str] | None = None) -> int:
             row["cross_domain"] = True
         if args.approach_divergence and args.approach_divergence.strip():
             row["approach_divergence"] = args.approach_divergence.strip()
+        if args.reality_proxy:
+            proxy = args.reality_proxy.strip().lower()
+            if proxy not in _PROXIES:
+                sys.stderr.write(
+                    f"gate_log: --reality-proxy must be one of {sorted(_PROXIES)} (got {proxy!r})\n")
+                return 2
+            row["reality_proxy"] = proxy
 
     payload = json.dumps(row, ensure_ascii=False)
     if args.out:

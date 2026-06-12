@@ -140,6 +140,10 @@ Draft a concrete task sequence:
 - Specific: file paths, function names
 - Ordered so the mid-slice smoke gate is reachable at ~50% of work
 - Each task independently verifiable
+- **≤ 10 tasks (slice-inflation guard).** A plan that needs more is a multi-slice cut wearing one mission-brief —
+  the bounded-unit premise ("small cut so it can concentrate") fails quietly right here, at the gate where a
+  tired user rubber-stamps. If you exceed 10: do NOT present the long plan for approval; propose the split
+  instead ("this is 2 slices: <A> now, <B> as candidate SC-NNN") and let the user choose.
 
 ## Step 3: User approval (PCA-1 gate-halt)
 
