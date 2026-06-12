@@ -12,7 +12,7 @@ store is the DEFAULT resolution, with no flip step. The path scheme is byte-for-
 identical to v1's ``_vault_flip.external_store_path`` (so an already-flipped v1
 project resolves to the same folder).
 
-**Resolution precedence** (read ONCE at module import):
+**Resolution precedence** (resolved ONCE, lazily, on first attribute access):
 
   1. env var ``AI_SDLC_VAULT_ROOT`` (if set) — explicit override / test injection /
      harness-set. UNCHANGED from v1 (ADR-065).
@@ -35,12 +35,15 @@ dependency leaf of the VAULT_ROOT cascade (``scripts.lib._vault_write`` imports
 ``_CONFIG_REL`` FROM here; the external-store helpers below also live here so a
 future ``_vault_flip`` port imports them from the leaf rather than re-deriving).
 
-**Read-at-import + consumer-freeze cascade**: the env var, the git-common-dir
-config, AND the computed default are resolved EXACTLY ONCE at this module's
-import. Downstream consumers that compose ``VAULT_ROOT`` into their own
-module-level constants FREEZE the derived Path at THEIR import-time value;
-in-process ``monkeypatch.setattr`` of ``VAULT_ROOT`` does NOT propagate. Cross-process
-env override works via subprocess fixtures (env injection at process boundary).
+**Lazy-resolve + consumer-freeze cascade**: the env var, the git-common-dir
+config, AND the computed default are resolved EXACTLY ONCE per process — LAZILY,
+on the FIRST access of ``VAULT_ROOT`` (PEP 562 module ``__getattr__``), then
+memoized. Importing this leaf for a helper alone (``_CONFIG_REL`` via
+``_vault_write``; ``external_store_path``/``resolve_base`` via ``vault_admin``) no
+longer spawns ``git rev-parse`` at import. Downstream consumers that compose
+``VAULT_ROOT`` into their own module-level constants FREEZE the derived Path at
+THEIR import-time value; cross-process env override works via subprocess fixtures
+(env injection at process boundary).
 """
 from __future__ import annotations
 
@@ -259,25 +262,52 @@ def _resolve_vault_root() -> tuple[Path, str]:
     return external_store_path(common), "default"
 
 
-VAULT_ROOT, _RESOLUTION_SOURCE = _resolve_vault_root()
+# ── lazy resolution (PEP 562 module __getattr__) ───────────────────────────────
+# VAULT_ROOT / _RESOLUTION_SOURCE / VAULT_ROOT_IS_DEFAULT resolve ON FIRST ACCESS,
+# not at import, so a module that imports this leaf ONLY for a helper (``_vault_write``
+# imports ``_CONFIG_REL``; ``vault_admin`` imports ``external_store_path``/``resolve_base``)
+# no longer pays the ``git rev-parse`` spawn of ``_resolve_vault_root()`` at import.
+# The result is MEMOIZED in ``_RESOLVED``, so the env/config/git seam is still read
+# EXACTLY ONCE per process — the consumer-freeze cascade is preserved (a consumer that
+# did ``from _vault_paths import VAULT_ROOT`` binds the Path once; module-level access is
+# frozen after the first resolve). These three names must NEVER be assigned at module
+# scope, or normal attribute lookup would find them and bypass ``__getattr__``.
+_RESOLVED: tuple[Path, str] | None = None
 
-# True iff resolution fell through to the computed external-store default (env
-# unset AND no git-common-dir config pin). Frozen-at-import per the consumer-freeze
-# cascade.
-VAULT_ROOT_IS_DEFAULT: bool = _RESOLUTION_SOURCE == "default"
+
+def _resolved() -> tuple[Path, str]:
+    """Memoized ``(path, source)``. First call runs the 3-tier resolution (one git
+    call); subsequent calls return the cached tuple."""
+    global _RESOLVED
+    if _RESOLVED is None:
+        _RESOLVED = _resolve_vault_root()
+    return _RESOLVED
+
+
+def __getattr__(name: str):  # PEP 562 — fired only for names NOT in module globals
+    if name == "VAULT_ROOT":
+        return _resolved()[0]
+    if name == "_RESOLUTION_SOURCE":
+        return _resolved()[1]
+    # True iff resolution fell through to the computed external-store default (env
+    # unset AND no git-common-dir config pin).
+    if name == "VAULT_ROOT_IS_DEFAULT":
+        return _resolved()[1] == "default"
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 if __name__ == "__main__":  # pragma: no cover - thin discoverability CLI
     # ``python -m scripts.lib._vault_paths``        → human-readable (path + source)
     # ``python -m scripts.lib._vault_paths --path`` → just the resolved path (for $() capture)
+    _vault_root, _resolution_source = _resolved()
     if "--path" in sys.argv[1:]:
-        _stdout(str(VAULT_ROOT))
+        _stdout(str(_vault_root))
     else:
-        if _RESOLUTION_SOURCE == "env":
+        if _resolution_source == "env":
             _source = f"{_ENV_VAR} env var"
-        elif _RESOLUTION_SOURCE == "config":
+        elif _resolution_source == "config":
             _source = f"git-common-dir config file (<git-common-dir>/{_CONFIG_REL})"
         else:
             _source = f"computed external-store default (base {resolve_base()})"
-        _stdout(f"vault-root: {VAULT_ROOT}")
+        _stdout(f"vault-root: {_vault_root}")
         _stdout(f"source:     {_source}")
