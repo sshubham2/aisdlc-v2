@@ -96,6 +96,20 @@ Then:
 
 Escape-hatch shape (audit-required): `<YYYY-MM-DD HH:MM> DEVIATION: WORKTREE=skip — rationale: <text>`.
 
+### Worktree lifecycle (L-2 — who owns `$wt` when)
+
+```
+/slice          creates $wt + branch slice/NNN-<name>
+/build-slice    edits in $wt; leaves it UNCOMMITTED at exit (by contract)
+/code-review    reads the uncommitted diff in $wt
+/validate-slice tests the uncommitted code in $wt
+/reflect        vault-only (archives the slice folder; $wt untouched, still uncommitted)
+/commit-slice   stages + commits the $wt branch, merges/pushes per flags, removes $wt
+```
+**Re-entry after a `/validate-slice` FAIL:** the worktree is RESUMED, never recreated — case 1 above applies
+(worktree exists → verify branch → proceed). Re-enter at Step 1 and re-plan only the failing surface (Step 3
+approval still gates the new edits); the prior uncommitted work in `$wt` is the base, not an error.
+
 ## Step 1: Load full slice context
 
 State briefly:

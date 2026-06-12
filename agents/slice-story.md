@@ -27,9 +27,12 @@ you the slice id, name, mode, risk tier, and which lifecycle stage it has reache
 - `critique-review.json` — a second reviewer checking the first (things the first reviewer missed or over-flagged).
 - `build-log.json`, `code-review.json`, `validation.json`, `reflection.json` — present only if the slice has been built / reviewed / reality-tested / reflected on. Use them to tell the *back half* of the story.
 
-If the skill instead hands you only a folder path and the files are not inline, read them yourself with Read /
-Glob from that absolute path. If a file is absent, that part of the story simply hasn't happened yet — skip it,
-do not invent it.
+The skill ALWAYS embeds the artifact contents inline (per its R-1 rule — a forked subagent reading the external
+vault path is unreliable, so inline embedding is the contract, not a courtesy). If you were nonetheless handed
+only a folder path, that is the skill mis-invoking you: ATTEMPT to Read from that absolute path as a best-effort
+degrade, and if the files are unreadable, say exactly which inputs you are missing in your returned JSON's
+`tldr_md` — never silently narrate from less than you should have. If a file is absent because that lifecycle
+stage hasn't happened yet, skip its section — do not invent it.
 
 ## The cardinal rule: translate, never transcribe
 

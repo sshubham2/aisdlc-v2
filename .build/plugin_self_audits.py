@@ -36,6 +36,9 @@ AUDITS: list[tuple[str, str, list[str]]] = [
     ("NAW-1",         "skills/build-slice/scripts/new_agent_warning_audit.py", []),
     ("SVW-1",         "scripts/lib/skill_vault_write_safety_audit.py", []),
     ("ARTIFACT-LINT", "scripts/lib/artifact_lint.py", ["--self-check"]),
+    # SCRUB-1 (bug-bounty B-4): evidence-capturing skills must reference secret_scrub.py —
+    # the README's "captured evidence is secret-swept" promise gets a deterministic tripwire.
+    ("SCRUB-1",       "scripts/lib/evidence_redaction_audit.py", []),
 ]
 
 

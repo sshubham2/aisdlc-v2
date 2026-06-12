@@ -21,6 +21,8 @@ Exit codes:
     0  rendered
     1  bad/empty input JSON
     2  usage error (unreadable input / unwritable output)
+    3  JARGON-LEAK: pipeline jargon found in prose fields (DD-9 tripwire) — nothing
+       written; re-translate the named fields or re-run with --allow-jargon
 """
 from __future__ import annotations
 
@@ -68,6 +70,63 @@ def _md(text: str) -> str:
             joined = "<br>".join(_inline(ln) for ln in lines)
             parts.append(f"<p>{joined}</p>")
     return "\n".join(parts)
+
+
+# ------------------------------------------------------------ jargon tripwire
+# DD-9: "no pipeline jargon ever reaches the page" was prompt-enforced only; this is
+# the deterministic check. Banned tokens mirror agents/slice-story.md §Banned vocabulary.
+# Scanned: prose fields only (`ref`/`badge` are the sanctioned homes for trace tags).
+# Deliberately NOT matched: bare "overridden"/"escalated"/"deferred" (common English —
+# too false-positive-prone; the narrator prompt still bans their pipeline sense).
+_JARGON_RES = [
+    # pipeline rule codes (TRI-1, SVW-1, WIRE-1, PCA-1, DR-1, CRD-1, …)
+    re.compile(r"\b(?:TRI|SVW|WIRE|PCA|DR|CRD|CRP|WS|ETC|VAL|BCSG|SRSC|SCMD|PTFCD|DCE|NAW|STP|BCI|SUP|CAND|BC)-\d+\b"),
+    # trace ids that belong in `ref` fields, never prose (AC1, C2, R-27, ADR-014, SC-031, M-add-2)
+    re.compile(r"\b(?:AC\d+|C\d+|R-\d+|ADR-\d+|SC-\d+|BC-PROJ-\d+|M-add-\d+)\b"),
+    # pipeline plumbing vocabulary
+    re.compile(r"(?i)\b(?:blast[- ]radius|auto-advance|dispositions?|accepted-(?:pending|fixed)|"
+               r"mission[- ]brief|slice loop|the Critic|the Builder|the vault)\b"),
+]
+
+
+def _jargon_hits(text: str, where: str) -> list[tuple[str, str]]:
+    hits: list[tuple[str, str]] = []
+    if isinstance(text, str) and text:
+        for rx in _JARGON_RES:
+            for m in rx.finditer(text):
+                hits.append((where, m.group(0)))
+    return hits
+
+
+def scan_jargon(data: dict) -> list[tuple[str, str]]:
+    """Return (field-path, leaked-token) pairs across all PROSE fields."""
+    hits: list[tuple[str, str]] = []
+    hits += _jargon_hits(data.get("headline", ""), "headline")
+    hits += _jargon_hits(data.get("tldr_md", ""), "tldr_md")
+    for i, sec in enumerate(data.get("sections") or []):
+        if not isinstance(sec, dict):
+            continue
+        base = f"sections[{i}]"
+        hits += _jargon_hits(sec.get("heading", ""), f"{base}.heading")
+        hits += _jargon_hits(sec.get("body_md", ""), f"{base}.body_md")
+        hits += _jargon_hits(sec.get("tech_note_md", ""), f"{base}.tech_note_md")
+        for j, it in enumerate(sec.get("items") or []):
+            if isinstance(it, dict):
+                hits += _jargon_hits(it.get("label", ""), f"{base}.items[{j}].label")
+                hits += _jargon_hits(it.get("detail", ""), f"{base}.items[{j}].detail")
+    so = data.get("signoff") or {}
+    if isinstance(so, dict):
+        for key in ("reality_approved", "model_approved", "not_yet"):
+            for j, it in enumerate(so.get(key) or []):
+                if isinstance(it, str):
+                    hits += _jargon_hits(it, f"signoff.{key}[{j}]")
+                elif isinstance(it, dict):
+                    hits += _jargon_hits(it.get("what", ""), f"signoff.{key}[{j}].what")
+                    hits += _jargon_hits(it.get("by", ""), f"signoff.{key}[{j}].by")
+    for j, g in enumerate(data.get("glossary") or []):
+        if isinstance(g, dict):
+            hits += _jargon_hits(g.get("plain", ""), f"glossary[{j}].plain")
+    return hits
 
 
 # ------------------------------------------------------------------- rendering
@@ -343,6 +402,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Path to story-sections.json (default: read stdin).")
     parser.add_argument("--out", type=Path, default=None,
                         help="Output story.html path (default: story.html beside the input, or ./story.html).")
+    parser.add_argument("--allow-jargon", action="store_true",
+                        help="Render despite JARGON-LEAK findings (after a failed re-translate; the leak is "
+                             "reported on stderr but does not block).")
     args = parser.parse_args(argv)
 
     try:
@@ -362,6 +424,17 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(data, dict) or not data:
         sys.stderr.write("render_story: input JSON is empty or not an object.\n")
         return 1
+
+    leaks = scan_jargon(data)
+    if leaks:
+        for where, token in leaks:
+            sys.stderr.write(f"JARGON-LEAK: {where}: {token!r}\n")
+        if not args.allow_jargon:
+            sys.stderr.write(
+                f"render_story: {len(leaks)} pipeline-jargon leak(s) in prose fields — ask the narrator to "
+                "re-translate the named fields (refs belong in `ref`, not prose), or re-run with --allow-jargon.\n"
+            )
+            return 3
 
     out = args.out
     if out is None:

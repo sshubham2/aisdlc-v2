@@ -52,8 +52,9 @@ If the injection returns empty and no argument was supplied, ask with `AskUserQu
 - **From argument `R-NN`**: find the candidate whose `source.ref == R-NN`; use its blocking assumptions.
 - **From argument `all`**: queue all candidates with `status in [candidate, spiking]` that have unproven blocking assumptions.
 
-If there are zero unproven blocking assumptions: write a skip note, set `progress: design` in candidates.json,
-advance to `/design-slice`.
+If there are zero unproven blocking assumptions: record the skip in the slice's `milestone.json` —
+`current_focus: "Spike skipped — all blocking assumptions already proven (<refs>)"` (that is the deliberate-skip
+audit trail; no spike artifact is written) — set `progress: design` in candidates.json, advance to `/design-slice`.
 
 ## Step 2 — design each spike
 
@@ -228,7 +229,8 @@ $PY -c "import json,sys; sd=sys.argv[1]; f=(sd+'/design.json') if sd else None; 
 - **Must-verify invariants** (`cross_domain_transfer.invariants[].status == "must-verify"`) — the borrowed
   pattern's preconditions that were imported on faith. Each must end at `holds` (proven) or `fails` (drop it).
 
-**If both lists are empty:** nothing to adjudicate. Write a one-line skip note, do not log a gate row, advance to
+**If both lists are empty:** nothing to adjudicate. Record the skip in `milestone.json` `current_focus`
+("Design spike skipped — no pending disagreements / must-verify invariants"), do not log a gate row, advance to
 `/critique` via the Skill tool.
 
 ## Step D2–D4 — spike each target
@@ -260,7 +262,8 @@ with a single writer here, so `Edit` is safe):
   `/design-slice`** to re-synthesize with the failed branch dropped. **Do NOT block the candidate** — the
   *premise* already passed the step-0 feasibility spike; only this specific composition failed. Tell the user
   which branch reality rejected and why, then invoke `/design-slice` via the Skill tool (it re-runs Step 2
-  synthesis excluding the loser).
+  synthesis excluding the loser, reading the full proposals from the slice's `design-proposals.json` — not
+  from conversation memory).
 
 ## Step D6b — record gate outcome (measurement spine)
 

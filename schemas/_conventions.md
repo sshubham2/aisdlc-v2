@@ -49,6 +49,32 @@ enforces them (required keys + known enums + version-skew WARN).
 | `<vault>/slices/slice-NNN/validation.json` | validation | per-AC PASS/FAIL + evidence |
 | `<vault>/slices/slice-NNN/reflection.json` | reflection | retrospective + critic calibration |
 
+## milestone.json `stage` — the canonical state machine (L-1)
+
+`stage` is the slice's **coarse current phase**, written by whichever skill last touched it. Canonical sequence
+(skip paths in parentheses):
+
+```
+spike → design → critique (skipped on low-tier: progress[] gets {step:"critique", done:"skipped"})
+      → critique-review (only when DR-1 mandatory) → build → code-review → validate → complete
+```
+
+Two writers may legitimately set the SAME stage value — `/risk-spike` sets `design` on *entering* the design
+phase and `/design-slice` keeps `design` on finishing it. That is by design: **`stage` is coarse; `next_action`
+is the precise pointer. Resume logic MUST key on `next_action` (and `on_resume`), never on `stage` alone.**
+`complete` means reflected + archived — the CODE may still be uncommitted until `/commit-slice` (the
+archive-before-commit window; see `/reflect` Step 6).
+
+## gate-log.json — single emitter rule (L-4)
+
+Rows in `<vault>/gate-log.json` are produced ONLY by `scripts/lib/gate_log.py` piped into `vault_edit append`
+— never hand-authored. The script is the schema authority: valid gate names = its `GATE_CONTACT` keys, row
+shapes = `--kind verdict` / `--kind miss` (see its docstring; schema-by-example: `examples/gate-log.json`
+bundled with the writing skills). `design-tournament` is INFORMATIONAL (raises no findings — readers exclude it
+from quiet/lighten math). Per-gate flags differ legitimately: `--findings-real/--findings-noise` (critique
+TRI-1 precision), `--approach-divergence` (design-tournament), `--cross-domain` (risk-spike / validate-slice),
+`--severity/--caught-by/--ref` (miss rows from `/reflect`).
+
 Still markdown/other in v2: `./CLAUDE.md` (markdown), `diagnosis.html` (html), `tests/**`, `VERSION`, allowlists.
 Heavy-mode artifacts (requirements, threat-model, non-functional) and logs (lessons-learned, drift-log, sync-log,
 `_index`) follow the same pattern. The full set of example keys is enumerated in

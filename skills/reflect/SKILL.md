@@ -182,6 +182,14 @@ Schema by example: `examples/milestone.json`.
 
 ## Step 6 — Auto-archive this slice
 
+> **The archive-before-commit window (DD-20).** From this step until the user runs `/commit-slice`, the slice
+> folder lives in `slices/archive/` while its CODE is still **uncommitted** in the worktree. In that window
+> there is NO active slice (`active_slice.py` excludes `archive/`) — `/pulse` shows "pre-slice" and a premature
+> `/slice` would start a new cut on top of unlanded work. That is why Step 8 leads with "run `/commit-slice`";
+> `/commit-slice` finds the slice via `latest_archived_slice.py`, and `stranded_slice_audit` flags the window if
+> it goes stale. Do not "fix" this by archiving later — "reflected ⇒ archived" keeps the live `slices/` dir
+> meaning exactly "work in flight".
+
 After `reflection.json` is written and `milestone.json` is complete:
 
 0. **Lint the slice's artifacts (3.18.7)** before archiving — a malformed / enum-invalid artifact must not be

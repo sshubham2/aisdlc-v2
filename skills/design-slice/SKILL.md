@@ -114,6 +114,16 @@ Mode: <Minimal | Standard | Heavy>   Risk tier: <low | medium | high>
 JSON object. If a designer errors or returns null, synthesize from those that returned; if **all** fail, fall
 back to the "Single flight" inline design above and note it.
 
+**Persist the raw proposals BEFORE synthesizing (tournament path only).** Raw-Write
+`<vault>/slices/slice-NNN-<name>/design-proposals.json`:
+```json
+{ "_schema": "aisdlc/design-proposals@1", "slice": "slice-NNN", "at": "<ts>",
+  "proposals": [ <each designer's returned design-proposal object, verbatim> ] }
+```
+The tournament is the most expensive generation step in the loop, and `design.json` keeps only one-line
+summaries — without this file, a design-spike **NO-GO re-synthesis** (Step 8) after a compaction/restart has
+nothing to re-synthesize from. Per-slice artifact, single writer → raw-write is correct.
+
 ## Step 2 — reality-grounded synthesis (tournament path; sighted)
 
 You now hold 2–3 independent proposals. Compose **one** design — this is the hard 20%, not the fan-out.
@@ -272,7 +282,9 @@ invariants, logs a **high** reality-contact gate row, and then:
 - **GO** (composition holds) → it advances to `/critique`.
 - **NO-GO** (a decidable disagreement or invariant failed against reality) → it hands back to `/design-slice` to
   **re-synthesize** with the loser dropped (the *premise* already passed the step-0 feasibility spike — only this
-  specific composition failed). Re-run Step 2 with the failed branch excluded.
+  specific composition failed). Re-run Step 2 with the failed branch excluded, sourcing the full proposals from
+  `<slice>/design-proposals.json` (written in Step 1 — do NOT rely on conversation memory; after a
+  compaction/restart that file is the only complete record). Do NOT re-spawn the designers.
 
 **Single-flight low-tier slices never reach Step 8.**
 

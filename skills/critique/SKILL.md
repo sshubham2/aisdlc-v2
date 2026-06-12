@@ -99,7 +99,10 @@ the narrator on a skipped slice (there is no review to narrate).
 
 ## Prerequisite check
 
-- Active slice folder found and `design.json` exists → continue.
+- Active slice folder found and `design.json` exists **and parses as JSON** → continue. (Existence alone is not
+  enough — a malformed file passes an existence gate and then explodes mid-skill in the agent prompt. Check:
+  `$PY -c "import json,sys; json.load(open(sys.argv[1],encoding='utf-8'))" <slice>/design.json` — non-zero →
+  STOP: _"design.json is corrupted (not valid JSON) — fix or regenerate it via /design-slice."_)
 - `design.json` missing → STOP: _"Run `/design-slice` first."_
 
 ## Step 1 — gather Critic context
@@ -279,6 +282,16 @@ Once the user ratifies, compute **final verdict** mechanically:
 - Else any `accepted-pending` → **NEEDS-FIXES**
 - Else (only `accepted-fixed` / `overridden` / `deferred`) → **CLEAN**
 - Zero findings → **CLEAN**
+
+**Deferred BLOCKER qualification (DD-15).** A `deferred` disposition on a **blocker**-severity finding is the
+user knowingly building on top of an unresolved blocker — legitimate, but never an unqualified green:
+- its rationale MUST name the concrete deferral target (a slice id or `SC-NNN` backlog candidate — "later" is
+  not a target; re-ask if missing);
+- list the ids in the triage object as `"deferred_blockers": ["C1", …]` (omit when none);
+- the Step 5 milestone `current_focus` MUST carry the qualifier, e.g. `"CLEAN — 1 deferred blocker (C1 → SC-031)"`,
+  so `/pulse` and a resume never render this as a plain clean.
+(`overridden` blockers need no qualifier — the user judged the finding not-real, which is what the gate-log
+precision row records.)
 
 Update `critique.json` — write the `"triage"` object:
 ```json

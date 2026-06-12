@@ -111,8 +111,11 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/render_story.py" \
     --out "<target-slice>/story.html"
 ```
 
-`render_story.py` is deterministic, stdlib-only, and stamps the generation time. On a non-zero exit, report the
-stderr and stop — do not hand-assemble HTML.
+`render_story.py` is deterministic, stdlib-only, and stamps the generation time. **Exit 3 = JARGON-LEAK** (the
+deterministic no-pipeline-jargon tripwire): stderr names each leaking field + token. Ask the narrator to
+re-translate exactly those fields (refs belong in `ref`, never prose), rewrite `story-sections.json`, re-render —
+**once**. If it still exits 3, re-run with `--allow-jargon` and tell the user which tokens leaked. On any other
+non-zero exit, report the stderr and stop — do not hand-assemble HTML.
 
 ## Step 5 — deliver the report to the user
 
