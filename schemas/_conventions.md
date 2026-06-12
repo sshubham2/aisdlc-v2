@@ -1,7 +1,10 @@
-# v2 vault-artifact JSON conventions (rollout #1)
+# v2 vault-artifact JSON conventions
 
 Every vault artifact is JSON. Markdown is kept ONLY for `./CLAUDE.md` (harness-loaded) and `diagnosis.html`
-stays HTML. Each `schemas/<artifact>.example.json` is a documented, realistic instance — **the schema by example**.
+stays HTML. The **schema by example** is the canonical instance for each artifact type: the bulk live in
+`schemas/artifact-examples.json` (one key per type), and each is also bundled per-skill at
+`skills/<name>/examples/<artifact>.json` (generated from that file by `.build/aggregate.py`). `artifact_lint`
+enforces them (required keys + known enums + version-skew WARN).
 
 ## The pattern: structure-fields + markdown-body-strings
 - Machine-readable parts are real JSON fields (status, ids, scores, refs, dates, enums, arrays).
@@ -48,4 +51,5 @@ stays HTML. Each `schemas/<artifact>.example.json` is a documented, realistic in
 
 Still markdown/other in v2: `./CLAUDE.md` (markdown), `diagnosis.html` (html), `tests/**`, `VERSION`, allowlists.
 Heavy-mode artifacts (requirements, threat-model, non-functional) and logs (lessons-learned, drift-log, sync-log,
-`_index`) follow the same pattern — schemas to be added in the next batch.
+`_index`) follow the same pattern. The full set of example keys is enumerated in
+`schemas/artifact-examples.json`; `artifact_lint --self-check` lints every one in CI.

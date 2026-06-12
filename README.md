@@ -28,7 +28,7 @@ pollutes your source tree, and every project gets its own isolated, worktree-sha
 |------|-----|-------|
 | **Claude Code** | the host runtime | desktop / CLI / IDE |
 | **Python 3** | the bundled tooling scripts | resolved automatically; see [Python interpreter](#python-interpreter) to override |
-| **PyYAML** | only `/diagnose` (+ a YAML fallback in `slice-candidates`) | installed for you by `/ai-sdlc:setup`; everything else is stdlib-only |
+| **PyYAML** | `/diagnose` + `/bug-hunt` (shared pass/finding tooling) + a YAML fallback in `slice-candidates` | installed for you by `/ai-sdlc:setup`; everything else is stdlib-only |
 | **git** | recommended | gives each repo a stable, worktree-shared vault key (works without it, but the vault then keys on the current directory) |
 | **code-review-graph** *(recommended)* | code-graph queries (blast-radius, reachability) in ~15 skills + the CRG MCP server | installed & registered by `/ai-sdlc:setup`; absent → graceful degrade |
 
