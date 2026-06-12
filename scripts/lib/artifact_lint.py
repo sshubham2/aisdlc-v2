@@ -69,6 +69,9 @@ KNOWN_ENUMS: dict[tuple[str, str], frozenset[str]] = {
 # by artifact type. e.g. the variant blocks a mission-brief carries only when opted in.
 OPTIONAL_KEYS: dict[str, frozenset[str]] = {
     "mission-brief": frozenset({"architectural_layers", "exploratory_charters"}),
+    # slice-001: the spike->design evidence cross-ref is array-shaped, so it NEEDS this
+    # entry — without it every design.json that omits the block fails lint (critique B1).
+    "design": frozenset({"assumptions_proven"}),
 }
 
 
