@@ -2,7 +2,7 @@
 name: drift-check
 description: "Audits vault claims against code reality and flags divergence in four categories: DRIFT (blocker), UNSPECIFIED CODE (major), STALE CLAIM (major), and STALE DOC (major — a /product-doc-generated doc that no longer matches the code surface it documented, via the doc-manifest.json provenance anchor). Runs in fast mode (<2s, for the /build-slice pre-finish gate) or full mode (on-demand audit). Appends findings to drift-log.json via the SVW-1 safe channel. Detect-only, all-modes counterpart to the Heavy-mode-only /sync skill."
 when_to_use: "Trigger phrases: /drift-check, 'check for drift', 'vault sync check', 'is the vault still accurate', 'audit vault vs code'. Use in --fast mode as the /build-slice pre-finish gate (DCE-1), or on-demand (full mode) before starting a new slice or after external changes. (Not a git pre-commit hook — nothing installs one; hooks/ is SessionStart-only.)"
-argument-hint: "[--fast] [--resolve] [path]"
+argument-hint: "[--fast] [--resolve] [--status] [path]"
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion, Skill
 ---
 
@@ -28,6 +28,15 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" list --vault "$AI_SDLC
 
 - `--fast`: scope to files changed since last commit (from injected diff above); target <2s; skip deep graph traversal.
 - `--resolve`: load existing drift findings, walk user through each interactively (see Step 5).
+- `--status` (slice-002): READ-ONLY current-state view — fold the append-only `drift-log.json` into what is
+  knowingly divergent RIGHT NOW. No detection runs, no vault writes, <2s. Run and show verbatim:
+  ```bash
+  $PY "${CLAUDE_SKILL_DIR}/scripts/drift_status.py" --vault "$AI_SDLC_VAULT_ROOT"
+  ```
+  It reports ACCEPTED-DRIFT (with rationale + age + any re-detections — an acceptance covers recurrence and is
+  never silently revoked), OPEN (incl. re-opened: a detection newer than a resolution falsifies it), RESOLVED,
+  and UNFOLDABLE (entries without a finding identity or a parseable timestamp, verbatim — never dropped).
+  `--json` for machine output. Then STOP — `--status` composes with nothing else.
 - `<path>` argument: scope the audit to that component/contract folder.
 - Default: full audit (all accepted ADRs + active slices; Heavy mode adds components/contracts/schemas).
 
