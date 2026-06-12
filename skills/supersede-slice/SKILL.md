@@ -32,7 +32,8 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VA
 If `<archived-slice-id>` was supplied as an argument, check it exists:
 
 ```bash
-test -d "$AI_SDLC_VAULT_ROOT/slices/archive/<archived-slice-id>"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+test -d "$VAULT/slices/archive/<archived-slice-id>"
 ```
 
 If not found: STOP. List available archived slices via Glob (`<vault>/slices/archive/*/`) and tell the user which IDs are available.

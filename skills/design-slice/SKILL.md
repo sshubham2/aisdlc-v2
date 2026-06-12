@@ -51,7 +51,8 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/grep_vault.py" --vault "$AI_SDLC_VAUL
 Before designing, run the ephemeral project-frame so the design is direction-aware:
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$AI_SDLC_VAULT_ROOT/slices/<active-slice>"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$VAULT/slices/<active-slice>"
 ```
 
 Emits ≤40 lines: **Identity** / **Trajectory** / **Impact**. First line is an adversarial ATTACK-LENS preamble —

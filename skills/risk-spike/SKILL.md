@@ -190,13 +190,14 @@ One row per slice into `<vault>/gate-log.json` (roadmap Theme 8 / plan Phase 0).
 # findings-count: number of assumptions that came back NO-GO (FAILED)
 # --cross-domain (Phase 2.3): set ONLY when re-spiking a cross-domain-transfer invariant — i.e. design.json
 # already exists and carries a cross_domain_transfer (absent on the normal step-0 spike, before any design).
-SLICE_DIR="$AI_SDLC_VAULT_ROOT/slices/<slice-NNN-name>"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+SLICE_DIR="$VAULT/slices/<slice-NNN-name>"
 CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate risk-spike --slice <slice-NNN-name> \
     --verdict <go|no-go|conditional> --findings-count <N failed> $CD \
   | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+        --vault "$VAULT" --file gate-log.json --array entries --stdin
 ```
 
 ---

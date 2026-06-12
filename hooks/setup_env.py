@@ -9,24 +9,25 @@ backslashes (`C:\\Users` -> `C:Users`), PowerShell-written config files carry a
 UTF-8 BOM, and the PATH `C:`-vs-`:` separator collides. In Python these are
 `str.replace`, `shlex.quote`, `find_spec`, and `utf-8`/`-sig` - no traps.
 
-Contract (same exported vars as the old hook, so nothing downstream changes):
-  - Persists POSIX `export` lines to $CLAUDE_ENV_FILE (git-bash sources it) inside ONE
+Contract:
+  - Persists ONLY `export PY` / `export CRG` to $CLAUDE_ENV_FILE (git-bash sources it) inside ONE
     marked, idempotently-rewritten managed block (4.6.2 — the old `open(..., "a")` appended
     duplicates on every clear/compact since the file persists across re-fires):
       # >>> ai-sdlc managed (PY/CRG/vault) >>>
       export PY=<forward-slash abs interpreter>
       export CRG=<forward-slash abs code-review-graph entry point>   (when resolvable)
-      export AI_SDLC_VAULT_ROOT=<forward-slash vault root>           (when resolvable)
       # <<< ai-sdlc managed <<<
     Non-ai-sdlc lines other tools wrote to the shared file are preserved.
+  - 4.6.1: the hook does NOT export AI_SDLC_VAULT_ROOT. Freezing a session-start-cwd value made
+    mid-session work on a DIFFERENT repo silently route vault writes to the FIRST repo's vault.
+    The vault now resolves PER-INVOCATION (skills use `${AI_SDLC_VAULT_ROOT:-$($PY
+    .../_vault_paths.py --path)}`; scripts fall back to their own cwd-keyed VAULT_ROOT). An
+    explicit user-set AI_SDLC_VAULT_ROOT is still honored. `_write_env_block` still STRIPS a
+    legacy exported AI_SDLC_VAULT_ROOT (via _OUR_VARS) so an upgrade de-leaks the env-file.
   - 4.6.3 short-circuit: a re-fire whose managed block already names a PY that still exists
     returns immediately — zero re-probe subprocesses (cuts the per-clear/compact tax).
-  - 3.19.8a: the deliberate `WARN` `_vault_paths` emits when keying the vault on a non-git
-    cwd is RELAYED to stdout (was captured-and-discarded), so the user sees the nag.
-  - 4.6.1 NOTE (deferred): the hook still exports AI_SDLC_VAULT_ROOT (a session-frozen,
-    cwd-derived value). Removing it — so the vault resolves per-invocation and mid-session
-    work on a different repo can't mis-route — needs ~9 bare-consumer skills moved to the
-    `${AI_SDLC_VAULT_ROOT:-$($PY .../_vault_paths.py --path)}` fallback first; tracked, not done.
+  - 3.19.8: the deliberate `WARN` `_vault_paths` emits when keying the vault on a non-git cwd
+    now surfaces per-invocation when a skill resolves the vault (was swallowed by the hook).
   - Install moved to /ai-sdlc:setup. Here we only PROBE deps; if missing, emit a
     one-line nudge to stdout (SessionStart context Claude relays). Opt back into the
     old silent install with AI_SDLC_AUTO_INSTALL=1.
@@ -124,30 +125,10 @@ def resolve_crg(interp: str) -> str | None:
     return "code-review-graph" if shutil.which("code-review-graph") else None
 
 
-def resolve_vault_root(interp: str, plugin_root: str) -> tuple[str | None, str | None]:
-    """Delegate to the leaf resolver `_vault_paths.py --path` (the established interface).
-    Returns ``(vault_path, warn_to_relay)``. Captured as BYTES, decoded utf-8, leading BOM
-    stripped defensively.
-
-    3.19.8a: `_vault_paths` deliberately emits a loud ``WARN`` on stderr when it has to key
-    the vault on a NON-git cwd (the "run `git init` or set AI_SDLC_VAULT_ROOT" nag). The old
-    hook captured-and-DISCARDED that stderr, swallowing the nag. We now RELAY the WARN line(s)
-    to the hook's stdout (the SessionStart context) so the user actually sees it. INFO lines
-    (env/config resolution) are NOT relayed \u2014 only the deliberate WARN."""
-    vp = os.path.join(plugin_root, "scripts", "lib", "_vault_paths.py")
-    if not os.path.isfile(vp):
-        return None, None
-    try:
-        out = subprocess.run([interp, vp, "--path"], capture_output=True, timeout=25)
-        if out.returncode != 0:
-            return None, None
-        val = _fwd(out.stdout.decode("utf-8", "replace").lstrip("\ufeff").strip())
-        err = out.stderr.decode("utf-8", "replace")
-        warn_lines = [ln for ln in err.splitlines() if "WARN" in ln]
-        warn = ("\n".join(warn_lines) + "\n") if warn_lines else None
-        return (val or None), warn
-    except Exception:
-        return None, None
+# NOTE (4.6.1): the hook used to resolve + export AI_SDLC_VAULT_ROOT here via
+# `_vault_paths.py --path`. That is GONE \u2014 the vault now resolves per-invocation (see main()).
+# `_vault_paths` still emits its deliberate cwd-keying WARN, which now surfaces to the user when a
+# skill resolves the vault, rather than being captured-and-discarded by the hook (3.19.8).
 
 
 def _existing_managed_py(env_file: str) -> str | None:
@@ -257,14 +238,18 @@ def main() -> None:
     if crg:
         lines.append(f"export CRG={shlex.quote(_fwd(crg))}\n")
 
-    vault, vault_warn = resolve_vault_root(chosen, plugin_root)
-    if vault:
-        lines.append(f"export AI_SDLC_VAULT_ROOT={shlex.quote(vault)}\n")
+    # 4.6.1: the hook NO LONGER resolves or exports AI_SDLC_VAULT_ROOT. Freezing a session-start-cwd
+    # value made mid-session work on a DIFFERENT repo (cd / `/bug-hunt <path>` / `/diagnose <path>`)
+    # silently route every vault write to the FIRST repo's vault (the env var has tier-1 precedence in
+    # `_vault_paths`). The vault now resolves PER-INVOCATION: each skill bash block uses the
+    # `${AI_SDLC_VAULT_ROOT:-$($PY .../_vault_paths.py --path)}` fallback, and the scripts fall back to
+    # their own cwd/git-keyed VAULT_ROOT. An EXPLICIT user-set AI_SDLC_VAULT_ROOT is still honored
+    # (inherited from the shell). `_write_env_block` still STRIPS any legacy exported AI_SDLC_VAULT_ROOT
+    # (via _OUR_VARS) so an upgrade from the old hook de-leaks the env-file. The deliberate cwd-keying
+    # WARN now surfaces per-invocation when a script resolves the vault (3.19.8, structurally).
 
     _write_env_block(env_file, lines)  # 4.6.2 idempotent managed-block write (was blind append)
 
-    if vault_warn:
-        sys.stdout.write(vault_warn)  # 3.19.8a relay the deliberate cwd-keyed vault WARN
     if not deps_ok:
         sys.stdout.write(NUDGE_DEPS + "\n")  # stdout = SessionStart context for Claude
 

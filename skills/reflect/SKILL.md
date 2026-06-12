@@ -183,7 +183,8 @@ After `reflection.json` is written and `milestone.json` is complete:
 0. **Lint the slice's artifacts (3.18.7)** before archiving — a malformed / enum-invalid artifact must not be
    frozen into the archive:
    ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --dir "$AI_SDLC_VAULT_ROOT/slices/slice-NNN-<name>" --skip-unknown
+   VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --dir "$VAULT/slices/slice-NNN-<name>" --skip-unknown
    ```
    Non-zero → fix the offending artifact (required key / known enum), then proceed to the move.
 1. **Move the slice folder** (R-32 seam-routed, ADR-103):

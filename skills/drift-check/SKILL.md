@@ -53,7 +53,8 @@ For each vault claim, check against code reality. Prefer CRG MCP tools when avai
 malformed / enum-invalid artifact (e.g. an unknown `verdict`, a missing required key) is vault↔contract drift the
 claim checks won't catch. In `--fast` mode scope it to the active slice folder; full mode can sweep the vault:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --dir "$AI_SDLC_VAULT_ROOT/slices/slice-NNN-<name>" --skip-unknown
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --dir "$VAULT/slices/slice-NNN-<name>" --skip-unknown
 ```
 Non-zero → surface each violation as a STALE CLAIM finding (Step 4). Detect-only; `--fast` writes nothing.
 

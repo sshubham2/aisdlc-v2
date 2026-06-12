@@ -18,7 +18,8 @@ Mine Critic miss patterns from archived reflections, produce targeted prompt-upd
 Archive must have >= 5 slices (can't find patterns in fewer). Run this Bash gate:
 
 ```bash
-count=$(ls -t "${AI_SDLC_VAULT_ROOT}/slices/archive/" 2>/dev/null | wc -l)
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+count=$(ls -t "${VAULT}/slices/archive/" 2>/dev/null | wc -l)
 if [ "$count" -lt 5 ]; then
   echo "INSUFFICIENT_ARCHIVE count=$count"
 fi
@@ -36,7 +37,8 @@ Parse `--window N` from invocation args; default N=15.
 
 List the last N archived slice folders:
 ```bash
-ls -t "${AI_SDLC_VAULT_ROOT}/slices/archive/" | head -N
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+ls -t "${VAULT}/slices/archive/" | head -N
 ```
 
 For each folder, read `<vault>/slices/archive/<folder>/reflection.json`. Extract the `critic_calibration` and `missed_by_critic` fields. Concatenate into one block tagged by slice id.
@@ -69,7 +71,8 @@ model-on-model gates/checks that have added no value. Hand the agent the recent 
 **model-on-model gates ONLY** — it computes precision and quiet-rate and proposes any lightening:
 
 ```bash
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; M={'critique','critique-review','code-review'}; print(json.dumps([e for e in rows if e.get('gate') in M and e.get('kind') != 'miss'],indent=2))" "$AI_SDLC_VAULT_ROOT"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; M={'critique','critique-review','code-review'}; print(json.dumps([e for e in rows if e.get('gate') in M and e.get('kind') != 'miss'],indent=2))" "$VAULT"
 ```
 
 **HARD RULE — the reality spine never lightens.** The filter passes ONLY `critique` / `critique-review` /
@@ -87,7 +90,8 @@ reflection mining in 1a–1d — a *post-ship* miss (`caught_by` in `post-ship`/
 error that passed every gate, the **highest-signal ADD evidence** there is. Extract them for the agent prompt:
 
 ```bash
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; print(json.dumps([e for e in rows if e.get('kind')=='miss'],indent=2))" "$AI_SDLC_VAULT_ROOT"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; print(json.dumps([e for e in rows if e.get('kind')=='miss'],indent=2))" "$VAULT"
 ```
 
 The agent weighs these alongside the reflection misses when proposing ADD checks (the `>=3-distinct-slices` threshold
@@ -261,9 +265,10 @@ Accepted checks are now live for THIS project via the overlay. To improve the **
 next plugin version, the maintainer needs the log. Print the suggestion + the absolute path to attach:
 
 ```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
 echo "Mail your calibration log to the maintainer (s2.shubh2@gmail.com) so recurring checks can be folded into the"
 echo "base agents/critique.md in the next plugin version. Attach:"
-echo "${AI_SDLC_VAULT_ROOT}/critic-calibration-log.json"
+echo "${VAULT}/critic-calibration-log.json"
 ```
 
 This is a **suggestion, not a gate** — the project already benefits now via the vault overlay; mailing the log is only

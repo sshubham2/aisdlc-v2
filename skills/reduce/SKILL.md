@@ -24,12 +24,12 @@ You audit the vault and code for over-engineering, then present ranked reduction
 
 Active project mode (for threshold selection):
 ```!
-cat "$AI_SDLC_VAULT_ROOT/triage.json" 2>/dev/null | $PY -c "import sys,json; t=json.load(sys.stdin); print(t.get('mode','unknown'))" 2>/dev/null || echo "unknown"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"; cat "$VAULT/triage.json" 2>/dev/null | $PY -c "import sys,json; t=json.load(sys.stdin); print(t.get('mode','unknown'))" 2>/dev/null || echo "unknown"
 ```
 
 Concept scope (for component-count comparison):
 ```!
-cat "$AI_SDLC_VAULT_ROOT/concept.json" 2>/dev/null | $PY -c "import sys,json; c=json.load(sys.stdin); print('name:', c.get('name','?')); print('scope:', c.get('scope','?')); print('constraints:', len(c.get('constraints', [])))" 2>/dev/null || echo "concept unavailable"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"; cat "$VAULT/concept.json" 2>/dev/null | $PY -c "import sys,json; c=json.load(sys.stdin); print('name:', c.get('name','?')); print('scope:', c.get('scope','?')); print('constraints:', len(c.get('constraints', [])))" 2>/dev/null || echo "concept unavailable"
 ```
 
 Vault file inventory (count by type):
@@ -63,8 +63,9 @@ Collect:
 - Concept scope from `<vault>/concept.json` — compare intended breadth vs actual component count
 
 ```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
 # Check unreferenced ADRs (example for one ADR — repeat for each)
-grep -r "ADR-NNN" "$AI_SDLC_VAULT_ROOT" --include="*.json" -l 2>/dev/null
+grep -r "ADR-NNN" "$VAULT" --include="*.json" -l 2>/dev/null
 ```
 
 ## Step 3 — code metrics (CRG)
@@ -189,8 +190,9 @@ After a reduction slice ships, note the over-engineering pattern that led to the
 `vault_edit` (SVW-1 — never a raw Write/Edit on append-only files):
 
 ```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-    --file "$AI_SDLC_VAULT_ROOT/lessons-learned.json" \
+    --vault "$VAULT" --file lessons-learned.json \
     --array entries \
     --content-file <tmp_lesson_json>
 ```
