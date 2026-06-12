@@ -140,3 +140,23 @@ def test_update_missing_id_exit2(run_script, vault):
     r = _ve(run_script, vault, "update", "--file", f, "--array", "rows",
             "--id", "NOPE", "--set", "x=1")
     assert r.returncode == 2
+
+
+def test_append_create_stamps_plugin_version(run_script, vault):
+    # 4.5: a brand-new file created via append is stamped with _plugin_version
+    f = "new.json"
+    r = _ve(run_script, vault, "append", "--file", f, "--array", "xs", "--json", "[1]")
+    assert r.returncode == 0, r.stderr
+    data = json.loads((vault / f).read_text())
+    assert data.get("_plugin_version")  # present + non-empty
+
+
+def test_append_existing_not_restamped(run_script, vault):
+    # only CREATE stamps; appending to an existing un-stamped file does not add it
+    f = "pre.json"
+    (vault / f).write_text(json.dumps({"xs": [1]}))  # pre-existing, no _plugin_version
+    r = _ve(run_script, vault, "append", "--file", f, "--array", "xs", "--json", "2")
+    assert r.returncode == 0, r.stderr
+    data = json.loads((vault / f).read_text())
+    assert "_plugin_version" not in data
+    assert data["xs"] == [1, 2]

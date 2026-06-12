@@ -138,6 +138,64 @@ def _type_for(data: dict, examples: dict, forced: str | None) -> str | None:
     return None
 
 
+# ── 4.5 artifact version-skew detection (reader side) ────────────────────────────
+
+def _plugin_version() -> str | None:
+    """The running plugin's version from .claude-plugin/plugin.json (or None)."""
+    try:
+        with open(_REPO / ".claude-plugin" / "plugin.json", encoding="utf-8") as fh:
+            return json.load(fh).get("version")
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _ver_tuple(v) -> tuple:
+    """'2.22.4' -> (2, 22, 4); leading-digit-tolerant, missing parts -> 0."""
+    out = []
+    for part in str(v).split("."):
+        digits = ""
+        for ch in part:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        out.append(int(digits) if digits else 0)
+    return tuple(out)
+
+
+def _schema_major(schema) -> int | None:
+    """The integer N from an `aisdlc/<key>@N` schema tag, or None."""
+    if not isinstance(schema, str) or "@" not in schema:
+        return None
+    digits = ""
+    for ch in schema.split("@", 1)[1].strip():
+        if ch.isdigit():
+            digits += ch
+        else:
+            break
+    return int(digits) if digits else None
+
+
+def schema_skew(data: dict, key: str, example: dict, plugin_ver: str | None) -> list[str]:
+    """Non-fatal version-skew WARNings (4.5): the artifact's `_schema` major is NEWER than the
+    one this plugin's canonical example defines (a vault written by a newer plugin), or its
+    `_plugin_version` is newer than the running plugin. Older-than-current is the benign
+    archived-artifact case and is NOT warned."""
+    warns: list[str] = []
+    if not isinstance(data, dict):
+        return warns
+    got = _schema_major(data.get("_schema"))
+    known = _schema_major(example.get("_schema"))
+    if got is not None and known is not None and got > known:
+        warns.append(f"`_schema` is {key}@{got} but this plugin knows {key}@{known} — artifact "
+                     f"written by a NEWER plugin; upgrade the plugin (vault/plugin skew).")
+    stamped = data.get("_plugin_version")
+    if stamped and plugin_ver and _ver_tuple(stamped) > _ver_tuple(plugin_ver):
+        warns.append(f"`_plugin_version` {stamped} is newer than the running plugin {plugin_ver} "
+                     f"— artifact written by a newer plugin (vault/plugin skew).")
+    return warns
+
+
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     p = argparse.ArgumentParser(
@@ -156,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
 
     examples = _load_examples()
     violations: list[str] = []
+    warnings: list[str] = []          # 4.5 version-skew (non-fatal)
+    plugin_ver = _plugin_version()
     checked = 0
 
     if args.self_check:
@@ -184,15 +244,22 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             checked += 1
             violations.extend(lint_artifact(data, key, examples[key], str(f)))
+            for w in schema_skew(data, key, examples[key], plugin_ver):
+                warnings.append(f"{f}: {w}")
 
     if args.json:
-        print(json.dumps({"checked": checked, "violations": violations}, indent=2))
-    elif violations:
-        print(f"artifact_lint: {len(violations)} violation(s) over {checked} artifact(s):")
-        for vi in violations:
-            print(f"  - {vi}")
+        print(json.dumps({"checked": checked, "violations": violations, "warnings": warnings}, indent=2))
     else:
-        print(f"artifact_lint: clean. {checked} artifact(s) conform to schema-by-example.")
+        if violations:
+            print(f"artifact_lint: {len(violations)} violation(s) over {checked} artifact(s):")
+            for vi in violations:
+                print(f"  - {vi}")
+        elif not warnings:
+            print(f"artifact_lint: clean. {checked} artifact(s) conform to schema-by-example.")
+        if warnings:  # non-fatal: surfaced, but never fails the gate
+            print(f"artifact_lint: {len(warnings)} version-skew warning(s) (non-fatal):")
+            for w in warnings:
+                print(f"  ! {w}")
     return 1 if violations else 0
 
 

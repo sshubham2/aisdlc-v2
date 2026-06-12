@@ -143,6 +143,16 @@ def _dump(data: Any) -> str:
     return json.dumps(data, **_JSON_DUMP) + "\n"
 
 
+def _current_plugin_version() -> str | None:
+    """The running plugin version from .claude-plugin/plugin.json (4.5 artifact stamping).
+    Read lazily — only when CREATING a vault file — so vault_edit's hot path is untouched."""
+    try:
+        with open(_PLUGIN_ROOT / ".claude-plugin" / "plugin.json", encoding="utf-8") as fh:
+            return json.load(fh).get("version")
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def _detect_array_key(data: Any) -> str | None:
     """The sole top-level list-valued key, or ``None`` when zero or multiple."""
     if not isinstance(data, dict):
@@ -278,6 +288,7 @@ def _cmd_append(args: argparse.Namespace) -> int:
         _err(f"cannot read content: {exc}"); return 2
 
     def mutate(text: str) -> str:
+        was_create = not text.strip()  # 4.5: a brand-new file gets a _plugin_version stamp
         try:
             data = json.loads(text) if text.strip() else {}
         except json.JSONDecodeError as exc:
@@ -297,6 +308,10 @@ def _cmd_append(args: argparse.Namespace) -> int:
             arr.extend(element)
         else:
             arr.append(element)
+        if was_create and "_plugin_version" not in data:
+            ver = _current_plugin_version()
+            if ver:
+                data["_plugin_version"] = ver  # skew detection (4.5); readers WARN on a newer stamp
         return _dump(data)
 
     return _run_mutate(target, mutate)

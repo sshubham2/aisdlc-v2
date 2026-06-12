@@ -10,7 +10,10 @@ stays HTML. Each `schemas/<artifact>.example.json` is a documented, realistic in
   never justifies keeping a file as `.md`.
 
 ## Cross-cutting rules
-- `_schema`: every file starts with a version tag, e.g. `"aisdlc/risk-register@1"`.
+- `_schema`: every file starts with a version tag, e.g. `"aisdlc/risk-register@1"`. The `@N` is a MAJOR
+  schema version — bump it only on a breaking shape change, and add a migration note to the CHANGELOG (4.5).
+- `_plugin_version`: artifacts CREATED via `tools.vault_edit` are stamped with the plugin version that wrote
+  them, so a version mismatch is detectable (4.5).
 - Timestamps: ISO-8601 strings, stamped by tooling (shown as `<ts>` in examples).
 - Cross-references by **id**, never free text: risks `R-NN`, ADRs `ADR-NNN`, slices `slice-NNN`,
   candidates `SC-NNN`, acceptance criteria `ACn`.
@@ -18,6 +21,14 @@ stays HTML. Each `schemas/<artifact>.example.json` is a documented, realistic in
 - Derived fields (e.g. risk `score`/`band`) are computed by the audit tool, not hand-set.
 - **Append / CAS-only files** (risk-register, candidates, lessons-learned, shippability, `_index`, drift-log, ADRs):
   mutate via `tools.vault_edit` (append / rewrite-CAS), never a hand whole-file overwrite — the SVW-1 discipline.
+
+## Schema & version skew (4.5)
+- Readers (`artifact_lint`, run in the `/build-slice` pre-finish gate, `/reflect`, and `/drift-check`) WARN —
+  **non-fatally** — when an artifact's `_schema@N` is NEWER than the running plugin's canonical example, or its
+  `_plugin_version` is newer than the running plugin: i.e. a vault written by a NEWER plugin and read by an older
+  one. Older-than-current (an archived slice) is benign and is not warned.
+- A schema bump = a migration note in the CHANGELOG. The canonical examples in `artifact-examples.json` are the
+  source of truth for the current `@N` per artifact type.
 
 ## Artifact → schema map
 | live file | schema | notes |

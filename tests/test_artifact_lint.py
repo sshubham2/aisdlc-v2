@@ -6,8 +6,10 @@ its schema-by-example. This is the check that would have caught the 1.4
 """
 from __future__ import annotations
 
+import json
+
 from scripts.lib import artifact_lint
-from scripts.lib.artifact_lint import _load_examples, lint_artifact
+from scripts.lib.artifact_lint import _load_examples, lint_artifact, schema_skew
 
 
 def test_self_check_passes_on_canonical_examples():
@@ -49,3 +51,37 @@ def test_unknown_risk_tier_flagged():
     mb["risk_tier"] = "extreme"  # not in {low, medium, high}
     violations = lint_artifact(mb, "mission-brief", examples["mission-brief"], "test")
     assert any("risk_tier" in v for v in violations)
+
+
+# ── 4.5 version-skew detection (non-fatal) ────────────────────────────────────────
+
+def test_schema_skew_newer_major_warns():
+    examples = _load_examples()
+    art = dict(examples["critique"])
+    art["_schema"] = "aisdlc/critique@9"  # newer than the example's @1
+    warns = schema_skew(art, "critique", examples["critique"], "2.0.0")
+    assert any("_schema" in w and "NEWER" in w for w in warns)
+
+
+def test_schema_skew_current_no_warn():
+    examples = _load_examples()
+    art = dict(examples["critique"])  # same @N as the example
+    assert schema_skew(art, "critique", examples["critique"], "2.0.0") == []
+
+
+def test_plugin_version_skew_warns():
+    examples = _load_examples()
+    art = dict(examples["critique"])
+    art["_plugin_version"] = "99.0.0"  # newer than the running plugin
+    warns = schema_skew(art, "critique", examples["critique"], "2.22.4")
+    assert any("_plugin_version" in w for w in warns)
+
+
+def test_skew_is_non_fatal_in_cli(tmp_path):
+    # a newer-schema artifact WARNs but artifact_lint still exits 0 (no real violation)
+    examples = _load_examples()
+    art = dict(examples["critique"])
+    art["_schema"] = "aisdlc/critique@9"
+    p = tmp_path / "critique.json"
+    p.write_text(json.dumps(art), encoding="utf-8")
+    assert artifact_lint.main([str(p)]) == 0
