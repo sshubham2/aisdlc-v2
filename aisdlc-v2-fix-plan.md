@@ -8,7 +8,7 @@
 
 ## ⏳ EXECUTION STATUS (as of 2026-06-11 — read FIRST on resume)
 
-All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.24.1**.
+All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.25.0**.
 
 - **Phase 1 — ✅ DONE (8/8, tested)** · commit `2ed5500` (v2.18.4)
 - **Phase 2 — ✅ DONE (10/11, tested)** · commit `b381bcc` (v2.19.0)
@@ -49,7 +49,7 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
     vault-pin redesign). No Phase-3 judgment calls remain.
   - **WS-1 gate-log/example polish owed:** the mission-brief `architectural_layers` example still shows a prose `verification`; update to a runnable command under 3.18.2.
   - Helpers a later item should know about: `.build/plugin_self_audits.py` (six evicted self-audits, for CI 4.4), `skills/build-slice/scripts/pre_finish_gate.py` (2.5 gate orchestrator), `active_slice.py --folder-only`, and `gate_log.py`'s new `design-tournament` gate + `INFORMATIONAL_GATES`.
-- **Phase 4 — ✅ EFFECTIVELY COMPLETE (4.1/4.2/4.3/4.4/4.5/4.7/4.8/4.9/4.10 DONE; ONLY 4.6.1 deferred; no open decisions).**
+- **Phase 4 — ✅ COMPLETE (ALL of 4.1–4.10 DONE incl. 4.6.1 v2.25.0; only optional 3.19.5/3.19.6 left; 4.6.1 awaits a live-session acceptance check).**
   - **4.4 (tests + CI) — ✅ DONE** (v2.20.0): NEW `tests/` pytest suite (65 tests, green) covering `_vault_write`
     concurrency primitives (lock/CAS/append/EOL + lost-update threads), `vault_edit` CLI exit-code contracts
     (incl. the 1.7 fail-visible exits + CAS exit-3), `active_slice` resolution (git-branch + vault-scan), `finding_dedup`
@@ -98,8 +98,14 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
     + redactor; wired into /validate-slice + /risk-spike evidence) + NEW `vault_admin.py` (tier-2 pin auto-written by /triage +
     /adopt, sibling-detect, list/uninstall orphan GC) + README backup/GC para. **4.9** shipped CONTRIBUTING.md (the durable
     rules, previously only in gitignored CLAUDE.md) + `_conventions.md` fixes + README dep table. **Suite 126 green; 7/7 self-audits.**
-  - **Phase-4 REMAINING: ONLY 4.6.1** (vault-export removal + the 9-skill `${VAR:-…}` conversion — deferred: invasive +
-    un-live-testable, best on a live install). Nothing else open; none need a user decision.
+  - **4.6.1 — ✅ DONE (v2.25.0, commit `b02e304`; pending only a live-session acceptance check):** hook no longer exports
+    `AI_SDLC_VAULT_ROOT` (PY/CRG only; strips a legacy copy on upgrade) + the 9 bare-consumer skills / 17 sites moved to the
+    `${AI_SDLC_VAULT_ROOT:-$($PY .../_vault_paths.py --path)}` fallback. The plugin IS installed here so the bug was
+    reproducible LIVE (a 2nd repo with the frozen var → aisdlc-v2's vault [wrong]; unset → its own [right]); fired the new
+    hook (no vault export + legacy stripped); preamble resolves both ways; +3 regression tests. **PENDING reinstall+restart:**
+    fresh session → `AI_SDLC_VAULT_ROOT` unset + a 2nd-repo vault op lands in the 2nd repo's vault.
+  - **Phase-4 REMAINING: NONE** — only the OPTIONAL `3.19.5` (vault_root lazy resolution) + `3.19.6` (assemble CSS/JS split)
+    perf/refactor leftovers, flagged optional from the start.
 
 Resume by reading this file + `git log --stat` on `fix/remediation-plan`.
 
@@ -388,7 +394,7 @@ Background numbers (verified): a medium-tier Standard slice for a 50-line change
 **Fix:** every writer stamps `_schema: <artifact>/v1` + `_plugin_version` (vault_edit can inject on create; SKILL.md templates include it — the `_conventions.md` `_schema` tag already half-exists). Readers (pulse, drift-check, artifact_lint) WARN on unknown/major-newer schema. Document the policy in `_conventions.md`: schema bump = migration note in CHANGELOG.
 **Accept:** new artifacts carry both fields; pulse surfaces a skew warning when present.
 
-### 4.6 Fix the SessionStart hook's vault pinning *(MAJOR)* — 🔶 PARTIAL (4.6.2 dedupe + 4.6.3 short-circuit + 3.19.8a relay ✅ v2.22.1; 4.6.1 vault-export removal DEFERRED — needs the 9-skill fallback conversion)
+### 4.6 Fix the SessionStart hook's vault pinning *(MAJOR)* — ✅ DONE (4.6.2/4.6.3/3.19.8 v2.22.1; 4.6.1 vault-export removal + 9-skill conversion v2.25.0; pending a live-session acceptance check)
 **Problem:** `hooks/setup_env.py` ≈158–164 exports `AI_SDLC_VAULT_ROOT` resolved from the session-start cwd into `CLAUDE_ENV_FILE`; `_vault_paths.py` ≈235–240 gives that env var tier-1 precedence, frozen at import. So mid-session work against a DIFFERENT repo (`/bug-hunt <path>`, `/diagnose <path>`, cd) routes every vault write to the FIRST project's vault, silently. The hook also re-appends duplicate export lines on every clear/compact (file opened `'a'`), and runs ~5–6 subprocesses in every Claude Code project, ai-sdlc user or not.
 **Fix:**
 1. Stop exporting `AI_SDLC_VAULT_ROOT` from the hook entirely — export only `$PY`/`$CRG`, and let `_vault_paths.py` resolve the vault per-invocation from the actual cwd/git context (it already does this well; the env tier remains for explicit user overrides). If skills' bash blocks consume the env var directly, the 3.19.7 shared preamble covers the fallback.
