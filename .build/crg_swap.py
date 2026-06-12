@@ -6,7 +6,7 @@
 Transforms .build/manifests/batch*.json in place (structural: external_tools + file_access).
 Prose stragglers (summary/harness purposes) are reported for a follow-up pass."""
 import json, os, re
-ROOT = r"C:\Users\sshub\aisdlc-v2"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # <plugin> (portable; 4.8)
 MAN  = os.path.join(ROOT, ".build", "manifests")
 
 # skills whose ONLY graphify use was vault-graph / ingest -> drop CRG entirely

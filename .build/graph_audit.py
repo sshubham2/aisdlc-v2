@@ -4,7 +4,7 @@ producer/consumer mismatches, stats drift, and classification inconsistencies.
 Read-only. Prints findings grouped by severity."""
 import json, os, sys
 sys.stdout.reconfigure(encoding="utf-8")
-ROOT = r"C:\Users\sshub\aisdlc-v2"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # <plugin> (portable; 4.8)
 G = json.load(open(os.path.join(ROOT, "skill-graph.json"), encoding="utf-8"))
 
 skills = {n["id"] for n in G["nodes"]["skills"]}
