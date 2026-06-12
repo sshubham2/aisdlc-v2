@@ -143,6 +143,11 @@ key is checkout-location-specific by design). Resolution is **3 tiers, highest p
 Tiers 1 & 2 pin an **exact directory** (no `<slug>-<hash>` appended). Tier 3 changes only the **parent** and keeps
 per-project auto-naming. None of these files is git-tracked.
 
+The vault resolves **per-invocation** from these tiers — the SessionStart hook does *not* freeze it, so
+mid-session work on a different repo (e.g. `/bug-hunt <other-path>`, `/diagnose <other-path>`) resolves *that*
+repo's vault, not the one you started in. Tier 1 (`AI_SDLC_VAULT_ROOT`) is purely an explicit user override; the
+hook does not auto-set it.
+
 **Example — change the default base for a whole machine** (e.g. on a Linux box, from `~/.aisdlc` to `/collab/.aisdlc`):
 
 ```bash
@@ -163,7 +168,7 @@ $PY scripts/lib/vault_admin.py list                 # every vault under the base
 $PY scripts/lib/vault_admin.py uninstall <name> --yes   # delete an orphaned vault
 ```
 
-**Captured evidence is secret-swept (4.7).** `/validate-slice` and `/risk-spike` run commands against real
+**Captured evidence is secret-swept.** `/validate-slice` and `/risk-spike` run commands against real
 environments; before any captured output is stored as `evidence`, pipe it through
 `scripts/lib/secret_scrub.py`, which redacts credentials (`[REDACTED:<type>]`) using the same VAL-1 patterns —
 so tokens/keys don't persist plaintext in the vault.
@@ -279,4 +284,4 @@ Licensed under the **MIT License** — see [LICENSE](LICENSE).
 
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.21.0
+Shubhendu Shubham · plugin `ai-sdlc` v2.25.2
