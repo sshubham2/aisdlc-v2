@@ -59,7 +59,10 @@ advance to `/design-slice`.
 
 For each assumption under test:
 
-1. Check for prior spikes via CRG: `code-review-graph search "<technology> spike"` — skip re-spiking something already proven in a prior slice if the environment hasn't changed.
+1. Check for prior spikes in the VAULT (spike artifacts live in the external store, which CRG does not index):
+   `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/grep_vault.py" --vault "$AI_SDLC_VAULT_ROOT" --pattern "<technology>" --dir spikes`
+   — skip re-spiking something already proven in a prior slice if the environment hasn't changed. (Use CRG only
+   for prior *code* touching the same technology.)
 2. Produce a minimal test spec (10–30 lines). Must state:
    - **Real runtime** — not a local mock; actual platform / device / API
    - **Exact scopes / permissions / credentials** the real flow uses
@@ -192,7 +195,7 @@ One row per slice into `<vault>/gate-log.json` (roadmap Theme 8 / plan Phase 0).
 # already exists and carries a cross_domain_transfer (absent on the normal step-0 spike, before any design).
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
 SLICE_DIR="$VAULT/slices/<slice-NNN-name>"
-CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
+CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1],encoding='utf-8')).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate risk-spike --slice <slice-NNN-name> \
     --verdict <go|no-go|conditional> --findings-count <N failed> $CD \
@@ -267,7 +270,7 @@ pattern?):
 
 ```bash
 SLICE_DIR="$(dirname "<design.json path from D1>")"
-CD=""; $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
+CD=""; $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1],encoding='utf-8')).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
 # verdict: go = all targets held · no-go = any failed · findings-count = number of NO-GO targets
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate risk-spike --slice "$(basename "$SLICE_DIR")" \

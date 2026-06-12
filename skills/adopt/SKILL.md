@@ -155,6 +155,8 @@ Create all vault paths. Failure to create any → STOP, surface error.
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 [ -n "$VAULT" ] || { echo "FATAL: vault root unresolved — run /ai-sdlc:setup or set AI_SDLC_VAULT_ROOT"; exit 1; }
 mkdir -p "$VAULT/decisions" "$VAULT/spikes" "$VAULT/slices" "$VAULT/components" "$VAULT/contracts" "$VAULT/schemas"
+# Heavy mode only — match /triage's Heavy scaffold (read/written later by /heavy-architect + /discover):
+[ "<mode>" = "heavy" ] && mkdir -p "$VAULT/actors" "$VAULT/test-plan" "$VAULT/frontend"
 ```
 
 Write in order:

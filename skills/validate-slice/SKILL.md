@@ -238,6 +238,13 @@ and does NOT prompt. It returns `blocked: needs-deferral-decision` to the main t
 approves an explicit deferral with rationale, and the **main thread** appends that decision to `validation.json`.
 NEVER write an approved deferral from inside the fork (3.17).
 
+**Fork output contract (the main thread never reads this file — relay the protocol):** your final return
+message MUST contain, verbatim for the main thread: (a) the aggregate verdict; (b) on a clean PASS — "advance
+to `/reflect` via the Skill tool"; (c) on `blocked: needs-deferral-decision` — the failed rows AND the full
+Main-thread-deferral-resolution steps (AskUserQuestion fix-vs-defer, rationale mandatory, the exact `deferral`
+JSON shape, write via `vault_edit`, only then advance); (d) on any FAIL/PARTIAL/credential HALT — what to
+surface to the user. A bare verdict with no relayed instructions strands the main thread.
+
 ## Step 7 — write validation.json
 
 Write `<vault>/slices/slice-NNN-<name>/validation.json` (schema by example: `examples/validation.json`):
@@ -325,7 +332,7 @@ already appends to shared files in Step 9):
 # verdict is the PRIMARY signal for the cross-domain validity ratio (did reality confirm the borrowed pattern?).
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
 SLICE_DIR="$VAULT/slices/<slice-NNN-name>"
-CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
+CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1],encoding='utf-8')).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate validate-slice --slice <slice-NNN-name> \
     --verdict <pass|partial|fail> --findings-count <N fail+partial> $CD \

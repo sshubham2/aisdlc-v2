@@ -371,7 +371,13 @@ def _run_mutate(target: Path, mutate) -> int:
         safe_mutate_text(target, mutate)
     except ValueError as exc:
         _err(str(exc)); return 2
-    except (OSError, TimeoutError) as exc:
+    except TimeoutError as exc:
+        # A lock timeout is a concurrency signal, not a transient I/O failure — an
+        # immediate retry will just time out again against the same holder.
+        _err(f"write to {target} timed out — another process holds the vault lock; "
+             f"wait a moment or check for a stalled session/editor, then retry: {exc}")
+        return 2
+    except OSError as exc:
         _err(f"write to {target} failed (fail-visible per R-7): {exc}"); return 2
     return 0
 

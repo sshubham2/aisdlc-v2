@@ -24,7 +24,7 @@ Active slice mission-brief (mode + risk tier + critic_required):
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only 2>/dev/null)"
-$PY -c "import json,sys; f=sys.argv[1]; d=json.load(open(f+'/mission-brief.json')) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
+$PY -c "import json,sys; f=sys.argv[1]; d=json.load(open(f+'/mission-brief.json',encoding='utf-8')) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
 _(The full `design.json` is NOT pre-injected here — the Critic receives it verbatim in its agent prompt at Step 2,
@@ -34,13 +34,13 @@ JSON into context twice for no gain — 2.8.)_
 Cross-slice action points:
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/slices/action-points.json'; print(open(f).read() if os.path.exists(f) else '{}')" "$VAULT" 2>/dev/null || echo "{}"
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/slices/action-points.json'; print(open(f,encoding='utf-8').read() if os.path.exists(f) else '{}')" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
 Slice index (most-recent-10):
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/slices/_index.json'; print(open(f).read() if os.path.exists(f) else '{}')" "$VAULT" 2>/dev/null || echo "{}"
+$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/slices/_index.json'; print(open(f,encoding='utf-8').read() if os.path.exists(f) else '{}')" "$VAULT" 2>/dev/null || echo "{}"
 ```
 
 Project-calibrated overlay (learned from THIS project via `/critic-calibrate`; layered on the base `agents/critique.md`).
@@ -89,14 +89,13 @@ a `high` risk tier **ALWAYS runs the Critic** regardless of any gate-skip — ca
 
 **`/critique --force`**: run regardless of tier or any gate-skip; record the reason in `critique.json`.
 
-**On skip**: update `milestone.json` (`stage: "critique"`, `next_action: "/slice-story"`) and set the critique
+**On skip**: update `milestone.json` (`stage: "critique"`, `next_action: "/build-slice"`) and set the critique
 entry in `progress[]` to exactly `{ "step": "critique", "done": "skipped" }` (the string `"skipped"`, not the
 boolean `true`). This marker is what lets `/build-slice` accept the absence of `critique.json` instead of
 deadlocking on "run /critique first". Print: _"Slice tier is `low`, no mandatory triggers. Skipping /critique —
 Builder self-review applies. Re-run with `/critique --force` to override. (`/slice-story` is available any time
 for a plain-language overview.)"_ Then HALT and prompt the user to run `/build-slice` when ready — do NOT spawn
-the narrator on a skipped slice (there is no review to narrate). (Also set `next_action: "/build-slice"` here, not
-`"/slice-story"`.)
+the narrator on a skipped slice (there is no review to narrate).
 
 ## Prerequisite check
 
@@ -272,7 +271,7 @@ look-alike findings one-by-one trains the rubber-stamp reflex, and a rubber-stam
 presentation by signal, not by uniform list:
 - **Blockers + majors: individually**, each with its own ratify line (above). These are never batched.
 - **Minors: batched.** Present them as ONE group — *"N minors, all drafted `<disposition>` — accept all as drafted? (Enter = yes, or name any id to review/override)."* Don't force a keystroke per minor.
-- **Tag each finding NOVEL vs RECURRING.** A finding is RECURRING if this dimension+claim shape was already raised-and-accepted in a recent slice (check `<vault>/critic-calibration-log.json` `active_checks[]`/`runs[]` + the recent reflections' calibration). **Lead with the NOVEL findings** — that is where the user's attention is worth spending; recurring ones can ride the batch.
+- **Tag each finding NOVEL vs RECURRING.** A finding is RECURRING if this dimension+claim shape was already raised-and-accepted in a recent slice (check the injected `active_checks[]` overlay + the recent reflections' calibration — NEVER read `runs[]`; it grows unboundedly, per Step 1). **Lead with the NOVEL findings** — that is where the user's attention is worth spending; recurring ones can ride the batch.
 - **Rubber-stamp awareness.** If the user ratifies *every* draft disposition unchanged (no override / no severity change), that wholesale-accept is itself a signal — note it in the triage `notes`. It feeds `/critic-calibrate`'s lighten analysis: a model-on-model gate whose findings are always accepted-as-drafted with zero pushback over several slices is a candidate to lighten (never the reality spine). This is descriptive, not a block — the user still owns the verdict.
 
 Once the user ratifies, compute **final verdict** mechanically:

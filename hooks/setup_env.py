@@ -190,10 +190,15 @@ def _write_env_block(env_file: str, body_lines: list[str]) -> None:
     if kept and not kept[-1].endswith("\n"):
         kept[-1] += "\n"
     try:
+        parent = os.path.dirname(env_file)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         with open(env_file, "w", encoding="utf-8") as f:  # utf-8, NO bom
             f.writelines(kept + block)
-    except OSError:
-        pass
+    except OSError as e:
+        # Fail-soft (never block the session) but NEVER silently: without this line a
+        # failed write leaves $PY/$CRG unset and every skill fails with no breadcrumb.
+        sys.stderr.write(f"ai-sdlc hook: failed to write env file {env_file}: {e}\n")
 
 
 def main() -> None:
@@ -231,8 +236,8 @@ def main() -> None:
                     if rc == 0:
                         deps_ok = True
                         break
-                except Exception:
-                    pass
+                except Exception as e:
+                    sys.stderr.write(f"ai-sdlc hook: auto-install pip run failed: {e}\n")
 
     crg = resolve_crg(chosen)
     if crg:

@@ -18,6 +18,7 @@ VALID_AGENTS = {"critique","critic-calibrate","critique-review","diagnose-narrat
 SHARED_TOOLS = {os.path.splitext(os.path.basename(p))[0]
                 for p in glob.glob(os.path.join(ROOT,"scripts","lib","*.py"))
                 if not os.path.basename(p).startswith("__")}
+assert SHARED_TOOLS, f"no Python files found under {os.path.join(ROOT,'scripts','lib')} — wrong ROOT?"
 SKILL_TOOLS = {}  # tool basename -> owning skill (single-skill scripts/)
 for _p in glob.glob(os.path.join(ROOT,"skills","*","scripts","*.py")):
     SKILL_TOOLS.setdefault(os.path.splitext(os.path.basename(_p))[0],
@@ -254,7 +255,7 @@ for m in manifests:
         fh.write("\n")
     # bundle output examples per the Claude Code skills convention: skills/<name>/examples/<artifact>.json
     ex_dir = os.path.join(d, "examples")
-    if os.path.isdir(ex_dir): shutil.rmtree(ex_dir)
+    shutil.rmtree(ex_dir, ignore_errors=True)
     if example_keys:
         os.makedirs(ex_dir, exist_ok=True)
         for ak in sorted(example_keys):

@@ -37,7 +37,9 @@ Use the CRG MCP tools (`impact-radius`, `review-context`, `search`) or the CLI:
 "${CRG:-code-review-graph}" impact-radius --node "<file-or-module>"
 ```
 
-If `.code-review-graph/` is missing or stale: `"${CRG:-code-review-graph}" build` (or `update`).
+If `.code-review-graph/` is missing or stale: `"${CRG:-code-review-graph}" build` (or `update`). If BOTH CRG
+and the `grep_vault.py` fallback below are unavailable/fail, proceed with the advisory note
+`(blast-radius context unavailable)` — the designers work without prior-art context; never a gate.
 
 For conceptual matches not found by CRG keyword search, fall back to:
 ```bash
@@ -241,7 +243,9 @@ Do NOT produce component/contract files in Standard or Minimal mode — code is 
 
 Update `<vault>/slices/slice-NNN-<name>/milestone.json` (schema: `examples/milestone.json`):
 - `stage: "design"`; progress step `"design"` → `done: true`
-- `next_action`: `"/risk-spike --mode design"` if Step 8 fires; else `"/critique"`; else `"/build-slice"` if `critic_required: false`
+- `next_action`: `"/risk-spike --mode design"` if Step 8 fires; else `"/critique"` — ALWAYS `/critique`, even when
+  `critic_required: false` (Step 9 routes through `/critique`, whose skip path writes the `done: "skipped"` progress
+  marker `/build-slice`'s prerequisite requires; pointing `next_action` straight at `/build-slice` strands a resume)
 - `current_focus`: what the design introduces (+ tournament tier if one ran)
 - `on_resume`: matches `next_action`
 - `updated_by: "design-slice"`

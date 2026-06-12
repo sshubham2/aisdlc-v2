@@ -12,7 +12,7 @@ agent: general-purpose
 
 Maintenance skill. Archive completed slices and keep the two `_index.json` files accurate.
 
-> Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / `aisdlc/vault-root` git config).
+> Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / `aisdlc/vault-root` git config). You run forked and do NOT inherit the project CLAUDE.md — resolve it here.
 
 ## Live state — injected
 

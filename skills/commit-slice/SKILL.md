@@ -287,11 +287,14 @@ the live backlog stays small (Direction #3) and a `shipped` candidate ALWAYS mea
    ```bash
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file archive/candidates.json --array candidates --content-file shipped-candidate.json
    ```
-3. Remove it from `<vault>/candidates.json` via CAS-rewrite:
+3. Remove it from `<vault>/candidates.json` via CAS-rewrite (scratch files in a temp dir, NEVER the repo CWD —
+   they'd be one `git add -A` from being committed):
    ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file candidates.json --out-file base.bin
-   # drop the shipped candidate from candidates[], then:
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file candidates.json --base-file base.bin --content-file updated.json
+   T="$(mktemp -d)"
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file candidates.json --out-file "$T/base.bin"
+   # drop the shipped candidate from candidates[], write to "$T/updated.json", then:
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file candidates.json --base-file "$T/base.bin" --content-file "$T/updated.json"
+   rm -rf "$T"
    # exit 3 → re-read + re-apply + retry (max 5)
    ```
 

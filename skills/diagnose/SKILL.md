@@ -230,7 +230,7 @@ OUT="$TARGET/diagnose-out"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/write_pass.py" --pass 04-ai-bloat --out "$OUT" --raw-file "$OUT/.tmp/04-ai-bloat.raw"
 ```
 
-with the same 3-attempt cap. Verify all three `04-ai-bloat.{md,yaml,md}` files exist before continuing.
+with the same 3-attempt cap. Verify all three `04-ai-bloat` outputs (`sections/04-ai-bloat.md`, `findings/04-ai-bloat.yaml`, `summaries/04-ai-bloat.md`) exist before continuing.
 
 ## Step 6.5 — Narrative synthesis: diagnose-narrator
 

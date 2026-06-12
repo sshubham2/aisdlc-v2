@@ -26,7 +26,7 @@ Active slice + which artifacts exist (drives which sections the story includes):
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only 2>/dev/null)"
-$PY -c "import json,glob,os,sys; d=sys.argv[1] or None; have=[os.path.basename(f) for f in sorted(glob.glob(f'{d}/*.json'))] if d else []; mb=json.load(open(f'{d}/mission-brief.json')) if d and os.path.exists(f'{d}/mission-brief.json') else {}; ms=json.load(open(f'{d}/milestone.json')) if d and os.path.exists(f'{d}/milestone.json') else {}; print(json.dumps({'active_slice_dir':d,'slice':mb.get('slice'),'title':mb.get('title'),'mode':mb.get('mode'),'risk_tier':mb.get('risk_tier'),'stage':ms.get('stage'),'artifacts_present':have},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
+$PY -c "import json,glob,os,sys; d=sys.argv[1] or None; have=[os.path.basename(f) for f in sorted(glob.glob(f'{d}/*.json'))] if d else []; mb=json.load(open(f'{d}/mission-brief.json',encoding='utf-8')) if d and os.path.exists(f'{d}/mission-brief.json') else {}; ms=json.load(open(f'{d}/milestone.json',encoding='utf-8')) if d and os.path.exists(f'{d}/milestone.json') else {}; print(json.dumps({'active_slice_dir':d,'slice':mb.get('slice'),'title':mb.get('title'),'mode':mb.get('mode'),'risk_tier':mb.get('risk_tier'),'stage':ms.get('stage'),'artifacts_present':have},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
 ## Step 0 — resolve the target slice
@@ -93,7 +93,9 @@ ONLY from what it returns.
 
 If the returned text is wrapped in a ```` ```json ```` fence or has stray prose around it, strip to the JSON
 object before writing. If it is not valid JSON, ask the narrator to re-emit raw JSON only — do not hand-write
-the story yourself (that defeats the plain-language synthesis).
+the story yourself (that defeats the plain-language synthesis). **Bounded retry**: if the narrator fails twice
+(invalid JSON / timeout / null), STOP and tell the user: _"The story narrator failed — try `/slice-story`
+again later, or proceed to `/build-slice` without a narrated story."_ Never loop indefinitely.
 
 ## Step 3 — write story-sections.json
 

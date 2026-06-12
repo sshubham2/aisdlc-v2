@@ -13,6 +13,9 @@ The cure for spec rot: structured vault updates at every slice boundary so the v
 > SVW-1: shared aggregate files (`risk-register.json`, `lessons-learned.json`, `shippability.json`,
 > `build-checks.json`, `_index.json`) mutate ONLY through `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py"` (append or CAS-rewrite).
 > NEVER raw-Write or Edit these files directly.
+> **Scratch files**: every `--out-file` / `--content-file` below (`base.bin`, `edited.json`, `lesson-entry.json`,
+> `bc-rule.json`, `ship-row.json`, `regen.json`, …) goes in a TEMP dir — `T="$(mktemp -d)"` then `"$T/base.bin"`
+> etc., `rm -rf "$T"` when done — NEVER in the project CWD (one `git add -A` away from being committed).
 
 ## Active slice + inputs — injected
 
@@ -24,7 +27,8 @@ Read all of the following before proceeding (stop if `validation.json` is missin
 
 - `<vault>/slices/slice-NNN/mission-brief.json` — intent and acceptance criteria
 - `<vault>/slices/slice-NNN/design.json` — design claims to categorize
-- `<vault>/slices/slice-NNN/critique.json` — Critic findings for calibration scoring
+- `<vault>/slices/slice-NNN/critique.json` — Critic findings for calibration scoring (absent when the Critic
+  was skipped on a low-tier slice — then skip Step 3 calibration; only a missing `validation.json` is a STOP)
 - `<vault>/slices/slice-NNN/build-log.json` — build deviations
 - `<vault>/slices/slice-NNN/validation.json` — PASS/FAIL evidence (prerequisite)
 

@@ -10,6 +10,9 @@ disable-model-invocation: true
 
 The mission brief is the **intent**. The design is the **shape**. The Critic findings are the **constraints**. Plan mode is the **route through actual code**.
 
+> **"Plan mode" here means THIS skill's planning phase** (Step 2 explore → Step 3 user-approval HALT) — it is
+> NOT the harness `EnterPlanMode` tool (not in `allowed-tools`; do not attempt to invoke it).
+
 > Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT`). Active slice = latest `<vault>/slices/slice-NNN-*/`.
 
 ## Live state — injected
@@ -103,6 +106,10 @@ State briefly:
 
 Update `milestone.json`: `stage: "build"`, `current_focus: "plan mode"`, `next_action: "plan approval"`.
 
+Create `<vault>/slices/slice-NNN-<name>/build-log.json` now (empty `events[]`, schema: `examples/build-log.json`)
+if it does not exist — Step 4 appends events to it *before* risky tool calls, so it must exist before execution
+starts, not be created at Step 8.
+
 ## Step 2: Plan mode — explore actual code
 
 **WT-ROOT-1:** explore the WORKTREE — `Read`/`Grep`/`Glob` files under `"$wt/"`, not the main tree. The task
@@ -163,8 +170,22 @@ All of the following must pass before declaring done:
 - [ ] `/drift-check` **full mode** (appends `Trigger` entry to `<vault>/drift-log.json` — DCE-1 verifies this)
 
 The pre-finish gate is **one consolidated command** — `pre_finish_gate.py` subprocess-orchestrates every
-user-facing audit (WT-ROOT-1, DCE-1, LINT-MOCK, WIRE-1, BC-1, TF-1, BRANCH-1) and emits ONE verdict, so no check
-can be silently skipped (the failure mode of the old hand-run-each-block gate).
+user-facing audit (WT-ROOT-1, DCE-1, LINT-MOCK, WIRE-1, BC-1, TF-1, BRANCH-1, ARTIFACT-LINT) and emits ONE
+verdict, so no check can be silently skipped (the failure mode of the old hand-run-each-block gate).
+(ARTIFACT-LINT = 3.18.7 schema-by-example lint over this slice's vault JSON artifacts; on FAIL, fix the
+offending artifact's required keys / enum values.)
+
+**Derive `--changed-files` canonically — the gate's coverage is exactly as good as this list** (LINT-MOCK
+SKIPs entirely on an empty test-file list; BC-1 scopes to what it is told). Fresh shell — re-derive `$wt` first
+(WT-ROOT-1):
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+base="$(git -C "$wt" merge-base HEAD origin/HEAD 2>/dev/null || echo HEAD)"
+changed="$( { git -C "$wt" diff --name-only "$base"; git -C "$wt" ls-files --others --exclude-standard; } | sort -u )"
+# --changed-test-files = the subset of $changed matching the project's test layout (tests/**, *_test.*, *.test.*)
+```
 
 **Step A — enumerate BC-1 Critical rules and attest them** (the only multi-step part; the gate then runs BC-1
 strict with your acks):

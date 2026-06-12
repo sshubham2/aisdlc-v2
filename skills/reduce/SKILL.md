@@ -197,6 +197,9 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
     --content-file <tmp_lesson_json>
 ```
 
+(`<tmp_lesson_json>` = the lesson entry written to a temp location first — `T="$(mktemp -d)"`, write
+`"$T/lesson.json"`, append, `rm -rf "$T"`. Never write scratch files into the project CWD.)
+
 Schema by example: `examples/lessons-learned.json` (`aisdlc/lessons-learned@1`).
 
 ## Critical rules

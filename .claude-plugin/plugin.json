@@ -1,6 +1,6 @@
 {
   "name": "ai-sdlc",
-  "version": "2.25.5",
+  "version": "2.25.6",
   "license": "MIT",
   "description": "Spec-driven AI SDLC pipeline for Claude Code: it breaks work into small, risk-first slices and checks every step against reality instead of trusting the model. Each slice proves feasibility with a throwaway spike on your real environment, weighs design options, runs independent adversarial review, then validates the result — tracked in JSON vault files and one candidate backlog.",
   "author": { "name": "Shubhendu Shubham" },
