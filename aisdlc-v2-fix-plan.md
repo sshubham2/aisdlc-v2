@@ -8,7 +8,7 @@
 
 ## ⏳ EXECUTION STATUS (as of 2026-06-11 — read FIRST on resume)
 
-All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.22.1**.
+All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushed**). Plugin now at **v2.24.1**.
 
 - **Phase 1 — ✅ DONE (8/8, tested)** · commit `2ed5500` (v2.18.4)
 - **Phase 2 — ✅ DONE (10/11, tested)** · commit `b381bcc` (v2.19.0)
@@ -49,7 +49,7 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
     vault-pin redesign). No Phase-3 judgment calls remain.
   - **WS-1 gate-log/example polish owed:** the mission-brief `architectural_layers` example still shows a prose `verification`; update to a runnable command under 3.18.2.
   - Helpers a later item should know about: `.build/plugin_self_audits.py` (six evicted self-audits, for CI 4.4), `skills/build-slice/scripts/pre_finish_gate.py` (2.5 gate orchestrator), `active_slice.py --folder-only`, and `gate_log.py`'s new `design-tournament` gate + `INFORMATIONAL_GATES`.
-- **Phase 4 — 🔶 STARTED (4.1 + 4.4 + 4.10 ✅ DONE; no remaining USER decisions).**
+- **Phase 4 — ✅ EFFECTIVELY COMPLETE (4.1/4.2/4.3/4.4/4.5/4.7/4.8/4.9/4.10 DONE; ONLY 4.6.1 deferred; no open decisions).**
   - **4.4 (tests + CI) — ✅ DONE** (v2.20.0): NEW `tests/` pytest suite (65 tests, green) covering `_vault_write`
     concurrency primitives (lock/CAS/append/EOL + lost-update threads), `vault_edit` CLI exit-code contracts
     (incl. the 1.7 fail-visible exits + CAS exit-3), `active_slice` resolution (git-branch + vault-scan), `finding_dedup`
@@ -90,10 +90,16 @@ All work is on branch **`fix/remediation-plan`** (committed locally, **NOT pushe
     fix):** stop exporting `AI_SDLC_VAULT_ROOT` needs converting **9 bare-consumer skills / 17 sites** (critic-calibrate ×5,
     reduce ×4, user-test ×2, design-slice, drift-check, reflect, risk-spike, supersede-slice, validate-slice) to the
     `${AI_SDLC_VAULT_ROOT:-…}` fallback — invasive + un-live-testable, best validated on a live install.
-  - **Phase-4 REMAINING:** 4.2 (storefront copy), 4.3 (pin code-review-graph), 4.5 (artifact schema versioning), **4.6.1**
-    (vault-export removal + 9-skill conversion — deferred above), 4.7 (vault lifecycle/secrets-sweep), 4.8 (finish portable
-    `.build/` ROOTs — aggregate.py done), 4.9 (meta-docs cleanup — residual CLAUDE.md "source of truth"/skill-count drift).
-    None are blocking; none need a NEW user decision.
+  - **4.2/4.3/4.5/4.7/4.8/4.9 — ✅ ALL DONE (v2.22.2 → v2.24.1):** **4.2** storefront copy (both descriptions agree, 381 chars,
+    no jargon). **4.8** the 7 remaining `.build/` ROOTs made portable. **4.3** code-review-graph pinned `>=2.3,<3` + supply-chain
+    note + `/setup` prints the third-party version before MCP registration. **4.5** artifact version-skew detection
+    (artifact_lint NON-FATAL WARN on `_schema@N`/`_plugin_version` newer-than-plugin; vault_edit stamps `_plugin_version` on
+    create; policy in `_conventions.md`). **4.7** vault lifecycle & secrets — NEW `secret_scrub.py` (single-source VAL-1 patterns
+    + redactor; wired into /validate-slice + /risk-spike evidence) + NEW `vault_admin.py` (tier-2 pin auto-written by /triage +
+    /adopt, sibling-detect, list/uninstall orphan GC) + README backup/GC para. **4.9** shipped CONTRIBUTING.md (the durable
+    rules, previously only in gitignored CLAUDE.md) + `_conventions.md` fixes + README dep table. **Suite 126 green; 7/7 self-audits.**
+  - **Phase-4 REMAINING: ONLY 4.6.1** (vault-export removal + the 9-skill `${VAR:-…}` conversion — deferred: invasive +
+    un-live-testable, best on a live install). Nothing else open; none need a user decision.
 
 Resume by reading this file + `git log --stat` on `fix/remediation-plan`.
 
@@ -359,12 +365,12 @@ Background numbers (verified): a medium-tier Standard slice for a 50-line change
 **Problem:** publicly distributed (README instructs `/plugin marketplace add sshubham2/aisdlc-v2`; repo is its own marketplace; external PRs merged) with NO license file, no `license` key in plugin.json, zero README mentions — legally all-rights-reserved.
 **Fix:** USER DECISION REQUIRED — pick a license (MIT/Apache-2.0 typical for plugins). Add `LICENSE`, `"license"` key in `.claude-plugin/plugin.json`, one README line. Ask the user; do not pick silently.
 
-### 4.2 Fix the storefront *(MINOR, quick)*
+### 4.2 Fix the storefront *(MINOR, quick)* — ✅ DONE (v2.22.2)
 **Problem:** `.claude-plugin/marketplace.json` line ≈8 still describes v1 ("two-persona adversarial review") vs plugin.json's current 3-critic description (same dir, same version!); plugin.json's description is a ~1,100-char jargon wall — the first text every installer reads.
 **Fix:** rewrite both descriptions: one plain-language sentence (what it does, for whom) + one short feature sentence. Keep keywords for search.
 **Accept:** both files agree; description < 400 chars, no pipeline jargon.
 
-### 4.3 Pin the supply chain *(MAJOR)*
+### 4.3 Pin the supply chain *(MAJOR)* — ✅ DONE (v2.22.4)
 **Problem:** `code-review-graph` is third-party (github.com/tirth8205/code-review-graph — not the author's), pinned `>=2.3` with no upper bound (`requirements.txt` ≈19), auto-pip-installed by /setup, auto-registered as a trusted MCP server into the user's `.mcp.json` (setup.py ≈150–167), with a silent reinstall path at SessionStart (`setup_env.py` ≈140–152, AI_SDLC_AUTO_INSTALL=1). It feeds the "reality > code-graph" trust tier.
 **Fix:** pin `code-review-graph>=2.3,<3` minimum (prefer `==` exact + a documented bump procedure); note the trust boundary in README's Requirements table; have /setup print the resolved version before MCP registration.
 **Accept:** requirements.txt has an upper bound; setup surfaces the version.
@@ -377,7 +383,7 @@ Background numbers (verified): a medium-tier Standard slice for a 50-line change
 3. `.github/workflows/ci.yml`: pytest on windows-latest + ubuntu-latest (the repo's Windows-specific code paths make the matrix non-optional) + the six relocated self-audits (1.5) + `.build/cross_block_audit.py` + a `aggregate.py`-is-clean check (run it, `git diff --exit-code` on generated files).
 **Accept:** CI green on both OSes; the 1.4 regression test fails if `fix-now` is reintroduced.
 
-### 4.5 Vault artifact versioning *(MAJOR)*
+### 4.5 Vault artifact versioning *(MAJOR)* — ✅ DONE (v2.23.0; reader-side skew detection + vault_edit stamp)
 **Problem:** contracts churn every minor version; no artifact carries a schema/plugin version; a vault written by 2.16 read by 2.19 has zero skew detection. Only v1→v2 PATH migration exists (`_vault_paths.py` ≈6–13).
 **Fix:** every writer stamps `_schema: <artifact>/v1` + `_plugin_version` (vault_edit can inject on create; SKILL.md templates include it — the `_conventions.md` `_schema` tag already half-exists). Readers (pulse, drift-check, artifact_lint) WARN on unknown/major-newer schema. Document the policy in `_conventions.md`: schema bump = migration note in CHANGELOG.
 **Accept:** new artifacts carry both fields; pulse surfaces a skew warning when present.
@@ -390,7 +396,7 @@ Background numbers (verified): a medium-tier Standard slice for a 50-line change
 3. Cheap short-circuit at hook start when the project shows no ai-sdlc markers AND `$PY` already resolved this session (env-file check) — cuts the every-project subprocess tax.
 **Accept:** two repos in one session resolve two different vaults; env file contains one export per var after 3 clears; non-ai-sdlc project hook run does ≤1 subprocess after first resolution.
 
-### 4.7 Vault lifecycle & data hygiene *(MAJOR)*
+### 4.7 Vault lifecycle & data hygiene *(MAJOR)* — ✅ DONE (v2.24.0; secret_scrub + vault_admin pin/list/uninstall)
 **Problems (all verified):** (a) repo move/rename silently orphans the vault — the hash keys on the git-common-dir path; the tier-2 pin mechanism that would survive renames exists (`_vault_write.write_vault_root_config`) with ZERO callers; (b) no backup story (grep "backup" repo-wide: nothing); (c) validate-slice/risk-spike/field-recon persist captured command output (potential tokens/connection strings) as plaintext under `~/.aisdlc` forever — VAL-1 scans only the code diff, never the vault, and the secrets ALLOWLIST lives in the vault where editing it silently bypasses the Critical gate; (d) no GC/uninstall — orphaned vaults accumulate.
 **Fix:**
 1. /triage and /adopt write the tier-2 git-common-dir pin automatically at vault creation (mechanism exists; call it).
@@ -400,12 +406,12 @@ Background numbers (verified): a medium-tier Standard slice for a 50-line change
 5. New `/setup --uninstall` (or a documented manual procedure): list this machine's vaults with their source repos, flag orphans (source path gone), offer deletion.
 **Accept:** fresh /triage writes the pin file; renaming a scratch repo and re-running /pulse finds the vault; evidence with a planted fake AWS key is redacted in the vault copy.
 
-### 4.8 Portable .build scripts *(MINOR, quick)*
+### 4.8 Portable .build scripts *(MINOR, quick)* — ✅ DONE (v2.22.3 + aggregate.py earlier)
 **Problem:** 9 of 11 `.build/*.py` hardcode author-machine paths (`aggregate.py:9 ROOT = r"C:\Users\sshub\aisdlc-v2"`; same in manifest_reconcile, crg_swap, graph_audit, render_graph_html, crg_prose, candidates_spike, json_rollout; probe.py hardcodes a temp dir). README ≈237–244 documents `python3 .build/aggregate.py` as the contributor workflow — broken anywhere else.
 **Fix:** `ROOT = Path(__file__).resolve().parents[1]` in each. Delete `probe.py` and `review.json` (session detritus — see 4.10.3).
 **Accept:** `aggregate.py` runs from a clone in any directory.
 
-### 4.9 Meta-docs cleanup *(MAJOR for maintainability)*
+### 4.9 Meta-docs cleanup *(MAJOR for maintainability)* — ✅ DONE (v2.24.1; CONTRIBUTING.md + _conventions + README; CLAUDE.md/MILESTONE local-only)
 1. **CLAUDE.md rewrite** (~80 lines): philosophy paragraph; hard rules MINUS the temp/ rules (temp/ was deleted at the first commit — Test-Path False — yet ≈128–129/156 still enforce it); current layout; $PY/runtime section; regenerate instructions. Kill: "v2.0.0" (≈143), the three conflicting skill counts (26/27/30), `.md` ledger names (≈221–225), the dangling `memory/` reference, all "rollout in progress" narrative (it's restated in MILESTONE).
 2. **CURRENT-STATE discipline:** top of MILESTONE.md becomes a single OVERWRITTEN current-state block (version, what's true now, next action); history appends below. Fix the three-way contradiction (CLAUDE.md says next = script porting [done]; MILESTONE says next = Phase 3 [shipped]; plan.md says all unpushed [merged as PRs #1/#2]).
 3. **CONTRIBUTING.md (tracked):** the version-bump rule + never-hand-edit-generated-fields rule + regenerate commands currently live only in gitignored CLAUDE.md — i.e., only on the author's machine. Ship the durable rules.
