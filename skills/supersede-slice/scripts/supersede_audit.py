@@ -88,7 +88,7 @@ class SUPViolation:
     line: int
     source: str       # slice id of the source slice
     target: str       # slice id the source claims
-    kind: str         # "missing-target" | "one-way-link"
+    kind: str         # "missing-target" | "one-way-link" | "revert-malformed"
     severity: str     # "Important"
     message: str
 
@@ -160,13 +160,9 @@ def _find_supersedes(brief_path: Path) -> str | None:
     return None
 
 
-def _find_superseded_by(reflection_path: Path) -> str | None:
-    """Read the archived reflection.json ``supersession.superseded_by`` field
-    (active slice id), or None when the ``supersession`` field is null/absent or
-    lacks a ``superseded_by``. v2 replacement for the v1 ``## Supersession`` /
-    ``**Superseded by**:`` markdown regex."""
-    data = _load_json(reflection_path)
-    if data is None:
+def _superseded_by_from(data: dict | None) -> str | None:
+    """``supersession.superseded_by`` from an already-loaded reflection dict (or None)."""
+    if not isinstance(data, dict):
         return None
     sup = data.get("supersession")
     if not isinstance(sup, dict):
@@ -175,6 +171,67 @@ def _find_superseded_by(reflection_path: Path) -> str | None:
     if isinstance(source, str) and source.strip():
         return source.strip()
     return None
+
+
+def _find_superseded_by(reflection_path: Path) -> str | None:
+    """Read the archived reflection.json ``supersession.superseded_by`` field
+    (active slice id), or None when the ``supersession`` field is null/absent or
+    lacks a ``superseded_by``. v2 replacement for the v1 ``## Supersession`` /
+    ``**Superseded by**:`` markdown regex."""
+    return _superseded_by_from(_load_json(reflection_path))
+
+
+# slice-003: the supersession block's OPTIONAL revert object {commit?, pr?, note?}.
+# Strict-reject of unknown keys is a DELIBERATE departure from the vault's
+# tolerate-extras norm (artifact_lint never rejects unknowns): revert is a small,
+# closed, HUMAN-TYPED write object where a typo'd key (`comit`) means silently
+# losing the revert ref — exactly the data loss this audit exists to prevent.
+# Extending revert with a new member is therefore a deliberate audit change, not
+# an accident. (critique M1 — documented conscious decision.)
+_REVERT_KEYS = frozenset({"commit", "pr", "note"})
+
+
+def _validate_revert(reflection_path: Path, slice_id: str, sup, result: AuditResult) -> None:
+    """STANDALONE revert-shape pass (slice-003, DR-1 M-add-1): runs for EVERY archived
+    reflection whose supersession block is a dict — INDEPENDENT of superseded_by/link
+    completeness, so a malformed revert on a half-written record still fires. Owns the
+    isinstance guard (critique M2: a bare-string/list revert refuses, never crashes).
+    Absent revert = valid (every legacy record passes unchanged)."""
+    if not isinstance(sup, dict) or "revert" not in sup:
+        return
+    revert = sup["revert"]
+    if revert is None:
+        return  # null-as-absent, matching the file's own `supersession: null` convention (code-review M2)
+    tgt = sup.get("superseded_by")
+    target = tgt.strip() if isinstance(tgt, str) else ""
+    remedy = f"Fix the `revert` object in {slice_id}'s reflection.json (or remove the key entirely)."
+
+    def _viol(message: str) -> None:
+        result.violations.append(SUPViolation(
+            path=str(reflection_path), line=0,
+            source=slice_id, target=target,
+            kind="revert-malformed", severity="Important",
+            message=f"archived slice {slice_id}: {message} {remedy}",
+        ))
+
+    if not isinstance(revert, dict):
+        _viol(f"`revert` is not an object (got {type(revert).__name__}); expected "
+              f"{{\"commit\"?, \"pr\"?, \"note\"?}} with at least one non-empty member.")
+        return
+    if not revert:
+        _viol("`revert` has no members; when present it needs at least one of "
+              "\"commit\" / \"pr\" / \"note\" (non-empty strings) — or omit the field entirely.")
+        return
+    for key in sorted(set(revert) - _REVERT_KEYS):
+        _viol(f"`revert.{key}` is an unknown key (allowed: commit, pr, note). Unknown keys "
+              f"are refused deliberately — a typo here silently loses the revert ref.")
+    for key in sorted(set(revert) & _REVERT_KEYS):
+        val = revert[key]
+        if not isinstance(val, str) or not val.strip():
+            _viol(f"`revert.{key}` is empty or not a string; every present member must be a "
+                  f"non-empty string (commit sha / PR url / prose note).")
+    # NOTE: a non-empty dict with zero known keys necessarily hit the unknown-key loop above,
+    # so a separate "no known member" branch is unreachable (code-review m1: removed as dead).
 
 
 def run_audit(project_root: Path) -> AuditResult:
@@ -224,7 +281,13 @@ def run_audit(project_root: Path) -> AuditResult:
     # archived_id -> (source_id, ack_path)
     for slice_dir in archived_paths:
         reflection = slice_dir / "reflection.json"
-        source = _find_superseded_by(reflection)
+        # slice-003: revert validation runs FIRST, before the link gate's `continue` —
+        # orthogonal to superseded_by completeness (DR-1 M-add-1). Single parse: the
+        # loaded dict feeds both the revert pass and the link extraction (code-review m3).
+        data = _load_json(reflection)
+        if data is not None:
+            _validate_revert(reflection, slice_dir.name, data.get("supersession"), result)
+        source = _superseded_by_from(data)
         if source is None:
             continue
         result.links.append(SupersessionLink(
