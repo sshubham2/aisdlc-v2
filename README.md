@@ -32,6 +32,13 @@ pollutes your source tree, and every project gets its own isolated, worktree-sha
 | **git** | recommended | gives each repo a stable, worktree-shared vault key (works without it, but the vault then keys on the current directory) |
 | **code-review-graph** *(recommended)* | code-graph queries (blast-radius, reachability) in ~15 skills + the CRG MCP server | installed & registered by `/ai-sdlc:setup`; absent → graceful degrade |
 
+> **Supply-chain / trust boundary.** `code-review-graph` is a **third-party** package
+> ([github.com/tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph), not this
+> project's author). `/ai-sdlc:setup` installs it and registers it as a **trusted MCP server** in your
+> project's gitignored `.mcp.json`, and it feeds the "reality > code-graph" trust tier — so it has real
+> blast radius. It is pinned to `>=2.3,<3` in `requirements.txt`; setup prints the resolved version before
+> registering, and you approve a one-time trust prompt. For a reproducible install, pin an exact version.
+
 ---
 
 ## Installation
