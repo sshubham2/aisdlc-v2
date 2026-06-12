@@ -101,7 +101,10 @@ If `field-recon.json` contains an authoritative contradiction, note in the spike
 If the target environment is available (connected device, local server, cloud account with credentials):
 
 1. Write throwaway code to `<vault>/spikes/code/spike-<name>/`. Mark every file: `# THROWAWAY — not for production`.
-2. Execute via Bash; capture output/logs.
+2. Execute via Bash; capture output/logs. **Redact before persisting (4.7):** spikes run against REAL
+   environments (cloud accounts, devices), so captured output can carry live credentials that would sit in
+   the vault as plaintext. Pipe any captured output you store as `evidence` through the redactor:
+   `<cmd> 2>&1 | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/secret_scrub.py"`.
 3. Decide: **GO** / **NO-GO** / **CONDITIONAL**
 
    - **GO** — assumption holds; proceed with design

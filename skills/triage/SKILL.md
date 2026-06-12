@@ -179,6 +179,14 @@ On **re-triage**: append a new `history` entry to `triage.json` via
 `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" --file triage.json --array history --json '<entry>'`.
 Update `risk-register.json` via `scripts.lib.vault_edit update --file risk-register.json --array risks --id <R-NN> --set ...` (or `append` for a new risk) for any changed/new risks.
 
+**Pin the vault (4.7, FRESH only).** After the FRESH writes, record the tier-2 git-common-dir pin so a later
+repo move/rename does NOT orphan this vault (the pin survives a rename; `_vault_paths` reads it at tier 2):
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" write-pin
+```
+It also drops a `.source-repo` back-ref in the vault (for `vault_admin list`'s orphan detection) and WARNs if a
+same-name / different-hash sibling vault already exists (a likely prior-rename orphan to migrate + clean up).
+
 ### Step 5b-pre — Offer code-review-graph integration
 
 If `crg` passed Step 0, offer via `AskUserQuestion`:

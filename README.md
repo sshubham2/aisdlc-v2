@@ -153,6 +153,21 @@ mkdir -p /collab/.aisdlc                                     # ensure it exists 
 
 Every project then resolves to `/collab/.aisdlc/<slug>-<hash>`.
 
+**Lifecycle, backup & GC.** The vault is plain JSON outside your repo, so it is **not** covered by your repo's
+git history. To version or back it up, `git init` inside the vault dir (`cd "$(… _vault_paths.py --path)" && git init`)
+or copy it anywhere. `/triage` and `/adopt` write the **tier-2 pin** automatically so a repo move/rename doesn't
+orphan the vault. To audit or GC machine-wide:
+
+```bash
+$PY scripts/lib/vault_admin.py list                 # every vault under the base + orphan status
+$PY scripts/lib/vault_admin.py uninstall <name> --yes   # delete an orphaned vault
+```
+
+**Captured evidence is secret-swept (4.7).** `/validate-slice` and `/risk-spike` run commands against real
+environments; before any captured output is stored as `evidence`, pipe it through
+`scripts/lib/secret_scrub.py`, which redacts credentials (`[REDACTED:<type>]`) using the same VAL-1 patterns —
+so tokens/keys don't persist plaintext in the vault.
+
 **Example — pin just one repo** (tier 2):
 
 ```bash

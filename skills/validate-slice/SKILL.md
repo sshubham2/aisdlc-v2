@@ -86,6 +86,15 @@ Every AC result MUST record:
 
 "It worked" without evidence is not a PASS.
 
+> **SECRET-SWEEP (4.7) — redact before persisting.** Captured command output can carry secrets
+> (tokens, connection strings, API keys) that would sit in the vault as plaintext FOREVER (VAL-1
+> scans the code diff, not the vault). Before writing captured output into any `evidence` field,
+> pipe it through the redactor — it replaces credentials with `[REDACTED:<type>]` using the same
+> VAL-1 patterns:
+> ```bash
+> <your-command> 2>&1 | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/secret_scrub.py"
+> ```
+
 ## Step 3 — classify results
 
 For each criterion: **PASS** | **FAIL** | **PARTIAL**

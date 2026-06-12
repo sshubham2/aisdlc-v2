@@ -54,6 +54,9 @@ if str(_REPO) not in sys.path:
 
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
+# 4.7: the VAL-1 secret patterns now live in scripts.lib.secret_scrub (single source of truth),
+# so the diff scan here and the vault evidence-redactor pipe the SAME regexes.
+from scripts.lib.secret_scrub import SECRET_PATTERNS as _SECRET_PATTERNS
 
 try:
     import tomllib  # Python 3.11+
@@ -63,30 +66,7 @@ except ModuleNotFoundError:  # pragma: no cover
 # Standard library module names — frozenset(stdlib) in Python 3.10+.
 _STDLIB: frozenset[str] = getattr(_sys_module, "stdlib_module_names", frozenset())
 
-# --- Layer A: secret patterns ---
-
-_SECRET_PATTERNS: dict[str, re.Pattern[str]] = {
-    "aws-access-key": re.compile(r"\b(AKIA[0-9A-Z]{16})\b"),
-    "github-token-classic": re.compile(r"\b(ghp_[A-Za-z0-9]{36,255})\b"),
-    "github-token-fine": re.compile(r"\b(github_pat_[A-Za-z0-9_]{60,255})\b"),
-    "github-token-other": re.compile(r"\b(gh[orsu]_[A-Za-z0-9]{36,255})\b"),
-    "slack-token": re.compile(r"\b(xox[baprs]-[A-Za-z0-9-]{10,})\b"),
-    "private-key": re.compile(
-        r"(-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----)"
-    ),
-    "anthropic-key": re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{40,})\b"),
-    "openai-key": re.compile(
-        r"\b(sk-(?:proj-)?[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,})\b"
-    ),
-    "jwt": re.compile(
-        r"\b(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b"
-    ),
-    "generic-api-key": re.compile(
-        r"(?i)(?:api[_-]?key|apikey|api[_-]?token|access[_-]?token|"
-        r"secret[_-]?key|password)\s*[:=]\s*"
-        r"['\"]([A-Za-z0-9_+/=\-]{20,})['\"]"
-    ),
-}
+# --- Layer A: secret patterns (imported from scripts.lib.secret_scrub above, 4.7) ---
 
 # --- Layer B: known aliases (import name -> package name as in pyproject) ---
 

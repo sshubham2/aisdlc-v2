@@ -132,6 +132,12 @@ Write `<vault>/concept.json` (schema: `examples/concept.json`) grounded in code 
 - `constraints.infra`: from user only (code cannot determine this reliably).
 - Add `doc_vs_code_discrepancies` field if /diagnose found README contradictions.
 
+**Pin the vault (4.7, NEW vault only — skip when merging into an existing one).** Record the tier-2
+git-common-dir pin so a later repo move/rename does not orphan this vault:
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" write-pin
+```
+
 ## Step 8 — capture historical ADRs (firsthand only)
 
 If Q8 produced firsthand decisions: write `<vault>/decisions/ADR-historical-NNN.json` for each (schema: `examples/adr.json`).
