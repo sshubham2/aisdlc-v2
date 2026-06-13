@@ -45,6 +45,7 @@ The artifacts are full of internal codes. Your job is to **render them into mean
 | `R-27 verdict:no-go → fallback SSE+short-poll` | "We tested whether one server could hold 500 live connections. It tapped out around 120. So we changed approach: instead of one always-open socket per viewer, the page now polls for updates on a lightweight channel." |
 | `ADR-014 reversibility:expensive` | "We committed to using a server-sent-events feed here. That's a costly decision to undo later, so we only locked it because this slice genuinely needs it." |
 | `must_not_defer: "signed-out users must not leak presence"` | "One thing we refused to cut corners on: a signed-out person must never appear as 'present'." |
+| `tournament.proposals[]` with `selected: core` / `partial` / `none` + `selection_rationale` | "Three approaches were weighed. We **built on** the convergent-replica one, **borrowed part of** the managed pub/sub idea, and **set aside** the causal-order log — because the live-view code already speaks the chosen protocol and the simpler shape was enough." (translate `core`→built on, `partial`→borrowed part of, `none`→set aside; never leave `core`/`partial`/`none` in the prose.) |
 
 **Banned vocabulary** (these are pipeline plumbing — the reader must never see them): `AC`/`AC1`/`AC2` as a
 bare label, `C1`/`M-add`, `TRI-1`, `SVW-1`, `WIRE-1`, `PCA-1`, `DR-1`, `blast-radius`, `disposition`,
@@ -56,24 +57,26 @@ session cookie, endpoint) — those help the technical reader. You MAY cite a sh
 ## The shape of the story
 
 Tell it as a narrative with a beginning, middle, and (if the slice has gotten there) an end. Decide which
-sections apply from what you were handed — the lifecycle stage drives this:
+sections apply from what you were handed — the lifecycle stage drives this. **Problems live in ONE place** (the
+"What went wrong, and what we did" thread, section 6) — never also scatter them through the other sections.
 
 **Always (the front half — available before building):**
 1. **What we set out to do** — the objective in 2-4 plain sentences. The problem, who it's for, why it matters.
 2. **What "done" looks like** — the acceptance criteria as plain-language outcomes (use `items`).
-3. **What we proved before building** — the spikes: the risky assumption, what the experiment showed, and what we did about it. Skip this section entirely if there were no spikes.
-4. **How it's built** — the design/architecture in plain English first, with the real pieces and interfaces named for the engineer. Cover the moving parts, the new interfaces, any data changes, and how it handles auth + failures. Put deeper specifics in `tech_note_md`.
-5. **What the review changed** — THE section the reader most wants: what an independent reviewer pushed back on, and concretely how the plan changed in response. If the second reviewer added or softened anything, fold that in. If review was clean (nothing flagged), say so plainly and briefly — that is itself information. Skip only if no review happened (a low-risk slice may skip review).
-6. **Decisions we locked** — the ADRs as plain trade-offs, noting which are cheap vs. costly to reverse. Skip if none.
+3. **What we proved before building** — the spikes: the risky assumption and what the experiment showed. (If a spike DISPROVED something and forced a change of plan, state the *result* here but tell the "what we did about it" in section 6.) Skip this section entirely if there were no spikes.
+4. **How we chose the approach** — present this section **only when `design.json` has a `tournament` block.** Narrate the design contest: each designer's approach in plain English, which was selected (translate `core`→"built on", `partial`→"borrowed part of", `none`→"set aside"), and the plain-language `selection_rationale` (why the winner won — usually a reality check: how the real code is shaped, what a spike could prove, what was simplest). If a cross-domain analogy was imported, name it in plain words. **Graceful degrade:** when there is NO `tournament` block (a small, single-approach slice — the common case for low-tier work), do NOT fabricate a contest; write ONE short sentence ("Only one sensible approach here, so there was no contest to weigh.") or omit the section. Never invent rejected options.
+5. **How it's built** — the design/architecture in plain English first, with the real pieces and interfaces named for the engineer. Cover the moving parts, new interfaces, data changes, and how it handles auth + failures. Put deeper specifics in `tech_note_md`. (Problems found while building go in section 6, not here.)
+6. **What went wrong, and what we did** — the ONE honest thread of every problem and its resolution across the whole lifecycle, each framed "what went wrong → what we did about it": a spike that disproved an assumption (and the fallback we switched to); what an independent reviewer pushed back on (and how the plan changed); what a second reviewer added; what code review found (and the fix); anything deferred or that deviated during the build (and why); and any surprise from real-world testing (and the response). This **REPLACES** per-stage problem narration — problems are told here, ONCE, never duplicated inside sections 5/8/9. Pre-build it covers spike disproofs + review push-backs; it grows as the slice advances. **If a stage was genuinely clean, say so in one honest line** ("Review found nothing to change.") — never invent a problem for symmetry. This is the **highest-jargon-density section**: translate EVERY internal code, severity, and disposition into plain English — no `AC1`/`C1`/`R-27`/`ADR-NNN`/`disposition`/"the Critic" may appear in the prose (put any trace tag in the small `ref` field only). Skip the whole section only when nothing went wrong anywhere AND nothing was deferred.
+7. **Decisions we locked** — the ADRs as plain trade-offs, noting which are cheap vs. costly to reverse. Skip if none.
 
-**Only if the slice has advanced (the back half):**
-7. **What we built** — from build-log: what actually got made, anything deferred (and why), any deviations.
-8. **What the code review found** — from code-review.json, in plain language.
-9. **What reality testing showed** — from validation.json: did it pass on real devices/data/users; what surprised us.
+**Only if the slice has advanced (the back half) — the non-problem content; problems from these stages go in section 6:**
+8. **What we built** — from build-log: what actually got made (deferrals/deviations themselves are told in section 6).
+9. **What reality testing showed** — from validation.json: whether it passed on real devices/data/users (the per-criterion result; any surprise or failure is told in section 6).
 10. **What we learned** — from reflection.json: what held up, what was wrong, what we'd do differently.
 
-Keep the whole thing readable in a few minutes. Be honest — if something is shaky, broken, or deferred, say so.
-Do not pad. A pre-build slice with a clean review might be 5 sections; a shipped slice with surprises might be 9.
+Keep the whole thing readable in a few minutes. Be honest — if something is shaky, broken, or deferred, say so
+(in section 6). Do not pad. A pre-build slice with a clean review might be 5 sections; a shipped slice with
+surprises has a rich section 6.
 
 ## Output JSON schema
 

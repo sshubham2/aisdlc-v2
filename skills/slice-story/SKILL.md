@@ -25,16 +25,32 @@ to the user via `SendUserFile`** (it reaches them wherever they are, phone inclu
 Active slice + which artifacts exist (drives which sections the story includes):
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only 2>/dev/null)"
+ARG="${ARGUMENTS[0]:-}"   # a slice id (e.g. /commit-slice's on-ship auto-emit) may target an ARCHIVED slice
+if [ -n "$ARG" ]; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only 2>/dev/null)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only 2>/dev/null)"; fi
 $PY -c "import json,glob,os,sys; d=sys.argv[1] or None; have=[os.path.basename(f) for f in sorted(glob.glob(f'{d}/*.json'))] if d else []; mb=json.load(open(f'{d}/mission-brief.json',encoding='utf-8')) if d and os.path.exists(f'{d}/mission-brief.json') else {}; ms=json.load(open(f'{d}/milestone.json',encoding='utf-8')) if d and os.path.exists(f'{d}/milestone.json') else {}; print(json.dumps({'active_slice_dir':d,'slice':mb.get('slice'),'title':mb.get('title'),'mode':mb.get('mode'),'risk_tier':mb.get('risk_tier'),'stage':ms.get('stage'),'artifacts_present':have},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
 ## Step 0 — resolve the target slice
 
 From the injection above take `active_slice_dir` (absolute path), `slice`, `title`, `mode`, `risk_tier`, `stage`.
-If `$ARGUMENTS` names a slice id (e.g. `slice-017`), target that folder instead (`<vault>/slices/<that-folder>/`).
 
-Prerequisite: the folder must contain at least `mission-brief.json`. If it doesn't, STOP:
+**If `$ARGUMENTS` names a slice id** (e.g. `slice-017`, or `/commit-slice`'s on-ship auto-emit passing the
+just-shipped slice id) the target may already be **archived** — by `/reflect`'s DD-20 a slice is moved to
+`slices/archive/` *before* `/commit-slice` runs. So resolve it **archive-aware** and use the resolved ABSOLUTE
+path as `<target-slice>` for ALL subsequent reads (Step 1) and writes (Steps 3, 4), overriding any injected
+active-slice path:
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"
+TARGET="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only 2>/dev/null)"
+```
+`--slice` searches BOTH `slices/` and `slices/archive/` (active first) and prints an ABSOLUTE path — so the write
+target is cwd-independent (correct under `/commit-slice --merge`, which `cd`s to the main tree, AND `--push`,
+which stays on the slice worktree). With NO `$ARGUMENTS`, use the injected `active_slice_dir` (the active,
+non-archived slice) as before.
+
+Prerequisite: the resolved folder must contain at least `mission-brief.json`. If it doesn't (empty `TARGET` /
+no such slice id), STOP:
 _"No slice to tell a story about — run /slice first."_ If `design.json` is absent, proceed but tell the user the
 story will be thin (objective + acceptance outcomes only — there's no design or review to narrate yet).
 
@@ -124,8 +140,9 @@ are — including a phone over Remote Control — with no external service and n
 file goes to the user's own session, not a third-party endpoint) the auto-mode safety classifier does not block it:
 
 - `files`: `["<target-slice>/story.html"]`
-- `status`: use `"proactive"` when `/slice-story` was auto-invoked by `/critique` or the user may be away (so it
-  pushes to their phone); use `"normal"` when the user just invoked `/slice-story` themselves and is watching.
+- `status`: use `"proactive"` when `/slice-story` was auto-invoked (by `/critique` pre-build, or by
+  `/commit-slice` on ship — the shipped story is the keystone deliverable) or the user may be away (so it pushes
+  to their phone); use `"normal"` when the user just invoked `/slice-story` themselves and is watching.
 - `caption`: one short line, e.g.
   `"Slice story — <slice-id> <title> (<stage-label>): a plain-language overview of the objective, how it's built, and what review changed."`
 
@@ -134,8 +151,9 @@ delivery tool is somehow unavailable, fall back to telling the user the local pa
 
 ## Step 6 — report and hand off
 
-After delivering the file, tell the user plainly:
+After delivering the file, tell the user plainly. **The hand-off depends on the slice's stage:**
 
+**Pre-build / mid-lifecycle** (stage is NOT `shipped`):
 ```
 Slice story ready — <slice-id> <title> (<stage-label>).
   • Delivered above (story.html) — open it for the full styled report.
@@ -147,9 +165,21 @@ because of it.
 When you're ready, run /build-slice to start building.
 ```
 
-**Do NOT auto-advance to /build-slice.** This is a halt point: the user reviews the story and starts the build
-themselves (`/build-slice` is user-invoked by design). If the story surfaces something that should change the
-design, the user can loop back to `/design-slice` → `/critique` before building.
+**Shipped** (stage == `shipped` — the on-ship auto-emit from `/commit-slice`, or a manual run against an archived
+slice): the build already happened, so do NOT prompt `/build-slice` — it would strand the reader:
+```
+Slice story ready — <slice-id> <title> (shipped — story archived).
+  • Delivered above (story.html) — the complete record of this shipped slice.
+  • Saved at: <target-slice>/story.html
+
+This slice has shipped; its full story — the objective, the approaches weighed, what review and reality testing
+found, and what was learned — is archived alongside it. Nothing more to do here.
+```
+
+**Do NOT auto-advance to /build-slice.** This is a halt point: a pre-build reader reviews the story and starts the
+build themselves (`/build-slice` is user-invoked by design; and a shipped slice has no build to start). If a
+pre-build story surfaces something that should change the design, the user can loop back to `/design-slice` →
+`/critique` before building.
 
 ## Critical rules
 
