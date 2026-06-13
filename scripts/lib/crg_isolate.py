@@ -28,6 +28,16 @@ import argparse
 import sys
 from pathlib import Path
 
+# --- plugin-root import bootstrap (shared lib invoked by ABSOLUTE PATH from SKILL.md) ---
+# Invoked as `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/crg_isolate.py" ...`, which puts
+# scripts/lib (NOT the plugin root) on sys.path[0]; add the plugin root so `from scripts.lib ...`
+# resolves (matches gate_log.py et al.).
+_PLUGIN_ROOT = Path(__file__).resolve().parents[2]  # <plugin>/scripts/lib/crg_isolate.py -> <plugin>
+if str(_PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_ROOT))
+
+from scripts.lib import _stdout
+
 
 def _check(target: Path, data_dir: Path) -> int:
     # M-add-3: env-var isolation requires a recognizable project root.
@@ -73,6 +83,7 @@ def _verify(target: Path, data_dir: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _stdout.reconfigure_stdout_utf8()
     ap = argparse.ArgumentParser(prog="crg_isolate")
     ap.add_argument("mode", choices=["check", "verify"])
     ap.add_argument("--target", required=True)
