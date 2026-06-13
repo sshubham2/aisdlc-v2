@@ -9,10 +9,11 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
-from scripts.lib.active_slice import resolve_active_slice
+from scripts.lib.active_slice import resolve_active_slice, resolve_slice_by_id
 
 
 def _make_slice(vault, folder, *, stage=None, at=None):
@@ -105,3 +106,75 @@ def test_folder_only_cli(run_script, tmp_path):
     )
     assert r.returncode == 0
     assert r.stdout.strip() == "slice-010-x"
+
+
+# ── resolve_slice_by_id (archive-aware by-id lookup for /slice-story; B1) ─────────
+
+def test_resolve_by_id_active(tmp_path):
+    vault = tmp_path / "v"
+    vault.mkdir()
+    _make_slice(vault, "slice-011-feature", stage="build")
+    info = resolve_slice_by_id(vault, "slice-011")
+    assert info is not None
+    assert info["slice"] == "slice-011"
+    assert info["source"] == "by-id-active"
+
+
+def test_resolve_by_id_finds_archived(tmp_path):
+    # a shipped slice lives under slices/archive/ — where /reflect moved it BEFORE
+    # /commit-slice's on-ship auto-emit runs (the B1 case resolve_active_slice misses).
+    vault = tmp_path / "v"
+    vault.mkdir()
+    _make_slice(vault, "archive/slice-012-shipped", stage="complete")
+    info = resolve_slice_by_id(vault, "slice-012")
+    assert info is not None
+    assert info["slice"] == "slice-012"
+    assert info["source"] == "by-id-archive"
+    assert "archive" in info["path"].replace("\\", "/")
+
+
+def test_resolve_by_id_active_preferred_over_archive(tmp_path):
+    vault = tmp_path / "v"
+    vault.mkdir()
+    _make_slice(vault, "slice-013-active", stage="build")
+    _make_slice(vault, "archive/slice-013-old", stage="complete")
+    info = resolve_slice_by_id(vault, "slice-013")
+    assert info["source"] == "by-id-active"  # slices/ searched before slices/archive/
+
+
+def test_resolve_by_id_matches_full_folder_name(tmp_path):
+    # the id is given as the canonical slice-NNN, but slice-NNN-<name> must also match
+    vault = tmp_path / "v"
+    vault.mkdir()
+    _make_slice(vault, "archive/slice-014-some-name", stage="complete")
+    assert resolve_slice_by_id(vault, "slice-014")["slice"] == "slice-014"
+    assert resolve_slice_by_id(vault, "slice-014-some-name")["slice"] == "slice-014"
+
+
+def test_resolve_by_id_none_when_missing(tmp_path):
+    vault = tmp_path / "v"
+    vault.mkdir()
+    _make_slice(vault, "slice-015-x", stage="build")
+    assert resolve_slice_by_id(vault, "slice-099") is None
+    assert resolve_slice_by_id(vault, "not-a-slice") is None
+
+
+def test_resolve_by_id_absolute_path(tmp_path):
+    # M4: the returned path is absolute so the on-ship write target is cwd-independent.
+    vault = tmp_path / "v"
+    vault.mkdir()
+    _make_slice(vault, "archive/slice-016-z", stage="complete")
+    info = resolve_slice_by_id(vault, "slice-016")
+    assert Path(info["path"]).is_absolute()
+
+
+def test_slice_cli_resolves_archive(run_script, tmp_path):
+    vault = tmp_path / "v"
+    vault.mkdir()
+    _make_slice(vault, "archive/slice-017-shipped", stage="complete")
+    r = run_script(
+        "scripts/lib/active_slice.py",
+        ["--vault", str(vault), "--slice", "slice-017", "--path-only"],
+    )
+    assert r.returncode == 0
+    assert r.stdout.strip().replace("\\", "/").endswith("slices/archive/slice-017-shipped")

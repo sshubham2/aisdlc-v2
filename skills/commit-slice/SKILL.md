@@ -3,7 +3,7 @@ name: commit-slice
 description: "Generate an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, ADRs, shippability.json). Dispatches message rendering to a Haiku subagent (COST-1). Supports three mutually exclusive modes: --merge (solo-dev local merge + safe-delete), --push (push slice branch + display PR hint), --sync-after-pr (post-PR local cleanup). No-flag default: generate and show only. Also writes a per-slice changelog.json audit record into the archived slice folder (Step 4.5); never writes to the code repo root EXCEPT the opt-in CI ship receipt (.aisdlc/receipts/, Step 4.8 — emitted only when the repo carries the aisdlc-merge-gate workflow)."
 when_to_use: "Trigger phrases: /commit-slice, 'generate commit message', 'audit commit', 'slice commit message', '/commit-slice --merge', '/commit-slice --push', '/commit-slice --sync-after-pr'. Run after /reflect (which archives the slice). User-invoked only — never auto-advanced into."
 argument-hint: "[--merge | --push | --sync-after-pr]"
-allowed-tools: Read, Grep, Glob, Bash, Write, Agent, AskUserQuestion
+allowed-tools: Read, Grep, Glob, Bash, Write, Agent, AskUserQuestion, Skill
 disable-model-invocation: true
 ---
 
@@ -322,6 +322,31 @@ the live backlog stays small (Direction #3) and a `shipped` candidate ALWAYS mea
 (In default mode 5a — which only PRINTS the commit command — the candidate stays `validated` until the user
 actually commits and re-runs `/commit-slice --merge`/`--push`.)
 
+## Step 6.5 — auto-emit the shipped slice story (AC1 / ADR-003 — best-effort, NEVER a gate)
+
+Run this **only in `--merge` / `--push`** (the modes where Step 6 marked the candidate shipped — no-flag default
+and `--sync-after-pr` do NOT auto-emit). Now that the slice has shipped, refresh its plain-language story with the
+full build / review / reality-testing / learnings folded in, into the **archived** slice folder (`/reflect`
+already moved the slice to `slices/archive/slice-NNN-<name>/` — DD-20), replacing the pre-build draft.
+
+Invoke `/slice-story slice-NNN-<name>` via the **`Skill`** tool, passing the slice id as the argument.
+`/slice-story` resolves the (now archived) slice via its archive-aware by-id resolver (`active_slice.py --slice`),
+regenerates `story-sections.json` + `story.html` in place (overwrite), and delivers it `proactive` (the shipped
+story is the keystone deliverable — it reaches the owner's phone). The `Skill` grant is in this skill's
+`allowed-tools` (line 6); `disable-model-invocation: true` blocks the model from invoking `/commit-slice` ITSELF
+— it does **not** impede this OUTBOUND Skill call. **Do NOT remove the grant.**
+
+**Fire-and-forget — NEVER a gate (must-not-defer):**
+- The commit/merge/push has ALREADY completed; the story refresh is a downstream side-effect, not part of the
+  commit. Do **NOT await** the forked narrator inside the commit flow.
+- If `/slice-story` errors / times out / its narrator fails: surface ONE line — _"Story refresh failed — the
+  shipped story was not updated; the commit/merge/push already completed."_ — and CONTINUE. Never block, abort,
+  or roll back anything on a story-refresh failure.
+- This is **not** an auto-advance edge: `/commit-slice` still ends at its own hand-off; Step 6.5 is a best-effort
+  flourish that emits the final story, nothing more.
+
+`--sync-after-pr` skips this step (it generates no commit; the story was already refreshed when `--push` ran).
+
 ## Critical rules (all modes)
 
 - NEVER fabricate content — every field sourced from a vault file.
@@ -335,7 +360,10 @@ actually commits and re-runs `/commit-slice --merge`/`--push`.)
 ## Pipeline position
 
 - predecessor: `/reflect` (user-invoked handoff — NOT an auto-advance edge)
-- successor: `/slice` (next slice) or `/pulse` (re-orient)
-- auto-advance: false — `/commit-slice` is never auto-invoked by any skill; it is always user-triggered
+- successor: `/slice` (next slice) or `/pulse` (re-orient). In `--merge`/`--push`, Step 6.5 also makes ONE
+  best-effort OUTBOUND `Skill` call to `/slice-story <slice-id>` to emit the shipped story — fire-and-forget,
+  never awaited, never a gate (ADR-003); this is the only outbound auto-invoke from `/commit-slice`.
+- auto-advance: false — `/commit-slice` is never auto-invoked INTO by any skill; it is always user-triggered (the
+  Step 6.5 emit is an OUTBOUND best-effort side-effect, not an auto-advance of the loop)
 - user-input gates: always user-invoked; `--merge`/`--push`/`--sync-after-pr` each require explicit yes/no confirmations before any git state change; PCR-2b HARD gate uses TRI-RESOLVE-1 (AskUserQuestion, 3 options)
 - on-clean-completion: after the chosen mode's git actions succeed, write `changelog.json` into the archived slice + report the result; hand back to the user for `/slice` (next) or `/pulse` (re-orient) — never auto-advances.

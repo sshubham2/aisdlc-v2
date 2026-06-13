@@ -128,6 +128,33 @@ def resolve_active_slice(vault: str | Path, repo_root: str | Path = ".") -> dict
     return _slice_info(pool[0][0], "vault-scan")
 
 
+def resolve_slice_by_id(vault: str | Path, slice_id: str) -> dict | None:
+    """Resolve a slice folder BY ID across BOTH ``slices/`` AND ``slices/archive/``
+    (active first, then archive), matching on the NNN number so ``slice-5``,
+    ``slice-005`` and ``slice-005-enrich-slice-story`` all resolve. Returns
+    ``_slice_info`` with an **absolute** path (``.resolve()``-d, so the write target
+    is cwd-independent — M4), or ``None`` when no folder matches.
+
+    Unlike ``resolve_active_slice`` (which deliberately EXCLUDES ``archive/`` — that
+    exclusion is load-bearing for /reflect, /critique, /design-slice), this is the
+    archive-AWARE lookup ``/slice-story`` uses to target a slice that may already be
+    shipped + archived: ``/commit-slice``'s on-ship auto-emit runs AFTER ``/reflect``
+    moved the folder to ``archive/`` (B1). Read-only; no git branch needed."""
+    m = re.match(r"^\s*slice-0*(\d+)(?:-.*)?\s*$", str(slice_id))
+    if not m:
+        return None
+    num = int(m.group(1))
+    slices_dir = Path(vault) / "slices"
+    for base, source in ((slices_dir, "by-id-active"), (slices_dir / "archive", "by-id-archive")):
+        if not base.is_dir():
+            continue
+        for p in sorted(base.iterdir()):
+            fm = _SLICE_FOLDER_RE.match(p.name)
+            if p.is_dir() and fm and int(fm.group(1)) == num:
+                return _slice_info(p.resolve(), source)
+    return None
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────────
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -139,6 +166,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                    help="vault root (overrides $AI_SDLC_VAULT_ROOT / the computed default)")
     p.add_argument("--repo-root", "--root", dest="repo_root", default=".",
                    help="worktree/repo root for git-branch resolution (default: cwd)")
+    p.add_argument("--slice", default=None, metavar="slice-NNN",
+                   help="resolve THIS slice by id across slices/ AND slices/archive/ "
+                        "(archive-aware; for /slice-story targeting a possibly-shipped "
+                        "slice), instead of resolving the active slice")
     p.add_argument("--json", action="store_true",
                    help="emit the info dict as JSON (default: one-line text)")
     p.add_argument("--path-only", action="store_true",
@@ -152,7 +183,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     args = _build_arg_parser().parse_args(argv)
-    info = resolve_active_slice(_root(args.vault), args.repo_root)
+    if args.slice:  # archive-aware by-id lookup (/slice-story on a possibly-shipped slice)
+        info = resolve_slice_by_id(_root(args.vault), args.slice)
+    else:
+        info = resolve_active_slice(_root(args.vault), args.repo_root)
     if args.path_only:  # BB-10: single-value capture for SKILL.md sub-shells (consistent with --json)
         print(info["path"] if info else "")
         return 0
