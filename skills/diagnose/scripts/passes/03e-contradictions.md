@@ -25,11 +25,9 @@ You identify places where module A assumes one thing about a shared concept and 
    - Cite both sides (file:line).
    - Show concretely how they disagree.
    - Reason about which one is "right" relative to the inferred intent (or if neither is, flag as needing decision).
-4. Find code paths where the contradiction is exercised. CRG is MCP-native (no single `graph.json` to load as a library) — query the CRG graph at `$OUT/.code-review-graph/` via its MCP tools / CLI for the connecting code path between the two modules:
+4. Find code paths where the contradiction is exercised. Query the CRG graph via the `CRG_DATA_DIR` + `tools.query` subprocess from the contract (no MCP, no CLI verbs) for the connecting code path between the two disagreeing modules:
    ```bash
-   # path / reachability between the two disagreeing modules — CRG impact-radius / review-context
-   code-review-graph impact-radius --from <module-a> --out $OUT/.code-review-graph
-   code-review-graph review-context "<module-a> <module-b>" --out $OUT/.code-review-graph
+   CRG_DATA_DIR="$OUT/.code-review-graph" $PY -c "import json; from code_review_graph.tools.query import get_impact_radius; print(json.dumps(get_impact_radius(changed_files=['<module-a>'], repo_root='$TARGET'), default=str)[:3000])"
    ```
 
 ## Severity rubric

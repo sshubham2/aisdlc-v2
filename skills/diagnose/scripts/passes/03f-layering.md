@@ -53,9 +53,9 @@ You identify places where the codebase's dominant layering pattern is selectivel
 
    **Action on result**: if zero textual matches exist in the evidence file across all applicable variants, the CRG edge is a phantom (often from cross-file same-name symbol collapse) — DOWNGRADE the finding to severity `low` with `evidence[].note: "downgraded: no textual import grep-match (LAYER-EVID-1)"`, OR skip emission entirely if no other layering signal supports it (e.g., no dynamic-import via string literal, no test-gap on alleged boundary).
 
-5. Use CRG `review-context` to confirm the layer order / structural components:
+5. Use CRG to confirm the layer order / structural components, via the `CRG_DATA_DIR` + `tools.query` subprocess from the contract (no `review-context` CLI verb):
    ```bash
-   code-review-graph review-context "layer order components" --out $OUT/.code-review-graph
+   CRG_DATA_DIR="$OUT/.code-review-graph" $PY -c "import json; from code_review_graph.tools.query import semantic_search_nodes; print(json.dumps(semantic_search_nodes(query='layer order components', repo_root='$TARGET', limit=20).get('results', []), default=str)[:3000])"
    ```
 
 ## Severity rubric

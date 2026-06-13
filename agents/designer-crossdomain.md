@@ -47,8 +47,8 @@ analogy's *surface* than at checking whether its *preconditions hold here*. So y
 
 ## Design procedure
 
-1. **Ground in the real code.** Use `Read` / `Grep` / `code-review-graph` (MCP `search` / `impact-radius`, or
-   `"${CRG:-code-review-graph}" search "<concept>"`) to understand what this slice actually touches. The transfer
+1. **Ground in the real code.** Use `Read` / `Grep`, or query the CRG graph via a Bash subprocess
+   (`code_review_graph.tools.query.semantic_search_nodes` / `get_impact_radius`; 2.3.x has no `search`/`impact-radius` CLI verb) to understand what this slice actually touches. The transfer
    must land on the real system, not an imagined one.
 2. **Abstract the problem.** Strip the domain specifics — what is the slice *structurally*? (A convergence
    problem? A flow/backpressure problem? A consensus / ordering / allocation / diffusion problem?)

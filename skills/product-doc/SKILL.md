@@ -28,9 +28,9 @@ are agent-drafted (Step 2).
 - **CRG public surface** (the ground truth for interface facts). If `.code-review-graph/` is missing/stale,
   `"${CRG:-code-review-graph}" build` (or `update`). Then harvest the public surface:
 
-```bash
-"${CRG:-code-review-graph}" search "entrypoint OR export OR cli OR endpoint OR public api"
-```
+Harvest it with the CRG **MCP tool** (live-MCP context): call
+`mcp__code-review-graph__semantic_search_nodes_tool` with a query like
+`"entrypoint OR export OR cli OR endpoint OR public api"`. (CRG 2.3.x has no `search` CLI verb — it is MCP-only.)
 
   Capture a compact summary (entry points / exported functions / CLI commands / endpoints) — this is what the agent
   documents and what goes into the manifest's `public_surface`.

@@ -207,7 +207,7 @@ If `crg` passed Step 0, offer via `AskUserQuestion`:
 If yes:
 ```bash
 "${CRG:-code-review-graph}" install --platform claude-code
-"${CRG:-code-review-graph}" build .
+"${CRG:-code-review-graph}" build --repo .
 ```
 
 If the directory is not a git repo and `code-review-graph install` fails with a git error: **STOP**. Ask:

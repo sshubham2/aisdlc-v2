@@ -5,7 +5,7 @@ You reconstruct what this codebase is **trying to be** from raw code. No README,
 ## Inputs
 - `TARGET` — path to the repo being diagnosed
 - `OUT` — path to `diagnose-out/`
-- `OUT/.code-review-graph/` — the CRG code graph (query via the `review-context` / `search` MCP tools for hotspots, components)
+- `OUT/.code-review-graph/` — the CRG code graph (query via the `CRG_DATA_DIR` + `tools.query` subprocess — see Use CRG)
 
 ## Hard rules
 - **No documentation reads.** Do not read any `.md`, `.rst`, `.txt`, `.adoc`, `.markdown`, `.org` files or anything in a `docs/` directory in `TARGET`. Source code, config (`.yaml`, `.toml`, `.json`, `.env`), schemas, build manifests, and CRG only. Inline docstrings/comments may be read but not trusted as ground truth.
@@ -25,13 +25,10 @@ You reconstruct what this codebase is **trying to be** from raw code. No README,
 
 ## Use CRG
 
-Query the CRG graph at `$OUT/.code-review-graph/` via the `search` MCP tool (or the `code-review-graph search` CLI):
-
-```bash
-code-review-graph search "main entry routes handlers" --out $OUT/.code-review-graph
-code-review-graph search "models entities domain" --out $OUT/.code-review-graph
-code-review-graph search "external api integration client" --out $OUT/.code-review-graph
-```
+Query the isolated graph with the canonical `CRG_DATA_DIR` + `code_review_graph.tools.query` subprocess pattern
+from the subagent contract above (you have no MCP tools, and 2.3.x has no `search` CLI verb).
+For this pass call `semantic_search_nodes(query=…, repo_root="$TARGET")` for: `"main entry routes handlers"`,
+`"models entities domain"`, `"external api integration client"`.
 
 ## Output format
 

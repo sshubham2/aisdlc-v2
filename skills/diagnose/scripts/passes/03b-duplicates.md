@@ -19,11 +19,11 @@ You identify duplicated code: both literal/AST duplicates and **semantic** dupli
 3. Skip: trivial getters/setters, generated code (look for "DO NOT EDIT" headers), test fixtures duplicated by design.
 
 ### Semantic duplicates (the AI-bloat signal)
-1. Use CRG `search` with capability keywords to cluster functions touching similar data:
+1. Use CRG `semantic_search_nodes` with capability keywords to cluster functions touching similar data (via the `CRG_DATA_DIR` + `tools.query` subprocess from the contract — no MCP, no CLI verbs):
    ```bash
-   code-review-graph search "fetch user by id" --out $OUT/.code-review-graph
-   code-review-graph search "validate email format" --out $OUT/.code-review-graph
-   code-review-graph search "send notification email" --out $OUT/.code-review-graph
+   CRG_DATA_DIR="$OUT/.code-review-graph" $PY -c "import json; from code_review_graph.tools.query import semantic_search_nodes
+   for kw in ['fetch user by id','validate email format','send notification email']:
+       print(kw, json.dumps(semantic_search_nodes(query=kw, repo_root='$TARGET', limit=15).get('results', []), default=str)[:1500])"
    ```
 2. For each cluster of >1 function, read the bodies and judge: are they doing the same thing differently? Concrete equivalence checks:
    - Same input shape, same output shape, same side effects?

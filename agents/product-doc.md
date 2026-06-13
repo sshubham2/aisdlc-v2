@@ -26,8 +26,8 @@ Description/overview prose may be synthesized from `concept.json`; **interface f
 ## Inputs you'll be given
 
 - **CRG public surface** — entry points / CLI / exports / endpoints the `/product-doc` skill harvested from
-  code-review-graph (the ground truth for interface facts). Re-query CRG yourself (`search`/`impact-radius` via
-  the MCP tools or `"${CRG:-code-review-graph}" search "<symbol>"`) or `Read`/`Grep` the cited files to confirm
+  code-review-graph (the ground truth for interface facts). Re-query CRG yourself (via a Bash subprocess:
+  `code_review_graph.tools.query.semantic_search_nodes` / `get_impact_radius`; 2.3.x has no `search`/`impact-radius` CLI verb) or `Read`/`Grep` the cited files to confirm
   before documenting any specific signature.
 - **Vault context** — `concept.json` (what the product is, the actors + their top actions, scope/non-goals),
   `triage.json` (mode), `slices/_index.json` (shipped capabilities).

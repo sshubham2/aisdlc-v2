@@ -56,7 +56,7 @@ This skill never authors a fix, a slice, a candidate file, or a `candidates.json
 
 | Situation | Response |
 |---|---|
-| CRG graph absent or clearly stale | Instruct user to rebuild (`code-review-graph build .`); answer from Read/Grep in the meantime. Never answer from a stale graph or recall. |
+| CRG graph absent or clearly stale | Instruct user to rebuild (`code-review-graph build --repo .`); answer from Read/Grep in the meantime. Never answer from a stale graph or recall. |
 | Question unanswerable from repo evidence | Say so explicitly — "the code doesn't determine this; here's what I can see and what's undetermined." Never speculate. |
 | Handoff declined | Terminate with zero side effects. |
 

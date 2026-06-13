@@ -29,13 +29,10 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reflection_lookup.py" --vault "$AI_SD
 
 ## Step 0 — graph context (before designing)
 
-Query code-review-graph for blast-radius and reachability of the modules this slice will touch.
-Use the CRG MCP tools (`impact-radius`, `review-context`, `search`) or the CLI:
-
-```bash
-"${CRG:-code-review-graph}" search "<module-or-concept>"
-"${CRG:-code-review-graph}" impact-radius --node "<file-or-module>"
-```
+Query code-review-graph for blast-radius and reachability of the modules this slice will touch, via the CRG
+**MCP tools** (you are in a live-MCP context here): `mcp__code-review-graph__semantic_search_nodes_tool` for
+`<module-or-concept>`, and `mcp__code-review-graph__get_impact_radius_tool` for the impacted set of
+`<file-or-module>`. (CRG 2.3.x has no `search`/`impact-radius` CLI verb — those capabilities are MCP-only.)
 
 If `.code-review-graph/` is missing or stale: `"${CRG:-code-review-graph}" build` (or `update`). If BOTH CRG
 and the `grep_vault.py` fallback below are unavailable/fail, proceed with the advisory note

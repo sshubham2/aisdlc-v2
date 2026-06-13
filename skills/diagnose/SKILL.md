@@ -97,7 +97,17 @@ Build the CRG graph:
 TARGET="$PWD"
 for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
 OUT="$TARGET/diagnose-out"
-"${CRG:-code-review-graph}" build "$TARGET" --out "$OUT/.code-review-graph"
+# Isolate diagnose's throwaway graph in $OUT via the CRG_DATA_DIR env var — it mutates NO global CRG
+# registry state (slice-006 / ADR-004). get_data_dir resolves registry > CRG_DATA_DIR > default, so guard
+# a pre-existing registry mapping shadowing it (and require a VCS-root $TARGET) rather than assume.
+export CRG_DATA_DIR="$OUT/.code-review-graph"
+if "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/crg_isolate.py" check --target "$TARGET" --data-dir "$CRG_DATA_DIR"; then
+  "${CRG:-code-review-graph}" build --repo "$TARGET"
+  "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/crg_isolate.py" verify --target "$TARGET" --data-dir "$CRG_DATA_DIR" \
+    || echo "diagnose: WARNING — graph did not isolate to $CRG_DATA_DIR; passes may read the wrong graph."
+else
+  echo "diagnose: CRG graph-isolation precondition failed (see above). Registry shadow -> run the suggested 'unregister', then re-run /diagnose. Non-VCS target -> graph step skipped; /diagnose continues in degraded mode (reduced, clearly-marked findings)."
+fi
 ```
 
 If CRG fails (unsupported language, broken AST): report failure and ask whether to proceed in degraded
@@ -164,6 +174,22 @@ Embed into each subagent's prompt:
 
 > **Do NOT call Write to produce output files (the orchestrator handles that). You MAY use Bash/python for
 > CRG queries within $OUT/.code-review-graph/, and Read/Grep/Glob for source files within $TARGET.**
+>
+> **Querying the CRG graph.** The graph is at `$OUT/.code-review-graph`; you are a general-purpose subagent
+> with NO `mcp__code-review-graph__*` tools, so query it with a Bash/python SUBPROCESS that points CRG at the
+> graph via the `CRG_DATA_DIR` env var. There is **no** `search` / `impact-radius` /
+> `review-context` CLI verb in 2.3.x — those are Python functions in `code_review_graph.tools.query`
+> (verb → function: search → `semantic_search_nodes`; impact-radius → `get_impact_radius`; component
+> structure / "review context" → `query_graph` / `traverse_graph_func`; there is no `review_context`). Pattern:
+> ```bash
+> CRG_DATA_DIR="$OUT/.code-review-graph" $PY -c "
+> import json
+> from code_review_graph.tools.query import semantic_search_nodes
+> r = semantic_search_nodes(query='<keywords>', repo_root='$TARGET', limit=20)
+> print(json.dumps(r.get('results', []), default=str)[:4000])"
+> ```
+> Swap the function per the verb→function map (e.g. `get_impact_radius(changed_files=['<file>'], repo_root='$TARGET')`,
+> `query_graph(pattern='<p>', target='<t>', repo_root='$TARGET')`).
 
 ### Pass-specific: 03f-layering LAYER-EVID-1
 
