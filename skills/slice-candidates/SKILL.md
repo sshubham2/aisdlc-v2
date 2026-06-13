@@ -179,7 +179,7 @@ Each appended candidate matches `examples/slice-candidates.json`:
 id: SC-NNN  title  status: candidate  progress: not-started
 source[{type, ref}]  description  rationale  dependencies[SC-NNN]
 priority{score, effort, blast_radius}
-assumptions[{id, statement, risk_ref, blocking, spike_status}]
+assumptions[{id, statement, risk_ref, blocking, spike_status, spike_verdict, spike_constraints}]
 verification_plan  history[{event, by, at}]
 ```
 

@@ -53,7 +53,17 @@
     {
       "assumption": "A1",
       "statement": "Safari's EventSource auto-reconnects after a network drop (the SSE retry/backoff premise).",
-      "spike_ref": "spike-safari-sse-retry"
+      "spike_ref": "spike-safari-sse-retry",
+      "verdict": "go"
+    },
+    {
+      "assumption": "A2",
+      "statement": "One SSE server fans out to the expected concurrent viewers.",
+      "spike_ref": "spike-sse-fanout",
+      "verdict": "conditional",
+      "constraints": [
+        "holds to ~120 concurrent connections per instance -- shard or move to managed pub/sub above that"
+      ]
     }
   ],
   "cross_domain_transfer": {

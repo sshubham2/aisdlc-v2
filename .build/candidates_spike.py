@@ -58,7 +58,7 @@ m["summary"]=("First step of the slice loop (slice step-0 gate). Reads the picke
 m["context_rationale"]=("Interactive blocking gate: writes and runs throwaway proof code, needs credentials/device access, "
                         "and on failure requires a human discussion of a risk-free fallback before re-spiking — depends on the live slice session.")
 add(m, fa(CAND,"content-file","read","read","Read the active candidate's blocking assumptions[] to prove."))
-add(m, fa(CAND,"content-file","update","vault_edit-append","Record each assumption's spike_status (proven/failed), spike_ref, spike_evidence; on FAILED set candidate status=blocked + fallback; on all-proven set status=active, progress=design.",marker=ROUTE))
+add(m, fa(CAND,"content-file","update","vault_edit-append","Record each assumption's spike_status (proven/failed), spike_verdict (go/no-go/conditional), spike_constraints (non-empty on conditional; re-set to [] otherwise), spike_ref, spike_evidence; on FAILED set candidate status=blocked + fallback; on all-proven set status=active, progress=design.",marker=ROUTE))
 m["hands_off_to"]=["design-slice"]
 
 # --- reflect: append discovered/deferred candidates + move shipped to archive ---

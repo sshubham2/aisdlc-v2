@@ -201,13 +201,17 @@ Key fields:
 - `adrs` — ADR ids locked by this slice · `auth_model` · `error_model`
 - `assumptions_proven` — **only when the claimed candidate has spiked assumptions**: the spike→design evidence
   cross-ref, a PURE PASS-THROUGH of the candidate's assumptions where `spike_status == "proven"` — per
-  assumption `{assumption: <id>, statement: <statement>, spike_ref: <spike_ref>}` (exact mapping:
-  `id`→`assumption`, `statement`→`statement`, `spike_ref`→`spike_ref`; no renames, no other source, **no
-  verdict field** — the spike FILE under `<vault>/spikes/` stays the verdict authority, and risk-spike's
-  TERMINAL `spike_status` recording is binary (`proven`|`failed`) while the spike verdict is ternary, so
-  go-vs-conditional is not recoverable here; never default-fill a verdict).
-  **Omit the whole block** when no assumption has `spike_status == "proven"` (absent = "no spiked
-  assumptions", never an error).
+  assumption `{assumption: <id>, statement: <statement>, spike_ref: <spike_ref>, verdict: <spike_verdict>,
+  constraints: <spike_constraints>}` (exact mapping: `id`→`assumption`, `statement`→`statement`,
+  `spike_ref`→`spike_ref`, `spike_verdict`→`verdict`, `spike_constraints`→`constraints`; no renames, no other
+  source — the candidate row IS the source, the spike FILE under `<vault>/spikes/` stays the full-evidence
+  authority). `verdict` is `go` or `conditional` (a `no-go` assumption never passes through); include
+  `constraints` ONLY when the verdict is `conditional` (non-empty, per the candidate's `spike_constraints` —
+  ADR-002: a CONDITIONAL spike's named constraints are design inputs, surface them where the design reads).
+  **Legacy candidate rows without `spike_verdict`**: OMIT both fields — absent = unknown, **never default-fill
+  a verdict**. **Omit the whole block** when no assumption has `spike_status == "proven"` (absent = "no spiked
+  assumptions", never an error). artifact_lint enforces the shape (verdict enum + the conditional⇒non-empty-
+  constraints co-constraint).
 - `cross_domain_transfer` — **only if the selected design imports a cross-domain pattern** (from
   `designer-crossdomain`): `source_domain`, `pattern`, `rationale`, `invariants[]` (each
   `{precondition, status: holds|must-verify|fails, evidence}`). Omit when no transfer was selected. The

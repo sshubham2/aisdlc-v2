@@ -45,7 +45,10 @@
       "rationale": "Retires R-13; ships a user-visible PAID state.",
       "dependencies": ["SC-009"],
       "priority": { "score": 7, "effort": "M", "blast_radius": "orders, billing" },
-      "assumptions": [{ "id": "A1", "statement": "Signatures verify; events <2s p95.", "risk_ref": "R-13", "blocking": true, "spike_status": "unproven", "spike_ref": null, "spike_evidence": null, "fallback": null }],
+      "assumptions": [
+        { "id": "A1", "statement": "Signatures verify; events <2s p95.", "risk_ref": "R-13", "blocking": true, "spike_status": "unproven", "spike_ref": null, "spike_evidence": null, "fallback": null },
+        { "id": "A2", "statement": "Webhook retries are idempotent at the events table.", "risk_ref": null, "blocking": true, "spike_status": "proven", "spike_verdict": "conditional", "spike_constraints": ["dedupe on event_id -- retries arrive with the same id", "processing must stay <5s or Stripe re-fires"], "spike_ref": "spike-webhook-idempotency", "spike_evidence": "Replayed test-mode events: dedupe holds iff keyed on event_id.", "fallback": null }
+      ],
       "verification_plan": "Real test-mode event -> verified -> order PAID.",
       "history": [{ "event": "created", "by": "discover", "at": "<ts>" }]
     }],
@@ -111,7 +114,8 @@
     ],
     "adrs": ["ADR-014"], "auth_model": "session cookie", "error_model": "SSE retry w/ backoff",
     "assumptions_proven": [
-      { "assumption": "A1", "statement": "Safari's EventSource auto-reconnects after a network drop (the SSE retry/backoff premise).", "spike_ref": "spike-safari-sse-retry" }
+      { "assumption": "A1", "statement": "Safari's EventSource auto-reconnects after a network drop (the SSE retry/backoff premise).", "spike_ref": "spike-safari-sse-retry", "verdict": "go" },
+      { "assumption": "A2", "statement": "One SSE server fans out to the expected concurrent viewers.", "spike_ref": "spike-sse-fanout", "verdict": "conditional", "constraints": ["holds to ~120 concurrent connections per instance -- shard or move to managed pub/sub above that"] }
     ],
     "cross_domain_transfer": {
       "_note": "Optional (Phase 2.1). Present only when this design imports a pattern from another domain. Tier-gated: omit on low/mechanical slices. status per invariant: holds (reasoned true here) | must-verify (empirically decidable, not yet proven -> a /critique focus + re-spike candidate) | fails (precondition does not hold here -> that part of the analogy dropped).",
@@ -233,6 +237,7 @@
     "assumption_under_test": "Managed host holds 500 concurrent WebSockets.",
     "method": "Ramp synthetic WS connections; measure the drop point.",
     "verdict": "no-go",
+    "constraints": [],
     "evidence": "Capped at ~120 before 503s.",
     "fallback": "SSE + short-poll, OR managed pub/sub; re-spike before unblocking.",
     "risk_ref": "R-27"
