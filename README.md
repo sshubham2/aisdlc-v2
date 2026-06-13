@@ -73,6 +73,9 @@ progress**, registers the `code-review-graph` **MCP server** for Claude Code (a 
 1. **Restart Claude Code** — MCP servers load at startup, so the CRG graph tools only appear on the next launch.
 2. **Approve the one-time trust prompt** for `code-review-graph`; then `/mcp` should show it connected.
 
+`/ai-sdlc:setup` accepts optional flags: `--no-mcp` (skip MCP registration) and `--no-graph` (skip the initial
+graph build), plus an optional `[repo-path]` argument to target a specific directory.
+
 `/ai-sdlc:setup` is idempotent — re-run it any time the toolchain looks broken (e.g. a skill reports
 `CRG_MISSING`). The SessionStart hook also nudges you to run it whenever a dependency is missing. Prefer a
 silent, automatic install instead? Set `AI_SDLC_AUTO_INSTALL=1` before launching Claude Code and the hook
@@ -341,4 +344,10 @@ Licensed under the **MIT License** — see [LICENSE](LICENSE).
 
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.25.2
+Shubhendu Shubham · plugin `ai-sdlc` v2.32.0
+
+---
+
+## Further reading
+
+- [User guide](docs/user-guide.md) — step-by-step walkthrough of running the pipeline on a real project
