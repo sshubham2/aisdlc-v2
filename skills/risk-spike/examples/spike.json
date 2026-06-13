@@ -8,6 +8,7 @@
   "assumption_under_test": "Managed host holds 500 concurrent WebSockets.",
   "method": "Ramp synthetic WS connections; measure the drop point.",
   "verdict": "no-go",
+  "constraints": [],
   "evidence": "Capped at ~120 before 503s.",
   "fallback": "SSE + short-poll, OR managed pub/sub; re-spike before unblocking.",
   "risk_ref": "R-27"

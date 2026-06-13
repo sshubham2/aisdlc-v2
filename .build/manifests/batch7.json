@@ -159,7 +159,7 @@
           "heavy"
         ],
         "format": "json",
-        "purpose": "Record each assumption's spike_status (proven/failed), spike_ref, spike_evidence; on FAILED set candidate status=blocked + fallback; on all-proven set status=active, progress=design."
+        "purpose": "Record each assumption's spike_status (proven/failed), spike_verdict (go/no-go/conditional), spike_constraints (non-empty on conditional; re-set to [] otherwise), spike_ref, spike_evidence; on FAILED set candidate status=blocked + fallback; on all-proven set status=active, progress=design."
       },
       {
         "path": "<vault>/gate-log.json",

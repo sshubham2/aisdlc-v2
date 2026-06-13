@@ -6,7 +6,9 @@
     "progress": "slice-loop stage of an active candidate: not-started | spike | design | critique | build | code-review | validate | reflect | complete",
     "claimed_by": "git identity that picked the candidate via /slice: {git_user, git_email}; null until claimed",
     "started_at": "timestamp the slice started (set when /slice claims the candidate); null until claimed",
-    "assumptions[].spike_status": "unproven | proving | proven | failed  (blocking failed => slice halts at the /risk-spike step-0 gate until fallback is re-spiked)"
+    "assumptions[].spike_status": "unproven | proving | proven | failed  (the BINARY gate -- `conditional` is deliberately NOT a value here; blocking failed => slice halts at the /risk-spike step-0 gate until fallback is re-spiked)",
+    "assumptions[].spike_verdict": "null | go | no-go | conditional  (the spike's TERNARY verdict, set by risk-spike's terminal write alongside spike_status; absent/null on legacy records = unknown -- never default-filled; ADR-002)",
+    "assumptions[].spike_constraints": "string[] -- the CONDITIONAL verdict's named constraints the design must respect; REQUIRED non-empty when spike_verdict=conditional; RE-SET to [] on every non-conditional terminal write (vault_edit --set cannot delete keys); artifact_lint flags a non-conditional verdict carrying non-empty constraints as a stale leak"
   },
   "project": "<project name>",
   "updated": "<stamped by tooling>",
@@ -66,9 +68,23 @@
           "risk_ref": "R-27",
           "blocking": true,
           "spike_status": "failed",
+          "spike_verdict": "no-go",
+          "spike_constraints": [],
           "spike_ref": "spike-ws-presence",
           "spike_evidence": "Host capped at ~120 concurrent WS before 503s; see spike output.",
           "fallback": "Switch transport to SSE + short-poll fallback, OR move presence to a managed pub/sub (Ably/Pusher). Re-spike before unblocking."
+        },
+        {
+          "id": "A2",
+          "statement": "SSE fan-out from one instance covers the presence room sizes we actually see.",
+          "risk_ref": null,
+          "blocking": true,
+          "spike_status": "proven",
+          "spike_verdict": "conditional",
+          "spike_constraints": ["holds to ~120 concurrent connections per instance; shard rooms or move to managed pub/sub above that"],
+          "spike_ref": "spike-sse-fanout",
+          "spike_evidence": "Ramped synthetic SSE clients; stable to ~120, degraded beyond.",
+          "fallback": null
         }
       ],
       "verification_plan": "Load-test the chosen transport at 500 concurrent before any design work resumes.",

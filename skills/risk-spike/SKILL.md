@@ -124,7 +124,9 @@ If the environment is NOT available: stop, tell the user exactly what setup is n
 Write `<vault>/spikes/spike-<name>.json`. **Schema by example**: `examples/spike.json`.
 
 Key fields: `name`, `candidate`, `assumption` (id), `date`, `assumption_under_test`, `method`,
-`verdict` (`go`/`no-go`/`conditional`), `evidence`, `fallback` (required on NO-GO), `risk_ref`, and
+`verdict` (`go`/`no-go`/`conditional`), `constraints` (string[] — **REQUIRED non-empty on CONDITIONAL**: the
+named constraints the design must respect, each one testable; `[]` or omitted otherwise — artifact_lint
+enforces both directions), `evidence`, `fallback` (required on NO-GO), `risk_ref`, and
 `reality_proxy` (§2.7 — WHAT stood in for reality, strongest → weakest: `real-device` | `real-account` |
 `real-sandbox` | `staging` | `local-real-data` | `simulator` | `docs-only`). Reality is graduated: a
 simulator GO is honestly weaker than a two-device GO — record which one this was; the gate-log row
@@ -150,9 +152,21 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --vault "$AI_SD
     --file candidates.json --array candidates --id <SC-NNN> \
     --assumption <A-id> \
     --set spike_status=<proven|failed> \
+    --set spike_verdict=<go|no-go|conditional> \
+    --set 'spike_constraints=<["..."] on CONDITIONAL; [] otherwise>' \
     --set spike_ref=spike-<name> \
     --set spike_evidence="<one-line summary>"
 ```
+
+Terminal mapping (ADR-002 — `spike_status` stays the BINARY gate; `spike_verdict` is the TERNARY record):
+- **GO** → `spike_status=proven` · `spike_verdict=go` · `spike_constraints=[]`
+- **CONDITIONAL** → `spike_status=proven` · `spike_verdict=conditional` · `spike_constraints=<the spike's
+  non-empty constraints[]>` (carried verbatim — downstream readers must never re-open the spike file)
+- **NO-GO** → `spike_status=failed` · `spike_verdict=no-go` · `spike_constraints=[]`
+
+**Always (re-)set `spike_constraints` on EVERY terminal write** — `vault_edit --set` cannot delete a key, so a
+re-spiked assumption (conditional → go/no-go) would otherwise keep stale constraints; `artifact_lint` flags a
+non-conditional verdict carrying non-empty constraints as a violation.
 
 On all assumptions proven — set `status: active`, `progress: design`, append history entry:
 ```bash

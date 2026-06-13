@@ -57,6 +57,15 @@ KNOWN_ENUMS: dict[tuple[str, str], frozenset[str]] = {
     ("validation", "result"): frozenset({"pass", "fail", "partial"}),
     ("validation", "criteria[].result"): frozenset({"pass", "fail", "partial"}),
     ("spike", "verdict"): frozenset({"go", "no-go", "conditional"}),
+    # slice-004 (ADR-002): assumption-level spike fields. spike_status stays the BINARY
+    # gate — `conditional` is deliberately NOT allowed here; the ternary verdict lives in
+    # the sibling spike_verdict. Legacy rows lack both fields (absent/None passes).
+    ("slice-candidates", "candidates[].assumptions[].spike_status"):
+        frozenset({"unproven", "proving", "proven", "failed"}),
+    ("slice-candidates", "candidates[].assumptions[].spike_verdict"):
+        frozenset({"go", "no-go", "conditional"}),
+    # a no-go assumption never passes through into a design's assumptions_proven
+    ("design", "assumptions_proven[].verdict"): frozenset({"go", "conditional"}),
     ("code-review", "verdict"): frozenset({"clean", "needs-fixes", "blocked"}),
     ("risk-register", "risks[].status"): frozenset({"open", "mitigated", "accepted", "closed", "retired"}),
     ("mission-brief", "architectural_layers[].status"): frozenset({"pending", "exercised"}),
@@ -72,6 +81,9 @@ OPTIONAL_KEYS: dict[str, frozenset[str]] = {
     # slice-001: the spike->design evidence cross-ref is array-shaped, so it NEEDS this
     # entry — without it every design.json that omits the block fails lint (critique B1).
     "design": frozenset({"assumptions_proven"}),
+    # slice-004: structured constraints[] on a spike artifact (non-empty iff
+    # verdict=conditional) — array-shaped optional; legacy spike files lack it.
+    "spike": frozenset({"constraints"}),
 }
 
 
@@ -110,6 +122,67 @@ def _walk(data, dotted: str) -> list:
     return _walk(nxt, rest)
 
 
+# slice-004 (ADR-002): per-row verdict<->constraints co-constraint. The flat _walk
+# above cannot deliver this — it FLATTENS list hops into leaf values, discarding which
+# row a value came from, so a record with one conditional-without-constraints row and
+# one go-with-constraints row would hide BOTH problems from any count-based pairing.
+# This check walks list ELEMENTS instead (row identity preserved).
+# (artifact_key, list-parent path; "" = the top-level object) -> (verdict_field,
+# constraints_field). Rules per element:
+#   verdict == "conditional"  => constraints MUST be a non-empty LIST (type-checked:
+#                                a malformed vault_edit --set can store a bare string);
+#   any other verdict present => a non-empty constraints list is a STALE LEAK (writers
+#                                re-set constraints=[] on non-conditional writes).
+CO_CONSTRAINTS: dict[tuple[str, str], tuple[str, str]] = {
+    ("slice-candidates", "candidates[].assumptions[]"): ("spike_verdict", "spike_constraints"),
+    ("design", "assumptions_proven[]"): ("verdict", "constraints"),
+    ("spike", ""): ("verdict", "constraints"),
+}
+
+
+def _walk_elements(data, dotted: str) -> list:
+    """Like _walk, but returns the list ELEMENTS (dicts) at an `a[].b[]`-style path —
+    row identity preserved. "" resolves to the top-level object itself."""
+    if not dotted:
+        return [data] if isinstance(data, dict) else []
+    head, _, rest = dotted.partition(".")
+    is_list = head.endswith("[]")
+    head = head[:-2] if is_list else head
+    if not isinstance(data, dict) or head not in data:
+        return []
+    nxt = data[head]
+    if not is_list:
+        return _walk_elements(nxt, rest)
+    if not isinstance(nxt, list):
+        return []
+    if not rest:
+        return [item for item in nxt if isinstance(item, dict)]
+    out: list = []
+    for item in nxt:
+        out.extend(_walk_elements(item, rest))
+    return out
+
+
+def _co_constraint_violations(data: dict, key: str, label: str) -> list[str]:
+    v: list[str] = []
+    for (ak, parent), (vf, cf) in CO_CONSTRAINTS.items():
+        if ak != key:
+            continue
+        loc = parent or "<top-level>"
+        for row in _walk_elements(data, parent):
+            verdict = row.get(vf)
+            cons = row.get(cf)
+            if verdict == "conditional":
+                if not isinstance(cons, list) or not cons:
+                    v.append(f"{label}: {loc} row with {vf}='conditional' must carry a "
+                             f"non-empty list `{cf}` (got {type(cons).__name__})")
+            elif verdict is not None:
+                if isinstance(cons, list) and cons:
+                    v.append(f"{label}: {loc} row with {vf}={verdict!r} carries non-empty "
+                             f"`{cf}` -- stale constraints must be cleared to []")
+    return v
+
+
 def lint_artifact(data: dict, key: str, example: dict, label: str) -> list[str]:
     """Return a list of violation strings ([] = clean)."""
     v: list[str] = []
@@ -126,6 +199,7 @@ def lint_artifact(data: dict, key: str, example: dict, label: str) -> list[str]:
         for val in _walk(data, path):
             if val is not None and val not in allowed:
                 v.append(f"{label}: `{path}` = {val!r} not in {sorted(allowed)}")
+    v.extend(_co_constraint_violations(data, key, label))
     return v
 
 

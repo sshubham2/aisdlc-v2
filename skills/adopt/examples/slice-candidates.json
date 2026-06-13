@@ -38,6 +38,21 @@
           "spike_ref": null,
           "spike_evidence": null,
           "fallback": null
+        },
+        {
+          "id": "A2",
+          "statement": "Webhook retries are idempotent at the events table.",
+          "risk_ref": null,
+          "blocking": true,
+          "spike_status": "proven",
+          "spike_verdict": "conditional",
+          "spike_constraints": [
+            "dedupe on event_id -- retries arrive with the same id",
+            "processing must stay <5s or Stripe re-fires"
+          ],
+          "spike_ref": "spike-webhook-idempotency",
+          "spike_evidence": "Replayed test-mode events: dedupe holds iff keyed on event_id.",
+          "fallback": null
         }
       ],
       "verification_plan": "Real test-mode event -> verified -> order PAID.",
