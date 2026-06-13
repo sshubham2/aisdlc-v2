@@ -43,3 +43,6 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# ai-sdlc: machine-specific MCP config (abs interpreter path)
+.mcp.json
