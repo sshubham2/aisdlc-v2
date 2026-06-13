@@ -36,8 +36,8 @@ If a critical input is missing, say so and design against what you have — do n
 
 ## Design procedure
 
-1. **Ground in the real code first.** Use `Read` / `Grep` / `code-review-graph` (MCP `search` / `impact-radius`,
-   or `"${CRG:-code-review-graph}" search "<concept>"`) to see how this codebase already solves adjacent problems.
+1. **Ground in the real code first.** Use `Read` / `Grep`, or query the CRG graph via a Bash subprocess
+   (`code_review_graph.tools.query.semantic_search_nodes` / `get_impact_radius`; 2.3.x has no `search`/`impact-radius` CLI verb) to see how this codebase already solves adjacent problems.
    A proposal that ignores the actual code is fantasy — prefer the project's existing idiom unless practice says
    it is wrong.
 2. **Survey the field (WebSearch).** Run 3–5 targeted queries on how this slice's problem is solved in production

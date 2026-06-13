@@ -14,19 +14,18 @@ You identify code unreachable from any entry point.
 
 ## Method
 
-1. Identify modules / functions with **no inbound edges** (the orphan set). CRG has no direct `orphans` verb — derive it: query CRG `impact-radius` / `review-context` against `$OUT/.code-review-graph/` for each module to find ones nothing reaches, and cross-check with Grep for inbound references:
+1. Identify modules / functions with **no inbound edges** (the orphan set). CRG has no direct `orphans` verb — derive it: query CRG via the `CRG_DATA_DIR` + `tools.query` subprocess from the contract (no MCP, no CLI verbs) for each module to find ones nothing reaches, and cross-check with Grep for inbound references:
    ```bash
-   code-review-graph review-context "<module-or-symbol>" --out $OUT/.code-review-graph
-   code-review-graph impact-radius --from <module-or-symbol> --out $OUT/.code-review-graph
+   CRG_DATA_DIR="$OUT/.code-review-graph" $PY -c "import json; from code_review_graph.tools.query import get_impact_radius; print(json.dumps(get_impact_radius(changed_files=['<module-or-symbol>'], repo_root='$TARGET'), default=str)[:3000])"
    ```
 2. For each candidate, **verify before flagging:**
    - grep for the symbol name as a string literal (catches dynamic imports / reflection / config-driven loading).
    - Check if it's a public API exported from the package (might be intentionally part of the surface).
    - Check if it's a test fixture, a CLI subcommand, or a plugin entry point (these often have no static inbound edges but ARE entry points).
 3. Identify entry-point candidates by scanning for: `if __name__ == "__main__"`, framework decorators (`@app.route`, `@cli.command`, `@click.command`, `@pytest.fixture`), exported package symbols (`__all__`, `index.ts` exports).
-4. Use CRG reachability / `impact-radius` from each entry point to get the union of reachable code:
+4. Use CRG reachability / `get_impact_radius` from each entry point to get the union of reachable code:
    ```bash
-   code-review-graph impact-radius --from <entry> --out $OUT/.code-review-graph
+   CRG_DATA_DIR="$OUT/.code-review-graph" $PY -c "import json; from code_review_graph.tools.query import get_impact_radius; print(json.dumps(get_impact_radius(changed_files=['<entry>'], repo_root='$TARGET'), default=str)[:3000])"
    ```
 5. Anything not in that union AND not a verified entry point AND not referenced as a string literal is dead code.
 6. Severity rubric:

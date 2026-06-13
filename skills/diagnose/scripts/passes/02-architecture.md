@@ -5,7 +5,7 @@ You describe the **current architecture as observed in code**, then judge it for
 ## Inputs
 - `TARGET`, `OUT`
 - `OUT/.code-review-graph/` — the CRG code graph
-- The CRG graph at `$OUT/.code-review-graph/` for god nodes, components, hotspots (query via the `review-context` / `search` MCP tools)
+- The CRG graph at `$OUT/.code-review-graph/` for god nodes, components, hotspots (query via the `CRG_DATA_DIR` + `tools.query` subprocess — see Use CRG)
 
 ## Hard rules
 - **No documentation reads.** Do not read any `.md`, `.rst`, `.txt`, `.adoc`, `.markdown`, `.org` files or anything in a `docs/` directory in `TARGET`. Source code, config (`.yaml`, `.toml`, `.json`, `.env`), schemas, build manifests, and CRG only. Inline docstrings/comments may be read but not trusted as ground truth.
@@ -27,17 +27,11 @@ You describe the **current architecture as observed in code**, then judge it for
 
 ## Use CRG
 
-Query the CRG graph at `$OUT/.code-review-graph/` via the `review-context` / `search` / `impact-radius` MCP tools (or the `code-review-graph` CLI):
-
-```bash
-# structural components / layer order — use CRG review-context / architecture overview
-code-review-graph review-context "<component-keyword>" --out $OUT/.code-review-graph
-code-review-graph search "<component-keyword>" --out $OUT/.code-review-graph
-# reachability from an entry file — CRG impact-radius / reachability
-code-review-graph impact-radius --from <entry-file> --out $OUT/.code-review-graph
-```
-
-Use CRG `review-context` against `$OUT/.code-review-graph/` for component structure.
+Query the isolated graph with the canonical `CRG_DATA_DIR` + `code_review_graph.tools.query` subprocess pattern
+from the subagent contract above (no MCP tools; 2.3.x has no `search`/`impact-radius`/`review-context` CLI verb).
+For this pass: component structure / "review context" → `query_graph(pattern=…, target=…, repo_root="$TARGET")`
+or `semantic_search_nodes(query="<component-keyword>", repo_root="$TARGET")`; reachability from an entry file →
+`get_impact_radius(changed_files=["<entry-file>"], repo_root="$TARGET")`.
 
 ## Output format
 

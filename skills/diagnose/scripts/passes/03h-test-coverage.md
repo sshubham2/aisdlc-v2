@@ -23,9 +23,9 @@ You identify critical code paths that lack tests. Not "coverage percent low" —
    - Test files that exist but contain only `skip`-ed tests
    - Tests that assert nothing (e.g., just call the function and rely on no exception)
    - Critical async/queue handlers with no test
-7. Use:
+7. Use CRG reachability via the `CRG_DATA_DIR` + `tools.query` subprocess from the contract:
    ```bash
-   code-review-graph impact-radius --from <entry> --out $OUT/.code-review-graph
+   CRG_DATA_DIR="$OUT/.code-review-graph" $PY -c "import json; from code_review_graph.tools.query import get_impact_radius; print(json.dumps(get_impact_radius(changed_files=['<entry>'], repo_root='$TARGET'), default=str)[:3000])"
    ```
 
 ## Severity rubric

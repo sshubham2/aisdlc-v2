@@ -44,7 +44,7 @@ If injected state shows `EXISTING_VAULT=true`: ask via `AskUserQuestion` — mer
 
 Build (or refresh) the code graph **before asking the user anything**:
 ```bash
-"${CRG:-code-review-graph}" build .
+"${CRG:-code-review-graph}" build --repo .
 ```
 
 Then read (in order of trust):

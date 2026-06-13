@@ -85,7 +85,17 @@ the code as it is *now*. Independence from `/diagnose` is deliberate — bug-hun
 TARGET="$PWD"; for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
 OUT="$TARGET/bug-hunt-out"; mkdir -p "$OUT/findings" "$OUT/sections" "$OUT/summary" "$OUT/.tmp"
 rm -rf "$OUT/.code-review-graph"                       # discard any prior graph — force a fresh build
-"${CRG:-code-review-graph}" build "$TARGET" --out "$OUT/.code-review-graph"
+# Isolate bug-hunt's own graph in $OUT via the CRG_DATA_DIR env var — it mutates NO global CRG registry
+# state (slice-006 / ADR-004). get_data_dir resolves registry > CRG_DATA_DIR > default, so guard a
+# pre-existing registry mapping shadowing it (and require a VCS-root $TARGET) rather than assume.
+export CRG_DATA_DIR="$OUT/.code-review-graph"
+if "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/crg_isolate.py" check --target "$TARGET" --data-dir "$CRG_DATA_DIR"; then
+  "${CRG:-code-review-graph}" build --repo "$TARGET"
+  "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/crg_isolate.py" verify --target "$TARGET" --data-dir "$CRG_DATA_DIR" \
+    || echo "bug-hunt: WARNING — graph did not isolate to $CRG_DATA_DIR; finders may read the wrong graph."
+else
+  echo "bug-hunt: CRG graph-isolation precondition failed (see above). Registry shadow -> run the suggested 'unregister', then re-run /bug-hunt. Non-VCS target -> graph step skipped; bug-hunt continues degraded (risk-rank from file metrics + git, no graph reachability)."
+fi
 ```
 
 ## Step 3 — Risk-rank into a work-list (depth, not breadth)
@@ -93,7 +103,7 @@ rm -rf "$OUT/.code-review-graph"                       # discard any prior graph
 Bugs concentrate in complex, central, recently-churned code. Build a ranked work-list of the **top `$TOP`**
 risky units rather than sweeping everything uniformly:
 
-- **Centrality / blast-radius** — CRG `impact-radius` on entry points; high fan-in functions rank up.
+- **Centrality / blast-radius** — CRG `get_impact_radius` (a `CRG_DATA_DIR` + `tools.query` subprocess; no CLI verb) on entry points; high fan-in functions rank up.
 - **Size / complexity** — large or deeply-nested functions, derived from the fresh graph + direct file metrics (no dependency on a diagnose run).
 - **Churn** — if `$TARGET` is a git repo, `git log` hotspots (most-changed files) rank up. Skip if `--since`
   is set; then the work-list is exactly the code changed since `$SINCE`.
@@ -119,8 +129,19 @@ Embed in each finder prompt:
    subagent contract (verbatim, same as diagnose):
 
    > **Do NOT call Write (the orchestrator handles that). Return three 4-backtick fenced blocks
-   > (`section`, `findings`, `summary`). You MAY use Bash/python for CRG queries within
-   > `$OUT/.code-review-graph/`, and Read/Grep/Glob for source within `$TARGET`.**
+   > (`section`, `findings`, `summary`). You MAY use Bash/python for CRG queries against the isolated
+   > graph, and Read/Grep/Glob for source within `$TARGET`.**
+   >
+   > **Querying the CRG graph.** You have no `mcp__code-review-graph__*` tools — query the graph with a
+   > Bash/python subprocess that points CRG at it via `CRG_DATA_DIR`. There is no
+   > `search`/`impact-radius`/`review-context` CLI verb in 2.3.x; use `code_review_graph.tools.query`
+   > (search → `semantic_search_nodes`; impact-radius → `get_impact_radius`):
+   > ```bash
+   > CRG_DATA_DIR="$OUT/.code-review-graph" $PY -c "
+   > import json
+   > from code_review_graph.tools.query import get_impact_radius
+   > print(json.dumps(get_impact_radius(changed_files=['<file>'], repo_root='$TARGET'), default=str)[:4000])"
+   > ```
 
 **Coverage, not one-shot.** Single-pass LLM bug recall is incomplete — that is *the* reason the current
 diagnose "misses bugs many times". Run **two finder rounds** per bucket with different lenses (round A:

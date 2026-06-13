@@ -35,8 +35,8 @@ bookkeeping — it is what keeps generation and review independent. Be specific 
 
 ## Design procedure
 
-1. **Ground in the real code.** Use `Read` / `Grep` / `code-review-graph` (MCP `search` / `impact-radius`, or
-   `"${CRG:-code-review-graph}" search "<concept>"`) — the expert's principles must land on the real system.
+1. **Ground in the real code.** Use `Read` / `Grep`, or query the CRG graph via a Bash subprocess
+   (`code_review_graph.tools.query.semantic_search_nodes` / `get_impact_radius`; 2.3.x has no `search`/`impact-radius` CLI verb) — the expert's principles must land on the real system.
 2. **Identify the expert(s).** Who has authored the definitive body of work on *this specific problem class*?
    Prefer 1–2 genuinely-fitting names over a roll-call. State *why* each is relevant to THIS slice.
 3. **Verify their actual positions (WebSearch, anti-caricature).** Run a couple of targeted queries to confirm

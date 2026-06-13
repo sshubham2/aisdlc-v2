@@ -5,7 +5,7 @@ You identify functions, classes, modules, and files that are oversized relative 
 ## Inputs
 - `TARGET`, `OUT`
 - `OUT/.code-review-graph/` — the CRG code graph
-- The CRG graph at `$OUT/.code-review-graph/` for god-node analysis (query via the `review-context` / `search` MCP tools)
+- The CRG graph at `$OUT/.code-review-graph/` for god-node analysis (query via the `CRG_DATA_DIR` + `tools.query` subprocess — no MCP, no CLI verbs)
 
 ## Hard rules
 - No source mutation.
@@ -23,7 +23,7 @@ You identify functions, classes, modules, and files that are oversized relative 
 3. Read the bodies of the top 10 outliers. For each, judge:
    - Is the size justified by inherent complexity? (e.g., a parser, a state machine)
    - Or is it accidental complexity? (multiple responsibilities, copy-paste growth, deep nesting)
-4. Special check: **god classes / god modules.** Use CRG `review-context` hotspots at `$OUT/.code-review-graph/` — high fan-in + high fan-out is a god-node signal.
+4. Special check: **god classes / god modules.** Query CRG for hotspots via the `CRG_DATA_DIR` + `tools.query` subprocess (`query_graph` / `get_impact_radius`; no `review-context` CLI verb) — high fan-in + high fan-out is a god-node signal.
 5. Special check: **deep nesting.** Functions with cyclomatic complexity > codebase 90th percentile.
 
 ## Severity rubric
