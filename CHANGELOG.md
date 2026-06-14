@@ -8,6 +8,14 @@ All notable changes, newest first. Versions are reconstructed from git history; 
 
 _Nothing unreleased._
 
+## [2.34.0] — 2026-06-14
+
+### Added
+
+- **commit-slice:** Turn /commit-slice --push into a full gh-aware PR flow (rebase -> push -> create PR -> non-blocking auto-merge) and make post-merge cleanup runnable from anywhere. (slice-008-automate-push-pr-merge) [ADR-006]
+
+## [2.33.0] — 2026-06-14
+
 ## [2.32.2] — 2026-06-14
 
 ### Added
