@@ -1,6 +1,6 @@
 ---
 name: product-doc
-description: "Generate + maintain product documentation grounded in code reality. CHANGELOG.md is assembled deterministically from the per-slice changelog.json records /commit-slice writes; README / API-reference / user-guide are drafted by a forked product-doc agent from the code-review-graph public surface + the vault (concept, slices), with every interface fact grounded in a real CRG node (unverifiable claims are omitted, never invented). Docs are markdown DELIVERABLES written to the code repo; a doc-manifest.json provenance record is written to the vault so /drift-check can flag docs that drift from code. NEVER modifies source code; gates before overwriting a hand-written doc."
+description: "Generate + maintain product documentation grounded in code reality. CHANGELOG.md is assembled deterministically by merging git history (the plugin.json version bumped per commit; no tags) with the per-slice changelog.json records /commit-slice writes, version-grouped; README / API-reference / user-guide are drafted by a forked product-doc agent from the code-review-graph public surface + the vault (concept, slices), with every interface fact grounded in a real CRG node (unverifiable claims are omitted, never invented). Docs are markdown DELIVERABLES written to the code repo; a doc-manifest.json provenance record is written to the vault so /drift-check can flag docs that drift from code. NEVER modifies source code; gates before overwriting a hand-written doc."
 when_to_use: "Trigger phrases: /product-doc, 'generate docs', 'update the README', 'write API reference', 'regenerate CHANGELOG', 'document this project'. Out-of-loop maintenance — user-invokable any time (after shipping slices, before a release, when onboarding docs go stale). NOT auto-wired into the slice loop."
 argument-hint: "[--docs readme,changelog,api,guide]  (default: all four)"
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, AskUserQuestion
@@ -39,15 +39,22 @@ Harvest it with the CRG **MCP tool** (live-MCP context): call
 
 ## Step 1 — CHANGELOG (deterministic; skip if not requested)
 
-`/commit-slice` already writes one `changelog.json` per shipped slice. Assemble them — no model needed:
+`CHANGELOG.md` is rebuilt — no model needed — by MERGING the project's **git history** (the `version` field in
+`.claude-plugin/plugin.json` is bumped per commit; there are no tags) with the per-slice `changelog.json` records
+`/commit-slice` writes. The output is **version-grouped** (Keep-a-Changelog `## [x.y.z]` sections), with the
+per-slice records laid over the versions they cover. Pass `--repo-root` so the script reads the code repo's git:
 
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-$PY "${CLAUDE_SKILL_DIR}/scripts/assemble_changelog.py" --vault "$AI_SDLC_VAULT_ROOT" --out "$repo_root/CHANGELOG.md"
+$PY "${CLAUDE_SKILL_DIR}/scripts/assemble_changelog.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --out "$repo_root/CHANGELOG.md"
 ```
 
-CHANGELOG.md is a generated artifact (its header says "do not hand-edit — regenerate"), so overwriting it is safe —
-no gate. If the archive is empty it writes a valid minimal CHANGELOG.
+CHANGELOG.md is a generated PROJECTION recomputed in full each run (its header says "do not hand-edit —
+regenerate") and never read back, so a re-run is byte-identical and a happy-path overwrite is safe — no gate.
+**Degraded run (exit 3):** if git history is unavailable / shallow / the repo has no commits, the script falls
+back to a slice-records-only render and, rather than shrink a populated `CHANGELOG.md`, **refuses to overwrite an
+existing file** (exit 3, file left untouched) — restore git history and regenerate. An empty archive + working git
+still writes a valid version-grouped CHANGELOG.
 
 ## Step 2 — draft README / API-reference / user-guide (forked agent)
 
@@ -92,7 +99,9 @@ Write `<vault>/doc-manifest.json` (schema: `examples/doc-manifest.json`) — the
 
 - `at`, `source_commit` (`git rev-parse --short HEAD`), `public_surface` (the Step 0 snapshot)
 - `docs[]` — one entry per doc actually written: `path`, `kind`, `generated_at`, `grounded_in` (from the agent's
-  `grounding`, or `["vault:slices/archive/*/changelog.json"]` for the CHANGELOG)
+  `grounding`, or — for the CHANGELOG — `["git:.claude-plugin/plugin.json@history", "vault:slices/archive/*/changelog.json"]`,
+  since the changelog is now reconstructed from git history *plus* the per-slice records, so `/drift-check` must
+  audit both sources)
 
 <!-- vault-write-safe: project-open-single-shot -->
 This is a single-shot full rewrite each run (not an append-mutated shared file), so a direct `Write` is correct
@@ -108,7 +117,7 @@ Report what was written (repo doc paths + the vault manifest), the `ungrounded_c
 - **NEVER modify source code.** Only docs (deliverables) + the vault manifest.
 - **GROUND every interface fact** — the agent omits what it can't verify; surface the omissions, never paper over them.
 - **GATE before overwriting a hand-written doc** (one not in `doc-manifest.json`). New/previously-generated docs: write directly.
-- **CHANGELOG is deterministic** (Step 1 script), never agent-authored — the per-slice records are the source of truth.
+- **CHANGELOG is deterministic** (Step 1 script), never agent-authored — git history (plugin.json version per commit) + the per-slice records are the source of truth, merged version-grouped and recomputed in full each run (never read back).
 - **ALWAYS write `doc-manifest.json`** — it is the drift anchor; without it `/drift-check` can't audit the docs.
 
 ## Pipeline position
