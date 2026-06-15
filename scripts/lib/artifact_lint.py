@@ -34,6 +34,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from scripts.lib import _stdout
+from scripts.lib.risk_status import RISK_STATUSES
 
 _EXAMPLES_PATH = _REPO / "schemas" / "artifact-examples.json"
 
@@ -67,7 +68,9 @@ KNOWN_ENUMS: dict[tuple[str, str], frozenset[str]] = {
     # a no-go assumption never passes through into a design's assumptions_proven
     ("design", "assumptions_proven[].verdict"): frozenset({"go", "conditional"}),
     ("code-review", "verdict"): frozenset({"clean", "needs-fixes", "blocked"}),
-    ("risk-register", "risks[].status"): frozenset({"open", "mitigated", "accepted", "closed", "retired"}),
+    # Canonical risk-status set sourced from the ONE shared definition (slice-010 / ADR-008) —
+    # NOT a hand-kept literal. Reconciles with risk_register_audit._ALLOWED_STATUSES (same import).
+    ("risk-register", "risks[].status"): RISK_STATUSES,
     ("mission-brief", "architectural_layers[].status"): frozenset({"pending", "exercised"}),
     ("mission-brief", "exploratory_charters[].status"):
         frozenset({"pending", "in-progress", "completed", "deferred"}),

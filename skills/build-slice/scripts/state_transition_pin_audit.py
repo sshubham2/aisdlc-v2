@@ -79,14 +79,22 @@ from scripts.lib._vault_paths import VAULT_ROOT  # noqa: E402
 # Object-identity reuse (CSP-1) — Sub-form B parses the live register via the
 # SAME parser RR-1 uses; NOT re-derived. (v2 `_parse_risks` takes a parsed dict.)
 from scripts.lib.risk_register_audit import _parse_risks  # noqa: E402
+from scripts.lib.risk_status import RISK_STATUSES  # noqa: E402
 
 # Sub-form A: recognise a `read_file("skills/<x>/SKILL.md")` call.
 _SKILL_MD_ARG_RE = re.compile(r"^skills/[^\"']+/SKILL\.md$")
 
 # Sub-form B detector. `(?:^|_)`-anchored; status alternation terminated by
 # `(?:_|$)`. Non-greedy `.*?` binds the nearest status.
+# Status alternation DERIVED from the canonical SSOT (slice-010 / ADR-008) — this audit is a
+# 4th consumer of risk_status.RISK_STATUSES, so its recognized vocabulary can never drift from
+# the validators (it was previously a hand-kept literal {open,mitigating,retired,accepted} that
+# was blind to the elevated `blocking`/`conditional` statuses risk-spike writes). sorted() for a
+# stable pattern; the anchored `_(stays|remains|is)_<status>(?:_|$)` grammar bounds the token, so
+# widening to all canonical statuses cannot over-match an unrelated function name.
+_RISK_STATUS_ALT = "|".join(sorted(RISK_STATUSES))
 _RISK_STATUS_FN_RE = re.compile(
-    r"(?:^|_)r[_-]?(\d+).*?_(stays|remains|is)_(open|mitigating|retired|accepted)(?:_|$)"
+    r"(?:^|_)r[_-]?(\d+).*?_(stays|remains|is)_(" + _RISK_STATUS_ALT + r")(?:_|$)"
 )
 
 _LITERAL_TRUNC = 80

@@ -69,14 +69,16 @@ if str(_PLUGIN_ROOT) not in _sys.path:
 
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
+from scripts.lib.risk_status import RISK_STATUSES
 
 _REQUIRED_FIELDS: frozenset[str] = frozenset({"id", "title", "likelihood", "impact", "status"})
 
 _ALLOWED_LEVELS: frozenset[str] = frozenset({"low", "medium", "high"})
-# v1 lifecycle states + the in-loop /risk-spike verdicts (retired/blocking/conditional).
-_ALLOWED_STATUSES: frozenset[str] = frozenset(
-    {"open", "mitigating", "retired", "accepted", "blocking", "conditional"}
-)
+# Canonical risk-status set sourced from the ONE shared definition (slice-010 / ADR-008) —
+# was a hand-kept literal. The in-module NAME is preserved (rebind, never rename): by_status
+# (line ~124), the status membership check (~205), and --filter-status choices (~352) all read
+# _ALLOWED_STATUSES, and stay correct because the canonical set == this audit's prior set.
+_ALLOWED_STATUSES: frozenset[str] = RISK_STATUSES
 _ALLOWED_REVERSIBILITY: frozenset[str] = frozenset({"cheap", "expensive", "irreversible"})
 
 _LEVEL_NUMERIC = {"low": 1, "medium": 2, "high": 3}
