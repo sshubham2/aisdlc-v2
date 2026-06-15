@@ -1,6 +1,6 @@
 ---
 name: product-doc
-description: "Generate + maintain product documentation grounded in code reality. CHANGELOG.md is assembled deterministically by merging git history (the plugin.json version bumped per commit; no tags) with the per-slice changelog.json records /commit-slice writes, version-grouped; README / API-reference / user-guide are drafted by a forked product-doc agent from the code-review-graph public surface + the vault (concept, slices), with every interface fact grounded in a real CRG node (unverifiable claims are omitted, never invented). Docs are markdown DELIVERABLES written to the code repo; a doc-manifest.json provenance record is written to the vault so /drift-check can flag docs that drift from code. NEVER modifies source code; gates before overwriting a hand-written doc."
+description: "Generate + maintain product documentation grounded in code reality. CHANGELOG.md is assembled deterministically by merging git history (the plugin.json version cut post-merge by /product-doc; no tags) with the per-slice changelog.json records /commit-slice writes, version-grouped; README / API-reference / user-guide are drafted by a forked product-doc agent from the code-review-graph public surface + the vault (concept, slices), with every interface fact grounded in a real CRG node (unverifiable claims are omitted, never invented). Docs are markdown DELIVERABLES written to the code repo; a doc-manifest.json provenance record is written to the vault so /drift-check can flag docs that drift from code. NEVER modifies source code; gates before overwriting a hand-written doc."
 when_to_use: "Trigger phrases: /product-doc, 'generate docs', 'update the README', 'write API reference', 'regenerate CHANGELOG', 'document this project'. Out-of-loop maintenance — user-invokable any time (after shipping slices, before a release, when onboarding docs go stale). NOT auto-wired into the slice loop."
 argument-hint: "[--docs readme,changelog,api,guide]  (default: all four)"
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, AskUserQuestion
@@ -40,14 +40,53 @@ Harvest it with the CRG **MCP tool** (live-MCP context): call
 ## Step 1 — CHANGELOG (deterministic; skip if not requested)
 
 `CHANGELOG.md` is rebuilt — no model needed — by MERGING the project's **git history** (the `version` field in
-`.claude-plugin/plugin.json` is bumped per commit; there are no tags) with the per-slice `changelog.json` records
-`/commit-slice` writes. The output is **version-grouped** (Keep-a-Changelog `## [x.y.z]` sections), with the
-per-slice records laid over the versions they cover. Pass `--repo-root` so the script reads the code repo's git:
+`.claude-plugin/plugin.json`) with the per-slice `changelog.json` records `/commit-slice` writes. The output is
+**version-grouped** (Keep-a-Changelog `## [x.y.z]` sections), with the per-slice records laid over the versions
+they cover.
+
+**The plugin version is cut HERE — after merge — not in the slice commit.** Slice commits integrate WITHOUT a
+version bump (so parallel slices never conflict on the plugin.json `version` line); `/product-doc` bumps the version
+once at the release and rolls every unreleased commit (the *open period* — everything merged since the last
+version-change) forward onto it.
+
+**Sub-step 1a — bump the plugin version (first).** The human/release supplies the target (`--new-version X.Y.Z`,
+the primary form, or `--level patch|minor|major`):
 
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-$PY "${CLAUDE_SKILL_DIR}/scripts/assemble_changelog.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --out "$repo_root/CHANGELOG.md"
+new_version="$($PY "${CLAUDE_SKILL_DIR}/scripts/bump_plugin_version.py" --plugin "$repo_root/.claude-plugin/plugin.json" --new-version "${TARGET:?supply the release version, e.g. 2.35.0}")"
 ```
+
+`bump_plugin_version.py` validates the target (refuses a non-increasing bump, a malformed manifest, or an
+undeterminable target), is a **no-op when the version is already at the target** (so re-running `/product-doc` is
+idempotent — M4), and prints the resolved version. **`/product-doc` fails visibly if it cannot determine the new
+version (no silent skip).**
+
+**Sub-step 1b — assemble the CHANGELOG**, passing that same value as `--new-version` so the open-period commits
+group under the version that RELEASES them. **ORDERING (M4): bump FIRST, then assemble** — assemble reads the
+committed git history plus the passed `--new-version`; it never writes plugin.json (so there is no double-bump), and
+the bump-helper no-ops on a re-run, so a second `/product-doc` run is idempotent. Pass `--repo-root` so the script
+reads the code repo's git:
+
+```bash
+repo_root="$(git rev-parse --show-toplevel)"   # fresh shell — re-derive (vars don't cross ```bash blocks)
+new_version="$($PY -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$repo_root/.claude-plugin/plugin.json")"   # read back the version 1a just cut
+$PY "${CLAUDE_SKILL_DIR}/scripts/assemble_changelog.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --new-version "$new_version" --out "$repo_root/CHANGELOG.md"
+```
+
+If there is genuinely no unreleased work (the only commits after the last cut are merges), `--new-version` may be
+omitted and assemble degrades to the spot attribution; but if unreleased NON-merge commits are present and no
+`--new-version` is supplied, assemble **exits 2 (fail-visible)** rather than silently filing them under the old
+version.
+
+> **M-add-1 (the first cut under this model):** the first `/product-doc` run after this change bumps from the current
+> `2.34.0` to the chosen next version, rolling slice-009's own commits forward onto it.
+
+> **M1 note (artifact version stamps under post-merge bump):** a vault artifact's `_plugin_version` stamp now
+> records *the plugin version present when the artifact was written* — which, because the bump happens after merge,
+> is no longer `==` the about-to-ship version (the artifact is written at the OLD version, then the release cuts the
+> new one). This is benign: `artifact_lint`'s skew check only WARNs when an artifact's stamp is *newer* than the
+> running plugin, and a post-merge bump makes stamps *older* (or equal), never newer.
 
 CHANGELOG.md is a generated PROJECTION recomputed in full each run (its header says "do not hand-edit —
 regenerate") and never read back, so a re-run is byte-identical and a happy-path overwrite is safe — no gate.
@@ -117,7 +156,8 @@ Report what was written (repo doc paths + the vault manifest), the `ungrounded_c
 - **NEVER modify source code.** Only docs (deliverables) + the vault manifest.
 - **GROUND every interface fact** — the agent omits what it can't verify; surface the omissions, never paper over them.
 - **GATE before overwriting a hand-written doc** (one not in `doc-manifest.json`). New/previously-generated docs: write directly.
-- **CHANGELOG is deterministic** (Step 1 script), never agent-authored — git history (plugin.json version per commit) + the per-slice records are the source of truth, merged version-grouped and recomputed in full each run (never read back).
+- **CHANGELOG is deterministic** (Step 1 script), never agent-authored — git history (the plugin.json `version`, now cut post-merge HERE) + the per-slice records are the source of truth, merged version-grouped and recomputed in full each run (never read back).
+- **The version bump lives HERE, post-merge** (Step 1a `bump_plugin_version.py`), NOT in the slice commit — fail visibly if the new version can't be determined; never bump silently.
 - **ALWAYS write `doc-manifest.json`** — it is the drift anchor; without it `/drift-check` can't audit the docs.
 
 ## Pipeline position

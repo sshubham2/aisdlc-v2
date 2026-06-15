@@ -154,8 +154,11 @@ def _git_log(repo_root: str) -> list[dict] | None:
     """ONE call: every commit oldest->newest as {hash, date (YYYY-MM-DD), subject}.
     None on git failure (binary missing / not a repo / zero commits)."""
     try:
-        r = _run_git(repo_root, "log", "--reverse", "--date=short",
-                     f"--format=%H{_UNIT}%ad{_UNIT}%s")
+        # --topo-order keeps a child after its parents; --date-order is the stable
+        # secondary key so parallel branches with no strict ancestry break ties
+        # deterministically (M3: identical output across runs on parallel history).
+        r = _run_git(repo_root, "log", "--reverse", "--topo-order", "--date-order",
+                     "--date=short", f"--format=%H{_UNIT}%ad{_UNIT}%s")
     except (FileNotFoundError, OSError):
         return None
     if r.returncode != 0:
@@ -250,6 +253,71 @@ def _attribute(commits: list[dict], versions: dict[str, str]) -> list[dict]:
     return out
 
 
+# ----------------------------- open-period roll-forward (slice-009) ----------
+def _is_noise(subject: str) -> bool:
+    """A commit that carries no changelog content of its own: a merge commit or a
+    chore(release) version-bump (both filtered from the residual rows). Used both
+    to detect an empty-but-for-noise open period and to suppress residual lines."""
+    return subject.startswith("Merge ") or subject.startswith("chore(release)")
+
+
+def _roll_forward(attributed: list[dict], new_version: str | None
+                  ) -> tuple[list[dict], int]:
+    """Roll the OPEN PERIOD onto the about-to-ship version (slice-009).
+
+    Under the relocated bump, slice commits land at the OLD version (the slice
+    commit no longer stages a bump); /product-doc cuts the next version after
+    merge. The OPEN PERIOD is every commit AFTER the last version-change commit:
+    they all share the head version but did NOT set it, so they are unreleased.
+
+      * ``trailing_run_start`` = the smallest index i such that
+        ``attributed[i..end]`` all carry the head version — i.e. the commit that
+        SET the head version (the last version-change).
+      * the open period = commits at indices > ``trailing_run_start``.
+
+    If ``new_version`` is given (validated > head by the caller), every
+    open-period commit is re-attributed to it; the version-change commit and
+    everything before KEEP their spot version (historical BYTE-STABLE).
+
+    If ``new_version`` is absent: a no-op (spot attribution stands) — the caller
+    has already decided whether the open period is fail-visible.
+
+    Returns ``(attributed, rolled_count)`` (mutates in place; rolled_count is 0
+    when nothing rolled).
+    """
+    if not attributed or not new_version:
+        return attributed, 0
+    head_v = attributed[-1]["version"]
+    if head_v is None:
+        return attributed, 0
+    # walk back over the trailing run that all share head_v
+    trailing_run_start = len(attributed) - 1
+    while trailing_run_start > 0 and attributed[trailing_run_start - 1]["version"] == head_v:
+        trailing_run_start -= 1
+    rolled = 0
+    for c in attributed[trailing_run_start + 1:]:
+        c["version"] = new_version
+        rolled += 1
+    return attributed, rolled
+
+
+def _open_period_has_unreleased_work(attributed: list[dict]) -> bool:
+    """True when, with NO --new-version, the open period contains a commit that
+    carries real changelog content (a non-merge, non-chore(release) commit) — the
+    fail-visible signal that unreleased slices would otherwise be silently filed
+    under the old version (slice-009)."""
+    if not attributed:
+        return False
+    head_v = attributed[-1]["version"]
+    if head_v is None:
+        return False
+    trailing_run_start = len(attributed) - 1
+    while trailing_run_start > 0 and attributed[trailing_run_start - 1]["version"] == head_v:
+        trailing_run_start -= 1
+    return any(not _is_noise(c["subject"])
+               for c in attributed[trailing_run_start + 1:])
+
+
 # ----------------------------- merge (M2 / M5) ------------------------------
 def _slice_index(records: list[dict], attributed: list[dict]) -> dict[str, dict]:
     """Join each record to a version. Primary: an EXACT slice-NNN token in a commit
@@ -322,10 +390,13 @@ def _render(attributed: list[dict], records: list[dict]) -> str:
     ver_date: dict[str, str] = {}
     for c in attributed:
         v = c["version"]
-        if not v or c["subject"].startswith("Merge "):  # constraint 1: drop merge noise
+        if not v:
             continue
+        # Register the version (so its section header + date render even when its
+        # only commit is noise — a chore(release) bump). Noise commits are dropped
+        # from the residual ROWS below (constraint 1 + m4a), not from the version map.
         releases.setdefault(v, []).append(c)
-        if v not in ver_date:  # oldest->newest: a version's first non-merge commit dates it
+        if v not in ver_date:  # oldest->newest: a version's first commit dates it
             ver_date[v] = c["date"]
 
     overlay_by_ver: dict[str, list[tuple[str, dict]]] = {}
@@ -355,7 +426,9 @@ def _render(attributed: list[dict], records: list[dict]) -> str:
             sec = _SECTION.get(str(rec.get("type") or "").lower(), "Changed")
             buckets.setdefault(sec, []).append(_entry_line(rec))
         for c in sorted(releases[v], key=lambda c: (c["date"], c["hash"])):
-            if c["hash"] in claimed:
+            # constraint 1: drop merge noise; m4a: drop chore(release) bump commits —
+            # their residual line is suppressed (the header above still rendered).
+            if c["hash"] in claimed or _is_noise(c["subject"]):
                 continue
             buckets.setdefault(_subj_section(c["subject"]), []).append(
                 _residual_line(c["subject"]))
@@ -396,6 +469,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                                                "(default: print the markdown to stdout)")
     p.add_argument("--repo-root", default=None, dest="repo_root",
                    help="the code repo to read git history from (default: cwd / git rev-parse)")
+    p.add_argument("--new-version", default=None, dest="new_version",
+                   help="the version being cut now (slice-009): roll the OPEN PERIOD "
+                        "(commits after the last version-change) forward onto it. Must be "
+                        "strictly greater than the current head version. Omit when there is "
+                        "no unreleased work (an open period of merges only).")
     return p
 
 
@@ -470,6 +548,32 @@ def main(argv: list[str] | None = None) -> int:
 
     versions = _versions_at(repo_root, commits)
     attributed = _attribute(commits, versions)
+
+    # --- open-period roll-forward (slice-009) ---
+    new_version = (args.new_version or "").strip() or None
+    head_v = attributed[-1]["version"] if attributed else None
+    if new_version is not None:
+        if head_v is not None and _vt(new_version) <= _vt(head_v):
+            sys.stderr.write(
+                f"assemble_changelog: --new-version {new_version} is not greater than the "
+                f"current head version {head_v}; refusing to roll the open period backward.\n")
+            return 2
+        attributed, rolled = _roll_forward(attributed, new_version)
+        # M-must-not-defer: log the version cut + how many commits rolled forward, to
+        # STDERR (so --out/stdout markdown stays clean).
+        sys.stderr.write(
+            f"assemble_changelog: cut {new_version}; rolled {rolled} open-period "
+            f"commit(s) forward from {head_v} onto {new_version}.\n")
+    elif _open_period_has_unreleased_work(attributed):
+        # fail-visible: unreleased non-merge commits sit after the last version-change,
+        # and no --new-version was given to cut them onto. NEVER silently file them under
+        # the old version.
+        sys.stderr.write(
+            f"assemble_changelog: unreleased commits present after the last version cut "
+            f"({head_v}) but no --new-version was supplied — refusing to file them under "
+            f"the old version. Re-run with --new-version <X.Y.Z> to cut the open period.\n")
+        return 2
+
     md = _render(attributed, records)
     return _emit(md, args.out)
 
