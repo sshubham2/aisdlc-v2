@@ -72,6 +72,25 @@ _SEGMENT_RE = re.compile(
     r"(?:\s+\S+)*$"
 )
 
+# slice-011: a valid NON-pytest interpreter command is also a legitimate
+# machine_cmd (the live slice-001 row-1 is `python -c "..."`). Accept two TIGHT
+# forms while still rejecting prose (must-not-defer): `<interp> -c "<quoted
+# code>"` — the code MUST be a single quoted token, so bare `-c <free text>` is
+# rejected as prose (M1) — and `<interp> <script>.py [args]` where each trailing
+# arg is flag- or path-like (`-x`, `--out`, `a/b`, `x=1`), so a bare-word arg
+# like `and then review` is rejected as prose (M1). The leading-interpreter
+# anchor stays the first line of defence; this only widens WHAT a real command
+# may look like, never to free text. Verified against the prose+valid+malformed
+# battery before commit (APED-1).
+_NONPYTEST_CMD_RE = re.compile(
+    rf"^{_INTERP}\s+"
+    r"(?:"
+    r"-c\s+(?:\"(?:[^\"\\]|\\.)*\"|'[^']*')(?:\s+(?:-\S+|\S*[/\\.=:]\S*))*"
+    r"|"
+    r"\S+\.py(?:\s+(?:-\S+|\S*[/\\.=:]\S*))*"
+    r")\s*$"
+)
+
 
 @dataclass(frozen=True)
 class Violation:
@@ -130,11 +149,57 @@ def _machine_cmd_cell(row: dict) -> str | None:
     return s or None
 
 
-def _segments(machine_cmd: str) -> list[str]:
-    """Split on `;`, then strip surrounding markdown backtick fence + ws from
-    EACH segment (JSON values rarely fence, but a hand-authored row might)."""
+def _split_top_level(machine_cmd: str) -> list[str]:
+    """Split on `;` ONLY at quote-depth 0, honoring single-quote, double-quote,
+    and POSIX backslash-escape rules so the boundaries match
+    `shlex.split(posix=True)` (the SRSC-1 runner's tokenizer). A `;` inside a
+    quoted span — or a backslash-escaped `\\;` outside quotes — is part of the
+    command, NOT a separator. This is the slice-011 fix for the naive
+    `machine_cmd.split(";")` that shredded a `python -c "...;...;..."` row."""
     out: list[str] = []
-    for raw in machine_cmd.split(";"):
+    buf: list[str] = []
+    quote: str | None = None       # None | "'" | '"'
+    escaped = False                # previous char was an unescaped backslash
+    for ch in machine_cmd:
+        if escaped:
+            buf.append(ch)
+            escaped = False
+        elif quote is None:
+            if ch == "\\":
+                buf.append(ch)
+                escaped = True
+            elif ch in ("'", '"'):
+                quote = ch
+                buf.append(ch)
+            elif ch == ";":
+                out.append("".join(buf))
+                buf = []
+            else:
+                buf.append(ch)
+        elif quote == "'":          # single quotes: literal, no escapes (POSIX)
+            buf.append(ch)
+            if ch == "'":
+                quote = None
+        else:                       # double quotes: backslash escapes the next char
+            if ch == "\\":
+                buf.append(ch)
+                escaped = True
+            else:
+                buf.append(ch)
+                if ch == '"':
+                    quote = None
+    out.append("".join(buf))
+    return out
+
+
+def _segments(machine_cmd: str) -> list[str]:
+    """Split a machine_cmd into its TOP-LEVEL `;`-separated segments (quote- and
+    escape-aware — see `_split_top_level`), then strip a surrounding markdown
+    backtick fence + ws from EACH segment (JSON values rarely fence, but a
+    hand-authored row might). A `;` inside quotes is NEVER a separator, so a
+    single `python -c "import sys; a=1; b=2"` is ONE segment, not shredded."""
+    out: list[str] = []
+    for raw in _split_top_level(machine_cmd):
         seg = raw.strip().strip("`").strip()
         if seg:
             out.append(seg)
@@ -159,11 +224,12 @@ def _check_machine_cmd(result: AuditResult, index: int, row_id: str,
             f"machine_cmd has zero parseable segments: {cell!r}", index))
         return None
     for seg in segs:
-        if not _SEGMENT_RE.fullmatch(seg):
+        if not (_SEGMENT_RE.fullmatch(seg) or _NONPYTEST_CMD_RE.fullmatch(seg)):
             result.violations.append(Violation(
                 "prose-segment", row_id,
-                f"segment is not an interpreter-anchored pytest invocation "
-                f"(prose/narrative rejected): {seg!r}", index))
+                f"segment is not an interpreter-anchored command "
+                f"(pytest, or `<interp> -c \"...\"` / `<interp> <script>.py`; "
+                f"prose/narrative rejected): {seg!r}", index))
             return None
     return cell
 
@@ -182,7 +248,8 @@ def audit(catalog_path: Path) -> AuditResult:
 def _format_human(r: AuditResult) -> str:
     if not r.violations:
         return (f"SCMD-1 audit: clean. {r.rows_scanned} row(s); "
-                f"every machine_cmd is a prose-free pytest invocation.\n")
+                f"every machine_cmd is a prose-free interpreter-anchored command "
+                f"(pytest or `<interp> -c`/`<script>.py`).\n")
     out = [f"{len(r.violations)} SCMD-1 violation(s):\n\n"]
     for v in r.violations:
         out.append(f"  [Important] shippability.json row {v.row} [{v.kind}]\n"

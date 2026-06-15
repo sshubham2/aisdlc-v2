@@ -146,7 +146,18 @@ def run_catalog(catalog_path: Path, repo_root: Path | None = None,
         row_ok = True
         fail_detail = ""
         for seg in _segments(cell):  # CANONICAL per-;-segment strip
-            argv = _normalize_interp(shlex.split(seg, posix=True))
+            try:
+                argv = _normalize_interp(shlex.split(seg, posix=True))
+            except ValueError as exc:
+                # A genuinely malformed segment (e.g. an unterminated quote).
+                # Fail THIS row (a regression -> exit 1) and keep the run going;
+                # NEVER let the ValueError bubble to main()'s handler, which
+                # would misreport it as an exit-2 catalog usage-error and abort
+                # the whole run (slice-011: the catalog-abort bug). exit 2 stays
+                # reserved for a missing/invalid catalog FILE.
+                row_ok = False
+                fail_detail = f"segment is not a parseable command ({exc}): {seg!r}"
+                break
             if not argv:
                 continue
             try:
