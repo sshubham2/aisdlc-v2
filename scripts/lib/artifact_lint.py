@@ -42,6 +42,14 @@ _EXAMPLES_PATH = _REPO / "schemas" / "artifact-examples.json"
 # list-of-dicts hop `a[].b`. "*" applies to every artifact type. Kept deliberately
 # small — the load-bearing enums (incl. the 1.4 triage `action` case).
 _PIPELINE_MODE = frozenset({"minimal", "standard", "heavy"})
+# slice-013 (ADR-009): shared enum value-sets reused across artifacts.
+_SEVERITY = frozenset({"blocker", "major", "minor"})
+_REVERSIBILITY = frozenset({"cheap", "expensive", "irreversible"})
+_REALITY_CONTACT = frozenset({"high", "medium", "low"})
+_MILESTONE_STAGES = frozenset(
+    {"spike", "design", "critique", "critique-review", "build", "code-review", "validate", "complete"})
+_MILESTONE_STEPS = frozenset(
+    {"spike", "design", "critique", "critique-review", "build", "code-review", "validate", "reflect"})
 KNOWN_ENUMS: dict[tuple[str, str], frozenset[str]] = {
     # `mode` is the pipeline mode ONLY on these artifacts; changelog.mode (merge/push/
     # none) and user-test.mode (prototype/mockup/working-slice) are different fields.
@@ -67,13 +75,49 @@ KNOWN_ENUMS: dict[tuple[str, str], frozenset[str]] = {
         frozenset({"go", "no-go", "conditional"}),
     # a no-go assumption never passes through into a design's assumptions_proven
     ("design", "assumptions_proven[].verdict"): frozenset({"go", "conditional"}),
-    ("code-review", "verdict"): frozenset({"clean", "needs-fixes", "blocked"}),
+    # slice-013 (ADR-009): the dead ("code-review", "verdict") row was REMOVED — the
+    # code-review artifact's outcome field is `result` (UPPERCASE {CLEAN, FINDINGS, BLOCKED},
+    # off the lowercase convention -> ENUM_EXCLUSIONS, not enforced). enum_path_resolves()
+    # guards against such dead rows.
     # Canonical risk-status set sourced from the ONE shared definition (slice-010 / ADR-008) —
     # NOT a hand-kept literal. Reconciles with risk_register_audit._ALLOWED_STATUSES (same import).
     ("risk-register", "risks[].status"): RISK_STATUSES,
     ("mission-brief", "architectural_layers[].status"): frozenset({"pending", "exercised"}),
     ("mission-brief", "exploratory_charters[].status"):
         frozenset({"pending", "in-progress", "completed", "deferred"}),
+    # ── slice-013 (ADR-009): documented schema-by-example enums, each value-set verified
+    # superset-safe against a live-vault scan of 100 typed artifacts. Documented-but-NOT-
+    # enforced fields live in ENUM_EXCLUSIONS (with a category + rationale) below.
+    ("build-log", "result"): frozenset({"shipped", "in-progress"}),
+    ("build-log", "gates[].status"): frozenset({"pass", "fail", "n/a"}),
+    ("concept", "constraints.stack[].reversibility"): _REVERSIBILITY,
+    ("risk-register", "risks[].reversibility"): _REVERSIBILITY,
+    ("adr", "reversibility"): _REVERSIBILITY,
+    ("critique", "findings[].severity"): _SEVERITY,
+    ("code-review", "findings[].severity"): _SEVERITY,
+    # code-review's own triage action set (distinct from critique's 5-value disposition)
+    ("code-review", "triage.dispositions[].action"): frozenset({"fixed", "overridden"}),
+    # pinned to critique_review_audit.py:87 _ALLOWED_CLASSIFICATIONS
+    ("critique-review", "assessments[].classification"):
+        frozenset({"valid", "suspicious", "severity-wrong"}),
+    ("drift-log", "entries[].category"):
+        frozenset({"drift", "unspecified-code", "stale-claim", "stale-doc"}),
+    ("design", "cross_domain_transfer.invariants[].status"):
+        frozenset({"holds", "must-verify", "fails"}),
+    ("design", "tournament.proposals[].selected"): frozenset({"core", "partial", "none"}),
+    ("design", "tournament.approach_divergence[].divergence"):
+        frozenset({"identical", "overlapping", "disjoint"}),
+    ("design", "tournament.decidable_disagreements[].verdict"):
+        frozenset({"pending", "go", "no-go"}),
+    ("critic-calibration-log", "gate_skips[].action"):
+        frozenset({"skip", "tier-gate-high-only"}),
+    ("changelog", "mode"): frozenset({"merge", "push", "none"}),
+    ("user-test", "mode"): frozenset({"prototype", "mockup", "working-slice"}),
+    ("milestone", "stage"): _MILESTONE_STAGES,
+    ("milestone", "progress[].step"): _MILESTONE_STEPS,
+    ("validation", "reality_contact"): _REALITY_CONTACT,
+    ("doc-manifest", "docs[].kind"):
+        frozenset({"readme", "changelog", "api-reference", "user-guide"}),
 }
 
 # Top-level keys that appear in a canonical example but are genuinely OPTIONAL on a
@@ -88,6 +132,154 @@ OPTIONAL_KEYS: dict[str, frozenset[str]] = {
     # verdict=conditional) — array-shaped optional; legacy spike files lack it.
     "spike": frozenset({"constraints"}),
 }
+
+# ── slice-013 (ADR-009): documented-enum coverage ════════════════════════════════════
+# ENUM_EXCLUSIONS: documented/enum-shaped fields deliberately NOT enforced, each with a
+# category + a written rationale so the gap is VISIBLE, never silent. Categories:
+#   uppercase       — off the lowercase-enum convention (_conventions.md:23); a separate
+#                     normalization slice owns these.
+#   annotated       — the canonical token is a PREFIX; live writers append a ` - <note>`
+#                     free-text suffix, so strict membership would false-reject.
+#   owned-elsewhere — another in-flight slice / a derived field owns this surface.
+#   open-set        — an extensible / off-convention set, not a closed enum.
+ENUM_EXCLUSIONS: dict[tuple[str, str], dict[str, str]] = {
+    ("code-review", "result"): {"category": "uppercase",
+        "rationale": "UPPERCASE {CLEAN, FINDINGS, BLOCKED}, off the lowercase-enum convention; a lowercase-normalization slice owns this."},
+    ("reflection", "critic_calibration[].verdict"): {"category": "uppercase",
+        "rationale": "UPPERCASE {VALIDATED, NOT-YET}, off the lowercase-enum convention; normalize separately."},
+    ("critique", "findings[].disposition"): {"category": "annotated",
+        "rationale": "canonical token is a prefix; live writers append ` - <rationale>` (19 live records) so strict membership false-rejects. triage.dispositions[].action is the clean enforced sibling."},
+    ("reflection", "discovered[].becomes"): {"category": "annotated",
+        "rationale": "canonical token is a prefix; live writers append ` (<context>)` so strict membership false-rejects."},
+    ("risk-register", "risks[].likelihood"): {"category": "owned-elsewhere",
+        "rationale": "risk-register enum surface owned by the risk work (slice-010/SC-006); reconcile likelihood/impact there."},
+    ("risk-register", "risks[].impact"): {"category": "owned-elsewhere",
+        "rationale": "risk-register enum surface owned by the risk work (slice-010/SC-006); reconcile likelihood/impact there."},
+    ("risk-register", "risks[].band"): {"category": "owned-elsewhere",
+        "rationale": "band is DERIVED by risk_register_audit (computed, not hand-set); live uses 'moderate' vs the _note's 'med' — reconcile with the risk work."},
+    ("slice-candidates", "candidates[].source[].type"): {"category": "open-set",
+        "rationale": "extensible source taxonomy (risk, reality-surprise, exploratory-charter, user-directed, external-review, …); grows over time."},
+    ("slice-candidates", "candidates[].status"): {"category": "open-set",
+        "rationale": "lifecycle set spans /slice + claim_candidate + commit-slice + validate-slice; pin the full set in a focused pass to avoid false-rejecting a lifecycle value."},
+    ("slice-candidates", "candidates[].progress"): {"category": "open-set",
+        "rationale": "loop-stage set spans the pipeline writers; pin in a focused pass to avoid false-rejecting a stage value."},
+    ("slice-candidates", "candidates[].priority.effort"): {"category": "open-set",
+        "rationale": "single-letter sizing codes {S, M, L} are UPPERCASE, off the lowercase-enum convention."},
+    ("changelog", "type"): {"category": "open-set",
+        "rationale": "open conventional-commit type set (feat/fix/chore/docs/refactor/…); pin a canonical subset only if needed."},
+    ("adr", "status"): {"category": "open-set",
+        "rationale": "set not pinned beyond 'accepted'; supersession is tracked via superseded_by, not a status value."},
+}
+
+# DOCUMENTED_ENUMS: the curated SWEEP record — every documented enum field this slice is
+# responsible for, mapped to WHERE it is documented. coverage_gaps() asserts each is
+# enforced (KNOWN_ENUMS) or excluded (ENUM_EXCLUSIONS); a newly-documented enum added here
+# that is neither fails the gate. (Pre-slice-013 enforced enums — triage.mode etc. — are
+# documented + enforced by earlier slices and not re-listed; enum_path_resolves() still
+# dead-row-guards ALL KNOWN_ENUMS. risk-register.risks[].status is enforced + owned by
+# slice-010 and intentionally omitted from this sweep.)
+DOCUMENTED_ENUMS: dict[tuple[str, str], str] = {
+    # enforced (KNOWN_ENUMS) — where documented:
+    ("build-log", "result"): "code-review/SKILL.md:25 (verify result: shipped); live scan",
+    ("build-log", "gates[].status"): "build-log example gates[].status",
+    ("concept", "constraints.stack[].reversibility"): "design-slice Step 4 + ADR _note (reversibility)",
+    ("risk-register", "risks[].reversibility"): "design-slice Step 4 + ADR _note (reversibility)",
+    ("adr", "reversibility"): "adr example + design-slice Step 4 reversibility",
+    ("critique", "findings[].severity"): "critique/code-review severity convention",
+    ("code-review", "findings[].severity"): "critique/code-review severity convention",
+    ("code-review", "triage.dispositions[].action"): "code-review _note (fixed | overridden)",
+    ("critique-review", "assessments[].classification"): "critique_review_audit.py:87 _ALLOWED_CLASSIFICATIONS",
+    ("drift-log", "entries[].category"): "drift-log _note (drift | unspecified-code | stale-claim | stale-doc)",
+    ("design", "cross_domain_transfer.invariants[].status"): "design cross_domain_transfer _note (holds | must-verify | fails)",
+    ("design", "tournament.proposals[].selected"): "design tournament _note (selected: core|partial|none)",
+    ("design", "tournament.approach_divergence[].divergence"): "design tournament _note (identical|overlapping|disjoint)",
+    ("design", "tournament.decidable_disagreements[].verdict"): "design tournament _note (reality fills go/no-go)",
+    ("critic-calibration-log", "gate_skips[].action"): "critic-calibration-log _note (action = skip | tier-gate-high-only)",
+    ("changelog", "mode"): "artifact_lint KNOWN_ENUMS comment (changelog.mode merge/push/none)",
+    ("user-test", "mode"): "artifact_lint KNOWN_ENUMS comment (user-test.mode prototype/mockup/working-slice)",
+    ("milestone", "stage"): "schemas/_conventions.md L-1 stage state-machine",
+    ("milestone", "progress[].step"): "milestone example progress[].step + _conventions L-1",
+    ("validation", "reality_contact"): "gate-log _note (reality_contact high|medium|low)",
+    ("doc-manifest", "docs[].kind"): "doc-manifest example docs[].kind",
+    # excluded (ENUM_EXCLUSIONS) — documented but deliberately not enforced:
+    ("code-review", "result"): "code-review _note (result CLEAN/FINDINGS) — uppercase",
+    ("reflection", "critic_calibration[].verdict"): "reflect skill verdict vocabulary — uppercase",
+    ("critique", "findings[].disposition"): "critique _note disposition enum — annotated suffix",
+    ("reflection", "discovered[].becomes"): "reflection example discovered[].becomes — annotated suffix",
+    ("risk-register", "risks[].likelihood"): "risk-register _note (low/med/high) — risk-work owned",
+    ("risk-register", "risks[].impact"): "risk-register _note (low/med/high) — risk-work owned",
+    ("risk-register", "risks[].band"): "risk-register _note band — derived/risk-work owned",
+    ("slice-candidates", "candidates[].source[].type"): "slice-candidates.example.json — open set",
+    ("slice-candidates", "candidates[].status"): "slice-candidates.example.json:5-6 — lifecycle set",
+    ("slice-candidates", "candidates[].progress"): "slice-candidates.example.json:5-6 — loop-stage set",
+    ("slice-candidates", "candidates[].priority.effort"): "slice-candidates effort S/M/L — uppercase",
+    ("changelog", "type"): "changelog example type — open conventional-commit set",
+    ("adr", "status"): "adr example status — not pinned beyond 'accepted'",
+}
+
+
+def _path_in_example(example: dict, path: str, optional: frozenset) -> bool:
+    """True if `path` (dotted, with `[]` list hops) resolves to a present field on ANY
+    element of the canonical `example`, OR its first segment is an OPTIONAL key
+    (array-shaped optionals like architectural_layers are absent from the base example).
+    A list hop descends into EVERY element — an enum field legitimately present on only
+    some rows (e.g. assumptions[].spike_verdict, set only on a proven assumption) is NOT
+    a dead row; a field present on NO element / nowhere in the shape IS."""
+    parts = path.split(".")
+    first = parts[0][:-2] if parts[0].endswith("[]") else parts[0]
+    if first in optional:
+        return True
+    frontier = [example]
+    for part in parts:
+        is_list = part.endswith("[]")
+        name = part[:-2] if is_list else part
+        nxt: list = []
+        for node in frontier:
+            if isinstance(node, dict) and name in node:
+                val = node[name]
+                if is_list:
+                    if isinstance(val, list):
+                        nxt.extend(val)
+                else:
+                    nxt.append(val)
+        if not nxt:
+            return False
+        frontier = nxt
+    return True
+
+
+def coverage_gaps() -> list[str]:
+    """slice-013 (ADR-009) registry-completeness guard: every DOCUMENTED_ENUMS entry must
+    be enforced (KNOWN_ENUMS) or explicitly excluded (ENUM_EXCLUSIONS), and no exclusion may
+    exist outside the registry. The reliable replacement for the structurally-unsound _note
+    prose-scanner (critique B2 / M-add-1)."""
+    gaps: list[str] = []
+    for key in sorted(DOCUMENTED_ENUMS):
+        if key not in KNOWN_ENUMS and key not in ENUM_EXCLUSIONS:
+            gaps.append(f"documented enum {key} is neither enforced (KNOWN_ENUMS) nor "
+                        f"excluded (ENUM_EXCLUSIONS) — register-or-exclude (ADR-009)")
+    for key in sorted(ENUM_EXCLUSIONS):
+        if key not in DOCUMENTED_ENUMS:
+            gaps.append(f"orphan exclusion {key}: in ENUM_EXCLUSIONS but not DOCUMENTED_ENUMS")
+    return gaps
+
+
+def enum_path_resolves() -> list[str]:
+    """slice-013 (ADR-009) structural dead-row guard: every enforced/documented
+    (artifact, path) must resolve to a real field in that artifact's canonical example
+    (or an OPTIONAL_KEYS array field). Catches a rule pointing at a renamed/nonexistent
+    field — e.g. the removed dead ("code-review", "verdict") row (the field is `result`)."""
+    examples = _load_examples()
+    bad: list[str] = []
+    for (art, path) in sorted(set(KNOWN_ENUMS) | set(DOCUMENTED_ENUMS)):
+        if art == "*":
+            continue
+        ex = examples.get(art)
+        if ex is None:
+            bad.append(f"enum row ({art}, {path}): unknown artifact type (no canonical example)")
+        elif not _path_in_example(ex, path, OPTIONAL_KEYS.get(art, frozenset())):
+            bad.append(f"dead enum row ({art}, {path}): field not in the {art} canonical example")
+    return bad
 
 
 def _load_examples() -> dict:
@@ -302,6 +494,10 @@ def main(argv: list[str] | None = None) -> int:
         for key, ex in examples.items():
             checked += 1
             violations.extend(lint_artifact(ex, key, ex, f"example:{key}"))
+        # slice-013 (ADR-009): the documented-enum coverage + dead-row guards run in the
+        # existing CI self-check (no separate flag) — this is their CI home.
+        violations.extend(coverage_gaps())
+        violations.extend(enum_path_resolves())
     else:
         targets = list(args.files)
         if args.dir is not None:
