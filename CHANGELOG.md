@@ -8,6 +8,14 @@ All notable changes, newest first. Versions are reconstructed from git history; 
 
 _Nothing unreleased._
 
+## [2.35.0] — 2026-06-15
+
+### Added
+
+- **product-doc:** Relocate the plugin.json version bump out of /commit-slice into /product-doc (post-merge) and add an open-period changelog roll-forward so decoupled-bump slices group under the version that releases them. (slice-009-relocate-version-bump-to-product-doc) [ADR-007]
+
+## [2.34.1] — 2026-06-15
+
 ## [2.34.0] — 2026-06-14
 
 ### Added
