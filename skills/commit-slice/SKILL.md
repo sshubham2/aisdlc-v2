@@ -4,7 +4,6 @@ description: "Generate an audit-grade conventional commit message for a just-com
 when_to_use: "Trigger phrases: /commit-slice, 'generate commit message', 'audit commit', 'slice commit message', '/commit-slice --merge', '/commit-slice --push', '/commit-slice --sync-after-pr'. Run after /reflect (which archives the slice). User-invoked only — never auto-advanced into."
 argument-hint: "[--merge | --push | --sync-after-pr]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, AskUserQuestion, Skill
-disable-model-invocation: true
 ---
 
 # /commit-slice — audit-grade commit from vault
@@ -387,8 +386,9 @@ Invoke `/slice-story slice-NNN-<name>` via the **`Skill`** tool, passing the sli
 `/slice-story` resolves the (now archived) slice via its archive-aware by-id resolver (`active_slice.py --slice`),
 regenerates `story-sections.json` + `story.html` in place (overwrite), and delivers it `proactive` (the shipped
 story is the keystone deliverable — it reaches the owner's phone). The `Skill` grant is in this skill's
-`allowed-tools` (line 6); `disable-model-invocation: true` blocks the model from invoking `/commit-slice` ITSELF
-— it does **not** impede this OUTBOUND Skill call. **Do NOT remove the grant.**
+`allowed-tools` (line 6) and authorizes this OUTBOUND Skill call. (`/commit-slice` is model-invocable — so it can be
+relayed from Remote Control — but every git state change is gated behind this skill's explicit yes/no confirmations,
+NOT a frontmatter flag.) **Do NOT remove the grant.**
 
 **Fire-and-forget — NEVER a gate (must-not-defer):**
 - The commit/merge/push has ALREADY completed; the story refresh is a downstream side-effect, not part of the

@@ -3,7 +3,6 @@ name: build-slice
 description: "Executes the current slice end-to-end using plan mode plus a sequence of verification gates. The Builder enters plan mode to explore code with code-review-graph queries and targeted Reads, drafts a task sequence, and obtains explicit user approval before writing code. Execution proceeds task-by-task with per-task verification, a mandatory mid-slice smoke gate, and a multi-audit pre-finish gate before declaring the slice done."
 when_to_use: "Trigger phrases: /build-slice, 'build this slice', 'implement the slice', 'ship the slice'. Use after /critique blockers are addressed (and /critique-review where required). Outputs build-log.json + updated milestone.json; hands off to /code-review."
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash, Skill, AskUserQuestion
-disable-model-invocation: true
 ---
 
 # /build-slice — Execute with Plan Mode + Verification Gates
