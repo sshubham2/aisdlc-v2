@@ -5,7 +5,6 @@ when_to_use: "Trigger phrases: /setup, /ai-sdlc:setup, 'set up ai-sdlc', 'instal
 argument-hint: "[--no-mcp] [--no-graph] [repo-path]"
 user-invocable: true
 allowed-tools: Read, Bash, AskUserQuestion
-disable-model-invocation: true
 ---
 
 # /setup — AI SDLC dependency doctor + installer
