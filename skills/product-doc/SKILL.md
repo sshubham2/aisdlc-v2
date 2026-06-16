@@ -121,6 +121,31 @@ docs/*: <current contents, or "none">
 (`readme` / `api_reference` / `user_guide` markdown + `grounding` + `ungrounded_claims_omitted`). Surface its
 `ungrounded_claims_omitted` to the user — those are real gaps (code the agent couldn't verify), not oversights.
 
+## Step 2.5 — verify the agent's grounding against reality (slice-015 / ADR-011)
+
+The agent SELF-ATTESTS its `grounding`; **never write it verbatim** — independently re-derive each token against
+reality first, so a hallucinated flag can't ship with false provenance. Ensure the code map is fresh
+(`"${CRG:-code-review-graph}" update` — M2: a stale graph false-rejects a just-merged symbol), then run the
+deterministic verifier (no model judges the model — exact membership only):
+
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+# M2: guard the vault root — an unset/empty $AI_SDLC_VAULT_ROOT must NOT pass "" (the verifier would
+# then be unable to resolve vault: tokens against the right root). Resolve deterministically, fail-visible.
+vault_root="${AI_SDLC_VAULT_ROOT:-$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+[ -n "$vault_root" ] || { echo "grounding-verify: vault root unresolved — run /setup or set AI_SDLC_VAULT_ROOT" >&2; exit 1; }
+$PY -c "import json,sys; json.dump({'grounding': <agent.grounding>, 'repo_root': sys.argv[1], 'vault_root': sys.argv[2]}, sys.stdout)" "$repo_root" "$vault_root" \
+  | $PY "${CLAUDE_SKILL_DIR}/scripts/grounding_verify.py"
+```
+
+It returns `{docs: {<doc>: {verified[], grounding_unverified[{token,reason}]}}, grounding_check{ran, crg_reachable,
+graph_last_updated, graph_stale, public_surface_verified}}`. Each token is `crg:<repo-rel-path>::<symbol>` /
+`file:<repo-rel-path>` / `vault:<path>` (path-based — B1); a token it can't confirm is dropped. **Fail-CLOSED**:
+when `crg_reachable` is false (code map unreachable) the affected tokens are `source-unavailable`, NOT silently
+passed (AC3). **Surface to the user** the verified vs unverified counts per doc + whether the code map was
+reachable and stale — these are real gaps, not noise. (`public_surface` stays Step-0 fuzzy-harvested and
+`public_surface_verified: false` — a known, visible unverified anchor; M-add-1.)
+
 ## Step 3 — write the docs to the repo (overwrite gate)
 
 Write each requested agent-doc to the repo: `README.md`, `docs/api-reference.md`, `docs/user-guide.md`.
@@ -137,10 +162,17 @@ Never write a doc the agent returned `null` for or omitted.
 Write `<vault>/doc-manifest.json` (schema: `examples/doc-manifest.json`) — the anchor `/drift-check` audits:
 
 - `at`, `source_commit` (`git rev-parse --short HEAD`), `public_surface` (the Step 0 snapshot)
-- `docs[]` — one entry per doc actually written: `path`, `kind`, `generated_at`, `grounded_in` (from the agent's
-  `grounding`, or — for the CHANGELOG — `["git:.claude-plugin/plugin.json@history", "vault:slices/archive/*/changelog.json"]`,
-  since the changelog is now reconstructed from git history *plus* the per-slice records, so `/drift-check` must
-  audit both sources)
+- `docs[]` — one entry per doc actually written: `path`, `kind`, `generated_at`, and **`grounded_in` = the Step 2.5
+  verifier's `verified[]` ONLY** (never the agent's raw `grounding` — slice-015). Also write the sibling
+  `grounding_unverified` (the dropped `{token, reason}` list) + `grounding_check` (`ran`, `crg_reachable`,
+  `graph_last_updated`, `graph_stale`, `public_surface_verified`) for that doc, so a degraded/partial verification
+  is visible, never silently blended with the solid sources. For the **CHANGELOG** doc, `grounded_in` stays
+  `["git:.claude-plugin/plugin.json@history", "vault:slices/archive/*/changelog.json"]` (it is deterministic, not
+  agent-grounded — not verifier-gated).
+- **`/drift-check` Step 3** (`skills/drift-check/SKILL.md`) re-resolves each `grounded_in` token to detect a
+  `stale-doc`; because `grounded_in` is now verified-only path tokens, that re-resolution operates on confirmed,
+  resolvable sources (B2 — the consumer is drift-check's Step 3, not `build_entry.py`, which only serializes the
+  drift-log).
 
 <!-- vault-write-safe: project-open-single-shot -->
 This is a single-shot full rewrite each run (not an append-mutated shared file), so a direct `Write` is correct
