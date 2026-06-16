@@ -58,11 +58,19 @@ If the chosen candidate is a bug fix, a **failing repro test must exist first**.
 - the description identifies a defect.
 
 Check `<vault>/shippability.json` for a row whose `machine_cmd` targets `tests/bugs/*` (one that `/repro` — or
-`/bug-hunt`'s own `/repro→/slice` handoff — may already have written; if so, BFRD-1 is satisfied, proceed). If absent
-→ distill a one-line repro description, confirm it via an `AskUserQuestion` (Confirm / Modify / Not-a-bug-cancel). On
-Confirm/Modify → invoke `/repro <desc>` once via Skill, re-check; on "Not a bug" → fail-closed (re-scope). One AC must
-assert "the failing repro test passes at slice end". (`/repro` runs here before the worktree exists, so it writes the
-failing test to the MAIN tree; **Step 5 relocates it into `$wt`** on the slice branch — WT-ROOT-1.)
+`/bug-hunt`'s own `/repro→/slice` handoff — may already have written). Two sub-cases drive Step 5:
+- **Row present → STANDALONE repro** (a `/repro` run *before* `/slice` wrote the failing test to the MAIN tree,
+  untracked). BFRD-1 is satisfied; **Step 5.6 relocates exactly that one named test into `$wt`** — capability-scoped
+  by the row's recorded path, never a `tests/bugs/*` glob (ADR-012).
+- **No row → IN-LOOP repro**: distill a one-line repro description and confirm it via an `AskUserQuestion`
+  (Confirm / Modify / Not-a-bug-cancel) **now, before any worktree exists** (so a "Not a bug" cancel costs nothing).
+  On Confirm/Modify → record the description for **Step 5.3** (which invokes `/repro` *after* the worktree exists, so
+  the test is born inside `$wt`); on "Not a bug" → fail-closed (re-scope).
+
+One AC must assert "the failing repro test passes at slice end". (**WT-ROOT-1 / ADR-012:** the worktree is created in
+Step 5 BEFORE `/repro` runs — the in-loop test is written straight into `$wt` via `/repro --target-root`; a standalone
+test already on the MAIN tree is relocated by **`repro_test_relocate.py`** to the one explicitly-named path, NEVER by
+sweeping `tests/bugs/*`. This is the fix for the cross-slice repro-theft the old glob caused.)
 
 ## Step 3 — define the slice
 - **Name**: verb-object (`add-receipt-upload`, `fix-thumbnail-orientation`). Never `phase-N` / vague nouns.
@@ -118,33 +126,66 @@ status: "pending"|"in-progress"|"completed"|"deferred", findings}` (ETC-1 docstr
 ## Step 4 — scope check
 ≤5 ACs, ≤1 day, system stays shippable. If it exceeds → split.
 
-## Step 5 — claim + scaffold (BRANCH-3: worktree at pick)
-Once the candidate is settled AND scope passes, in order:
-1. Compute paths: `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder slice-NNN-<name> --repo-root .` (line 1 = wt path, line 2 = `slice/NNN-<name>`). `NNN = max(existing incl. archive) + 1`.
-2. `git -C <main> worktree add <wt_path> -b slice/NNN-<name> <default>`. Failure → STOP, surface (nothing else ran).
-3. Write the scaffold to the **external vault store**:
+## Step 5 — claim + scaffold (BRANCH-3 worktree-at-pick; ADR-012 worktree-first repro ordering)
+Once the candidate is settled AND scope passes, in THIS order. The sequence is load-bearing: a bug-fix repro is born
+inside `$wt` (or relocated by the one explicit path), never grabbed from the main tree by a glob.
+
+1. **Compute paths**: `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder slice-NNN-<name> --repo-root .` (line 1 = `$wt` path, line 2 = `slice/NNN-<name>`). `NNN = max(existing incl. archive) + 1`.
+2. **Create the worktree**: `git -C <main> worktree add <wt_path> -b slice/NNN-<name> <default>`. Failure → **STOP**, surface (nothing else ran).
+3. **In-loop repro (Step 2 "No row" path only)**: if BFRD-1 confirmed an in-loop repro is needed, invoke
+   `/repro "<desc>" --target-root=<wt_path>` once via the Skill tool. `/repro` writes the failing test under
+   `<wt_path>/tests/bugs/` (born on the slice branch) and confirms it fails there — **no relocation needed**.
+   (Non-bug-fix, or a standalone row already present → skip; that case is handled at 6.)
+4. **Write the scaffold** to the **external vault store**:
    - `<vault>/slices/slice-NNN-<name>/mission-brief.json` (schema: `examples/mission-brief.json`)
    - `<vault>/slices/slice-NNN-<name>/milestone.json` (schema: `examples/milestone.json`; `stage: "spike"`, `next_action: "/risk-spike"`)
-   Failure → STOP, roll back the worktree (`git -C <main> worktree remove <wt_path>`).
-4. **Claim the candidate** (fail-visible on unset git identity):
+5. **Claim the candidate** (fail-visible on unset git identity):
    ```bash
    $PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --vault "$AI_SDLC_VAULT_ROOT" \
        --candidate <SC-NNN> --slice slice-NNN-<name>
    ```
    This routes through `vault_edit` (SVW-1): sets the candidate `status: spiking`, `progress: spike`,
    `claimed_by {git_user, git_email}`, `started_at`, and appends the `pick_log` entry.
-5. **Relocate any pre-worktree repro test into `$wt` (WT-ROOT-1 / repro fix)** — a `/repro` run before the worktree
-   existed (BFRD-1 Step 2, or standalone) wrote the failing test to the MAIN tree. Move any untracked `tests/bugs/*`
-   into the worktree and stage it on the slice branch, so the repro test + the coming fix co-locate (and the main
-   tree stays clean — the WT-ROOT-1 audit will check this at build/validate):
+6. **Standalone repro relocation (Step 2 "Row present" path)** — a `/repro` ran *before* `/slice` and left the
+   failing test untracked on the MAIN tree. Relocate the ONE test named by its shippability row into `$wt` —
+   **capability-scoped, NEVER a `tests/bugs/*` glob** (ADR-012; the glob caused cross-slice theft). Derive the grant
+   from the row(s) by reusing `shippability_path_audit._extract_test_tokens` (it strips `-q`/`::selector`), keep only
+   the ones still untracked on the main tree:
    ```bash
    repo_root="$(git rev-parse --show-toplevel)"
-   wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder slice-NNN-<name> --repo-root "$repo_root" | head -1)"
-   for f in $(git -C "$repo_root" ls-files --others --exclude-standard -- 'tests/bugs/*' 2>/dev/null); do
-     mkdir -p "$wt/$(dirname "$f")"; mv "$repo_root/$f" "$wt/$f"; git -C "$wt" add "$f"
-   done
+   cand=$($PY -c "
+   import sys, json, subprocess
+   sys.path.insert(0, 'skills/validate-slice/scripts')
+   from shippability_path_audit import _extract_test_tokens
+   rows = json.load(open('$AI_SDLC_VAULT_ROOT/shippability.json')).get('rows', [])
+   paths = {t for r in rows for t,_ in _extract_test_tokens(r.get('machine_cmd','')) if t.startswith('tests/bugs/')}
+   def untracked(p):  # scoped to the ONE grant path p -- never globs the whole tests/bugs/ folder
+       r = subprocess.run(['git','-C','$repo_root','ls-files','--others','--exclude-standard','--',p],capture_output=True,text=True)
+       return bool(r.stdout.strip())
+   print('\n'.join(sorted(p for p in paths if untracked(p))))
+   ")
    ```
-   (No bug-fix repro → the loop is a no-op. The fix slice will make this test pass; `/validate-slice` runs it from `$wt`.)
+   - **0 candidates** → nothing to relocate (in-loop repro already wrote into `$wt`, or non-bug-fix) → skip.
+   - **>1 candidate** (parallel standalone repros) → `AskUserQuestion` listing the paths; the user picks THIS slice's.
+   - For the chosen `<test-path>`, relocate exactly it (re-derive `repo_root` — a fresh bash block; vars do not
+     carry over, BC-PROJ-2):
+     ```bash
+     repo_root="$(git rev-parse --show-toplevel)"
+     $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/repro_test_relocate.py" \
+         --slice-folder slice-NNN-<name> --repo-root "$repo_root" --test-path "<test-path>"
+     ```
+     The helper moves ONLY that file into `$wt` + stages it; it never enumerates `tests/bugs/`, so a sibling slice's
+     untracked test is structurally safe. It exits non-zero + visibly on a missing worktree / missing named source /
+     git-ignored path / stage failure (never a silent partial).
+
+**Failure ladder (must-not-defer #1 — no silent partial scaffold):**
+- worktree-add (2) fails → **STOP**; nothing else ran.
+- `/repro` (3) aborts, or its "test unexpectedly passes" recovery fires (after 2, before the scaffold) → roll the
+  worktree back: `git -C <main> worktree remove <wt_path>` + `git branch -D slice/NNN-<name>`; leave no scaffold/claim.
+- scaffold (4) or claim (5) fails → roll the worktree back the same way.
+
+The BFRD-1 Confirm/Not-a-bug gate (Step 2) runs BEFORE the Step-2 worktree-add, so cancelling a candidate as "Not a
+bug" never orphans a worktree.
 
 ## Critical rules
 - ASK before deciding the slice (unless explicit intent / "you pick"). ENFORCE scope (>1 day → split).
