@@ -102,6 +102,7 @@ def build_changelog(rec: dict, slice_id: str, mode: str, at: str) -> dict:
 
 def main(argv=None) -> int:
     _stdout.reconfigure_stdout_utf8()  # UTF8-STDOUT-1
+    _stdout.reconfigure_stdin_utf8()   # SC-015: decode the piped record as utf-8 (stdin twin)
     ap = argparse.ArgumentParser(description="Write the per-slice changelog.json.")
     ap.add_argument("--vault", required=True, help="vault root (<vault>/)")
     ap.add_argument("--slice", required=True, dest="slice_id",

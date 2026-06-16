@@ -34,3 +34,29 @@ def reconfigure_stdout_utf8() -> None:
         if reconfigure is None:
             continue
         reconfigure(encoding="utf-8", errors="replace")
+
+
+def reconfigure_stdin_utf8() -> None:
+    """Reconfigure sys.stdin to UTF-8 with errors='replace' (the stdin twin, SC-015).
+
+    A subprocess that reads a piped record on a Windows cp1252 stdin would
+    otherwise mis-decode non-ASCII (an em-dash) and re-encode it as mojibake.
+    Call this BEFORE the first stdin read.
+
+    No-op when stdin lacks `reconfigure` (test capture, StringIO). Unlike the
+    write-stream twin above, `reconfigure(encoding=...)` on a READ stream raises
+    `io.UnsupportedOperation` ("It is not possible to set the encoding ... after
+    the first read") if a read has already occurred — `io.UnsupportedOperation`
+    subclasses both OSError and ValueError, so the call is guarded and degrades
+    to the host default rather than crashing (M1, slice-012). The write-stream
+    twin needs no such guard because write streams are exempt from the restriction.
+    """
+    reconfigure = getattr(sys.stdin, "reconfigure", None)
+    if reconfigure is None:
+        return
+    try:
+        reconfigure(encoding="utf-8", errors="replace")
+    except (ValueError, OSError):
+        # io.UnsupportedOperation (stdin already read) or otherwise un-reconfigurable
+        # -> fall back to the host default; the caller still attempts the read.
+        pass
