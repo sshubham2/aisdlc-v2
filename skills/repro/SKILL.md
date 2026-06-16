@@ -54,7 +54,13 @@ If so, note it: the shippability entry for that slice is incomplete.
 
 ## Step 3 — write the failing test
 
-Write the test under `tests/bugs/` (or the project's bug-test convention). The test MUST:
+**Write target (`--target-root`, ADR-012):** `/slice` invokes this skill in-loop as
+`/repro "<desc>" --target-root=<wt>` so the test is born inside the slice **worktree**; a STANDALONE `/repro`
+(no `--target-root`) defaults to the **main tree** (cwd) — byte-identical to before. Let `$ROOT` = the
+`--target-root` value, or cwd when absent. Write the test under `$ROOT/tests/bugs/`. The path RECORDED in the
+catalog stays repo-root-relative `tests/bugs/test_<slug>.py` either way (Step 5).
+
+Write the test under `$ROOT/tests/bugs/` (or the project's bug-test convention). The test MUST:
 
 - Be runnable from project root with a single command (`pytest tests/bugs/test_<slug>.py -v`)
 - Target the specific bug trigger, not adjacent surface
@@ -83,10 +89,11 @@ Write the file via the Write harness tool.
 
 ## Step 4 — confirm the test FAILS
 
-Run the test and verify it fails with the expected signature:
+Run the test and verify it fails with the expected signature — from `$ROOT` (the `--target-root`), in a SINGLE
+bash block (a bare `cd` does NOT persist across SKILL.md bash blocks, and the test lives under `$ROOT/tests/bugs/`):
 
 ```bash
-pytest tests/bugs/test_<slug>.py -v
+( cd "${ROOT:-.}" && pytest tests/bugs/test_<slug>.py -v )
 ```
 
 If the test **passes**: STOP. Do NOT proceed. Either:
@@ -147,9 +154,12 @@ The fix slice's mission-brief must include:
 - ONE bug per /repro. Never bundle multiple bugs into one test.
 - DOCUMENT the bug in the test docstring (expected / actual behavior).
 - SVW-1: shippability.json appends route through `vault_edit` — never raw Write/Edit.
-- WT-ROOT-1: you run BEFORE the slice worktree exists, so write the test to the MAIN tree's `tests/bugs/` and
-  confirm it fails there (against the unfixed code). Do NOT commit it to the main tree — `/slice` Step 5 relocates
-  it (untracked) into the slice worktree on the slice branch, where the fix is built and `/validate-slice` runs it.
+- WT-ROOT-1 / ADR-012: when `/slice` drives this skill IN-LOOP it passes `--target-root=<wt>` AND has already
+  created the worktree, so the failing test is written straight into the slice worktree (born on the slice branch) —
+  no relocation. When run STANDALONE (before `/slice`, no `--target-root`), the test lands on the MAIN tree's
+  `tests/bugs/` (untracked, against the unfixed code); `/slice` Step 5.6 then relocates exactly that one named test
+  into the worktree via `repro_test_relocate.py` — NEVER by sweeping `tests/bugs/*`. Either way the recorded
+  `machine_cmd` path stays repo-root-relative.
 
 ## Pipeline position
 
