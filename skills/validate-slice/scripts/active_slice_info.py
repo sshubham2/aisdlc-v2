@@ -45,6 +45,16 @@ def _load(path: Path) -> dict | None:
 
 def _info(vault: Path, repo_root: str) -> dict:
     slc = resolve_active_slice(vault, repo_root)
+    if isinstance(slc, dict) and slc.get("source") == "ambiguous":
+        # slice-014 (B1/M-add-1): catch the TRUTHY AMBIGUOUS sentinel BEFORE `if not slc`
+        # (else `Path(slc['path'])` crashes on path=None), and NAME the candidates rather
+        # than lie 'no active slice — run /slice first'.
+        cands = slc.get("candidates", []) or []
+        ids = ", ".join(str(c.get("slice")) for c in cands)
+        return {"slice": None, "source": "ambiguous", "candidates": cands,
+                "ready_to_validate": False,
+                "reason": f"ambiguous active slice — {len(cands)} in flight: {ids}. "
+                          f"Pass --slice <slice-NNN> or work from the slice's worktree."}
     if not slc:
         return {"slice": None, "ready_to_validate": False,
                 "reason": "no active slice — run /slice first"}
@@ -94,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(info, ensure_ascii=False))
     elif info["slice"] is None:
-        print("active slice: none — run /slice first")
+        print(f"active slice: {info.get('reason', 'none — run /slice first')}")
     else:
         print(f"active slice: {info['folder']} (stage={info['stage']}) — "
               f"ready_to_validate={info['ready_to_validate']}"

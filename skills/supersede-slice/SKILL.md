@@ -22,7 +22,7 @@ Skip when: adding a feature on top of a shipped slice (normal new slice); fixing
 
 Active slice (latest):
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --folder-only 2>/dev/null
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --folder-only   # slice-014: no 2>/dev/null — an AMBIGUOUS HALT (exit 4) must surface
 ```
 
 ---

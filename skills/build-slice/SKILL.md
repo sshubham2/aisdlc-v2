@@ -23,13 +23,13 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/stranded_slice_audit.py" --repo-root 
 
 Active mission brief (acceptance criteria, must-not-defer, test-first flag, smoke gate):
 ```!
-SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only 2>/dev/null)"
+SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only)"   # slice-014: NO 2>/dev/null — an AMBIGUOUS resolution (exit 4) must surface its HALT
 [ -n "$SDIR" ] && cat "$SDIR/mission-brief.json" 2>/dev/null
 ```
 
 Critic constraints (Critic findings the build must respect):
 ```!
-SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only 2>/dev/null)"
+SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only)"   # slice-014: NO 2>/dev/null — an AMBIGUOUS resolution (exit 4) must surface its HALT
 [ -n "$SDIR" ] && cat "$SDIR/critique.json" 2>/dev/null
 ```
 
