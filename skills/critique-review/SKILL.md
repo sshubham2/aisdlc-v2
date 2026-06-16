@@ -32,7 +32,7 @@ If `critique.json` does not exist: write `critique-review.json` with
 ## Project frame — injected
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --path-only 2>/dev/null)" 2>/dev/null || echo "(project-frame unavailable)"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --path-only)" 2>/dev/null || echo "(project-frame unavailable)"
 ```
 
 Use the project frame to re-check whether the first Critic missed a direction-fit concern or flagged one that
@@ -79,7 +79,7 @@ Await the subagent's return value. On error: surface it and stop.
 ### Step 3 — Run the structural audit
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py" "$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --path-only 2>/dev/null)"
+$PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py" "$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --path-only)"
 ```
 
 The audit validates: required sections present, verdict in `{accept, adjust, extend}`, `reviewed_by` and

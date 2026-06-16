@@ -85,6 +85,16 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     info = resolve_active_slice(_root(args.vault), args.repo_root)
+    if isinstance(info, dict) and info.get("source") == "ambiguous":
+        # slice-014 (B1/M-add-1): the AMBIGUOUS sentinel is a TRUTHY dict, so it must be
+        # caught BEFORE `if not info` (else `Path(info['path'])` would crash on path=None),
+        # and it must NAME the candidates rather than lie 'no active slice'.
+        cands = info.get("candidates", []) or []
+        ids = ", ".join(str(c.get("slice")) for c in cands)
+        print(f"(AMBIGUOUS active slice — {len(cands)} slices in flight: {ids}. This refuses "
+              f"to guess which slice you mean: pass --slice <slice-NNN> or work from the "
+              f"slice's worktree.)")
+        return 0
     if not info:
         print("(no active slice — run /slice first)")
         return 0
