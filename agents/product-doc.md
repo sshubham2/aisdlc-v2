@@ -55,8 +55,17 @@ If a critical input is missing (e.g. no `concept.json` and an empty CRG), say so
 2. For every interface fact, confirm against CRG (or a direct Read of the cited file) before writing it. Prefer
    citing the symbol's real location.
 3. Cross-check `slices/_index.json` so you document shipped capabilities, not aspirational ones.
-4. Record, per doc, the CRG nodes / vault files you grounded it in (`grounding`) — this is the provenance the
-   skill writes into `doc-manifest.json` so `/drift-check` can later flag the doc as stale when the code moves.
+4. Record, per doc, the **path-based** source tokens you grounded it in (`grounding`) — this is the provenance the
+   skill **independently re-verifies** (slice-015) and writes into `doc-manifest.json` so `/drift-check` can later
+   flag the doc as stale when the code moves. **Token grammar (path-based — load-bearing):**
+   - `crg:<repo-rel-path>::<symbol>` — an interface fact (command/flag/endpoint/export): cite the **repo-relative
+     file path** that defines it, plus the symbol. The verifier resolves the path in the code map and checks it
+     actually contains the symbol. (A bare `crg:<repo-rel-path>` checks the file exists.) Do **NOT** emit a
+     conceptual node like `crg:module:cli` — it does not resolve and will be dropped as unverified.
+   - `file:<repo-rel-path>[::<symbol>]` — a non-graph repo file you Read (optionally containing `<symbol>`).
+   - `vault:<vault-rel-path>` — a vault provenance pointer (existence only; no `::symbol`).
+   A token the verifier cannot confirm is **omitted from** the manifest's `grounded_in` and listed in
+   `grounding_unverified` — so be precise: cite the real path, not a concept.
 
 ## Output
 
@@ -70,9 +79,9 @@ manifest). Omit any doc you weren't asked for or genuinely can't ground.
   "api_reference": "<full docs/api-reference.md markdown, or null>",
   "user_guide": "<full docs/user-guide.md markdown, or null>",
   "grounding": {
-    "readme": ["crg:<node>", "vault:concept.json", "file:<path>"],
-    "api_reference": ["crg:<node>", ...],
-    "user_guide": ["vault:concept.json", "crg:<node>", ...]
+    "readme": ["crg:<repo/rel/path.py>::<symbol>", "vault:concept.json", "file:<repo/rel/path>"],
+    "api_reference": ["crg:<repo/rel/path.py>::<symbol>", "..."],
+    "user_guide": ["vault:concept.json", "crg:<repo/rel/path.py>", "..."]
   },
   "ungrounded_claims_omitted": ["<thing you wanted to document but could not verify — so the author knows the gap>"]
 }

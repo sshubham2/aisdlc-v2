@@ -118,6 +118,11 @@ KNOWN_ENUMS: dict[tuple[str, str], frozenset[str]] = {
     ("validation", "reality_contact"): _REALITY_CONTACT,
     ("doc-manifest", "docs[].kind"):
         frozenset({"readme", "changelog", "api-reference", "user-guide"}),
+    # slice-015: the grounding verifier's per-token drop reason. crg_reachable / graph_stale /
+    # public_surface_verified are BOOLEAN (not enums) and deliberately NOT registered here.
+    ("doc-manifest", "docs[].grounding_unverified[].reason"):
+        frozenset({"source-unavailable", "symbol-absent", "ambiguous-match",
+                   "malformed", "file-absent", "not-indexed"}),
 }
 
 # Top-level keys that appear in a canonical example but are genuinely OPTIONAL on a
@@ -201,6 +206,7 @@ DOCUMENTED_ENUMS: dict[tuple[str, str], str] = {
     ("milestone", "progress[].step"): "milestone example progress[].step + _conventions L-1",
     ("validation", "reality_contact"): "gate-log _note (reality_contact high|medium|low)",
     ("doc-manifest", "docs[].kind"): "doc-manifest example docs[].kind",
+    ("doc-manifest", "docs[].grounding_unverified[].reason"): "doc-manifest example docs[].grounding_unverified[].reason (slice-015 grounding verifier)",
     # excluded (ENUM_EXCLUSIONS) — documented but deliberately not enforced:
     ("code-review", "result"): "code-review _note (result CLEAN/FINDINGS) — uppercase",
     ("reflection", "critic_calibration[].verdict"): "reflect skill verdict vocabulary — uppercase",

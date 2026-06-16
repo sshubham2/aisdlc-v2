@@ -81,8 +81,13 @@ Non-zero → surface each violation as a STALE CLAIM finding (Step 4). Detect-on
 For each mismatch capture: vault file path, vault claim text, code evidence, severity.
 
 **Doc-vs-code (STALE DOC).** If `<vault>/doc-manifest.json` exists, for each entry in its `docs[]`: (a) confirm the
-doc file still exists on disk; (b) re-resolve each `grounded_in` CRG node — a documented command / endpoint / export
-that no longer resolves means the doc describes something gone; (c) diff the manifest's `public_surface` snapshot
+doc file still exists on disk; (b) re-resolve each `grounded_in` token — these are now **path-based** (slice-015),
+so split on the scheme: `crg:<repo-rel-path>::<symbol>` re-resolves via the same code-map path+symbol check the
+producer uses (reuse `skills/product-doc/scripts/grounding_verify.py` / `_crg_grounding_probe.py` — single source of
+truth, don't re-describe the resolution), `file:<repo-rel-path>` by repo-file existence (+ optional symbol), and
+`vault:<vault-rel-path>` by vault-file existence. A previously-verified token that no longer resolves means the doc
+describes something gone (the tokens are verified-only now, so a non-resolving one is a real STALE-DOC signal, not a
+conceptual-node miss); (c) diff the manifest's `public_surface` snapshot
 against the current CRG surface — a removed/renamed public symbol means the README / API-reference likely document a
 vanished interface. Each mismatch → a **STALE DOC** finding citing the doc path + the specific vanished symbol, with
 `Resolve: regenerate via /product-doc`. No manifest → skip this check (no-op).

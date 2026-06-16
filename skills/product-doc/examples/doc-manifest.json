@@ -19,9 +19,19 @@
       "kind": "readme",
       "generated_at": "<ts>",
       "grounded_in": [
-        "crg:module:cli",
+        "crg:scripts/lib/build_backlog.py::build_backlog",
         "vault:concept.json"
-      ]
+      ],
+      "grounding_unverified": [
+        { "token": "crg:scripts/lib/build_backlog.py::nonexistent_flag", "reason": "symbol-absent" }
+      ],
+      "grounding_check": {
+        "ran": true,
+        "crg_reachable": true,
+        "graph_last_updated": "<ts>",
+        "graph_stale": false,
+        "public_surface_verified": false
+      }
     },
     {
       "path": "CHANGELOG.md",
@@ -36,7 +46,7 @@
       "kind": "api-reference",
       "generated_at": "<ts>",
       "grounded_in": [
-        "crg:exports"
+        "crg:scripts/lib/vault_edit.py::vault_edit"
       ]
     },
     {
@@ -45,7 +55,7 @@
       "generated_at": "<ts>",
       "grounded_in": [
         "vault:concept.json",
-        "crg:module:cli"
+        "crg:src/cli.py::main"
       ]
     }
   ]
