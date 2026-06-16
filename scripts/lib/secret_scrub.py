@@ -80,6 +80,12 @@ def redact(text: str) -> tuple[str, list[str]]:
 
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
+    # SC-026: decode piped evidence as utf-8 BEFORE the scan/redact — a cp1252 stdin (Windows
+    # default) would otherwise mojibake non-ASCII captured output before it is scrubbed. The STDIN
+    # twin of UTF8-STDOUT-1 (the same fix as write_changelog.py, SC-015). Unconditional (mirrors the
+    # precedent); on the --in path the reconfigure still runs but no stdin read consumes it. The helper
+    # degrades safely (errors='replace', no-op on non-reconfigurable / already-read streams).
+    _stdout.reconfigure_stdin_utf8()
     ap = argparse.ArgumentParser(
         prog="secret_scrub",
         description="Redact credentials from captured evidence before it is written to the vault (4.7).")
