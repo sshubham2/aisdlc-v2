@@ -6,7 +6,10 @@ its schema-by-example. This is the check that would have caught the 1.4
 """
 from __future__ import annotations
 
+import copy
 import json
+
+import pytest
 
 from scripts.lib import artifact_lint
 from scripts.lib.artifact_lint import _load_examples, lint_artifact, schema_skew
@@ -188,3 +191,139 @@ def test_legacy_spike_file_without_constraints_clean():
     examples = _load_examples()
     sp = {k: v for k, v in examples["spike"].items() if k != "constraints"}
     assert lint_artifact(sp, "spike", examples["spike"], "test") == []
+
+
+# ── slice-013 (ADR-009): documented-enum coverage enforcement ─────────────────────
+
+
+def _set_path(obj, path):
+    """Descend a dotted path with `[]` list hops (into element 0) to the parent of the
+    leaf, returning (parent_dict, leaf_name). Assumes the example already populates the
+    path (we only test enums the canonical example contains)."""
+    parts = path.split(".")
+    cur = obj
+    for part in parts[:-1]:
+        is_list = part.endswith("[]")
+        name = part[:-2] if is_list else part
+        cur = cur[name]
+        if is_list:
+            cur = cur[0]
+    return cur, parts[-1]
+
+
+# Representative newly-enforced enums whose path is present in the canonical example.
+_ENUM_REJECT_ACCEPT = [
+    ("build-log", "gates[].status", "bogus", "pass"),
+    ("drift-log", "entries[].category", "bogus", "stale-claim"),
+    ("design", "tournament.proposals[].selected", "maybe", "core"),
+    ("design", "tournament.approach_divergence[].divergence", "kinda", "disjoint"),
+    ("design", "cross_domain_transfer.invariants[].status", "perhaps", "holds"),
+    ("critique", "findings[].severity", "huge", "major"),
+    ("code-review", "findings[].severity", "huge", "minor"),
+    ("milestone", "stage", "bogus", "build"),
+    ("changelog", "mode", "bogus", "merge"),
+    ("doc-manifest", "docs[].kind", "bogus", "readme"),
+    ("adr", "reversibility", "bogus", "expensive"),
+    ("validation", "reality_contact", "bogus", "high"),
+    ("critique-review", "assessments[].classification", "bogus", "valid"),
+    ("user-test", "mode", "bogus", "prototype"),
+    # CR1: dedicated fixtures for the remaining newly-enforced enum paths (AC3 "each").
+    ("concept", "constraints.stack[].reversibility", "bogus", "cheap"),
+    ("risk-register", "risks[].reversibility", "bogus", "cheap"),
+    ("code-review", "triage.dispositions[].action", "bogus", "fixed"),
+    ("critic-calibration-log", "gate_skips[].action", "bogus", "skip"),
+    ("milestone", "progress[].step", "bogus", "build"),
+    ("design", "tournament.decidable_disagreements[].verdict", "bogus", "go"),
+]
+
+
+@pytest.mark.parametrize("key,path,bad,good", _ENUM_REJECT_ACCEPT)
+def test_documented_enum_reject_accept(key, path, bad, good):
+    # AC3: each newly-enforced enum rejects a non-canonical value, accepts the canonical.
+    examples = _load_examples()
+    ex = examples[key]
+    bad_art = copy.deepcopy(ex)
+    parent, leaf = _set_path(bad_art, path)
+    parent[leaf] = bad
+    v = lint_artifact(bad_art, key, ex, "t")
+    assert any(path in x for x in v), f"{key}.{path}={bad} not flagged: {v}"
+    good_art = copy.deepcopy(ex)
+    parent, leaf = _set_path(good_art, path)
+    parent[leaf] = good
+    v2 = lint_artifact(good_art, key, ex, "t")
+    assert not any(path in x for x in v2), f"{key}.{path}={good} wrongly flagged: {v2}"
+
+
+def test_build_log_result_enforced():
+    # AC2 headline + the live 'in-progress' value the first draft would have rejected.
+    examples = _load_examples()
+    ex = examples["build-log"]
+    for good in ("shipped", "in-progress"):
+        art = copy.deepcopy(ex)
+        art["result"] = good
+        assert lint_artifact(art, "build-log", ex, "t") == [], f"result={good} wrongly flagged"
+    bad = copy.deepcopy(ex)
+    bad["result"] = "built"
+    v = lint_artifact(bad, "build-log", ex, "t")
+    assert any("result" in x and "built" in x for x in v), f"result='built' not flagged: {v}"
+
+
+def test_documented_enum_coverage():
+    # AC1: every documented enum is enforced or explicitly excluded; no orphan exclusions.
+    assert artifact_lint.coverage_gaps() == []
+
+
+def test_no_dead_enum_rows():
+    # AC1: every enforced/documented (artifact, path) resolves to a real field. This is
+    # what removed the dead (code-review, "verdict") row (code-review uses `result`).
+    assert artifact_lint.enum_path_resolves() == []
+
+
+def test_self_check_runs_coverage_and_dead_row_guards():
+    # the new guards have a real CI home: artifact_lint --self-check runs them (no flag, m1).
+    assert artifact_lint.main(["--self-check"]) == 0
+
+
+def test_dead_code_review_verdict_row_removed():
+    # the dead row pointed at a non-existent field; it is gone.
+    assert ("code-review", "verdict") not in artifact_lint.KNOWN_ENUMS
+
+
+def test_code_review_result_uppercase_not_enforced():
+    # code-review.result is UPPERCASE (off-convention) -> excluded, not enforced.
+    examples = _load_examples()
+    ex = examples["code-review"]  # result == "FINDINGS"
+    assert not any("result" in x for x in lint_artifact(copy.deepcopy(ex), "code-review", ex, "t"))
+
+
+def test_critique_disposition_annotation_not_flagged():
+    # findings[].disposition carries a free-text annotation suffix -> excluded (B1).
+    examples = _load_examples()
+    ex = examples["critique"]
+    art = copy.deepcopy(ex)
+    art["findings"][0]["disposition"] = "accepted-fixed - a long free-text rationale here"
+    assert not any("disposition" in x for x in lint_artifact(art, "critique", ex, "t"))
+
+
+def test_coverage_gaps_detects_unaccounted(monkeypatch):
+    # teeth: a documented enum that is neither enforced nor excluded must be flagged.
+    fake = dict(artifact_lint.DOCUMENTED_ENUMS)
+    fake[("triage", "classification.audience")] = "triage skill (test-injected)"
+    monkeypatch.setattr(artifact_lint, "DOCUMENTED_ENUMS", fake)
+    assert any("audience" in g for g in artifact_lint.coverage_gaps())
+
+
+def test_coverage_gaps_detects_orphan_exclusion(monkeypatch):
+    # teeth: an exclusion not present in DOCUMENTED_ENUMS is an orphan and must be flagged.
+    fake = dict(artifact_lint.ENUM_EXCLUSIONS)
+    fake[("triage", "made.up.path")] = {"category": "x", "rationale": "test-injected orphan"}
+    monkeypatch.setattr(artifact_lint, "ENUM_EXCLUSIONS", fake)
+    assert any("made.up.path" in g for g in artifact_lint.coverage_gaps())
+
+
+def test_enum_path_resolves_detects_dead_row(monkeypatch):
+    # teeth: a rule pointing at a non-existent field must be flagged.
+    fake = dict(artifact_lint.KNOWN_ENUMS)
+    fake[("code-review", "no_such_field")] = frozenset({"x"})
+    monkeypatch.setattr(artifact_lint, "KNOWN_ENUMS", fake)
+    assert any("no_such_field" in d for d in artifact_lint.enum_path_resolves())
