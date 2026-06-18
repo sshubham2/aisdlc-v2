@@ -173,7 +173,7 @@ If the design is clear, skip this step.
 
 ## Step 4 — tag every new ADR with reversibility
 
-For each decision this slice locks, create `<vault>/decisions/ADR-NNN.json` (schema: `examples/adr.json`). Key
+For each decision this slice locks: first MINT the number IN-LOCK — `ADR=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --vault "$AI_SDLC_VAULT_ROOT" --file candidates.json --kind adr)` (prints `ADR-NNN`, bumps `counters.adr`; NEVER hand-pick the number) — then create `<vault>/decisions/$ADR.json` (schema: `examples/adr.json`) with `id` = `$ADR`. Key
 fields: `id`, `title`, `status: "accepted"`, `reversibility` (cheap|expensive|irreversible),
 `supersedes`/`superseded_by` (null if n/a), `slice`, `date`, `context`, `decision`, `consequences`.
 

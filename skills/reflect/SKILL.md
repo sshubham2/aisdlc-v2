@@ -75,10 +75,10 @@ For each **Corrected** item:
 
 For each **Discovered** item:
 - Append to `<vault>/risk-register.json` via `vault_edit append` (R-32 safe channel).
-- Append to `<vault>/candidates.json` via `vault_edit append` (future slice seed).
+- Append to `<vault>/candidates.json` via `vault_edit append` (future slice seed). OMIT the `id` — the allocator mints `SC-NNN` in-lock; a caller-supplied id is rejected (slice-019 / [[ADR-013]]).
 
 For each **Deferred** item:
-- Append to `<vault>/candidates.json` via `vault_edit append`.
+- Append to `<vault>/candidates.json` via `vault_edit append` (OMIT the `id` — the allocator mints `SC-NNN` in-lock; a supplied id is rejected).
 
 ---
 
@@ -165,7 +165,7 @@ One critical-path test per slice: "If this slice silently broke later, what is T
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file shippability.json --array rows --content-file ship-row.json
 ```
 
-Schema by example: `examples/shippability.json`. The `machine_cmd` must be runnable from project root; runtime < 10 s.
+Schema by example: `examples/shippability.json`. Build `ship-row.json` WITHOUT an `id` — the allocator mints `SHIP-NNN` in-lock (`vault_edit append` on `shippability.json`/`rows` rejects a supplied id). The `machine_cmd` must be runnable from project root; runtime < 10 s.
 
 ---
 

@@ -17,15 +17,18 @@ def _ve(run_script, vault, *args, stdin=None):
 
 
 def test_append_then_count(run_script, vault):
-    f = "candidates.json"
-    r = _ve(run_script, vault, "append", "--file", f, "--array", "candidates",
+    # a GENERIC (non-managed) file/array: tests the plain append+count path. (candidates.json /
+    # shippability.json now mint their id in-lock and REJECT a caller-supplied one — slice-019 AC2,
+    # covered by tests/test_id_allocation_concurrency.py — so the generic contract uses a generic file.)
+    f = "generic.json"
+    r = _ve(run_script, vault, "append", "--file", f, "--array", "items",
             "--json", '{"id": "C-1"}')
     assert r.returncode == 0, r.stderr
-    r2 = _ve(run_script, vault, "count", "--file", f, "--array", "candidates")
+    r2 = _ve(run_script, vault, "count", "--file", f, "--array", "items")
     assert r2.returncode == 0
     assert r2.stdout.strip() == "1"
     data = json.loads((vault / f).read_text(encoding="utf-8"))
-    assert data["candidates"] == [{"id": "C-1"}]
+    assert data["items"] == [{"id": "C-1"}]
 
 
 def test_append_list_extends(run_script, vault):
@@ -140,6 +143,29 @@ def test_update_missing_id_exit2(run_script, vault):
     r = _ve(run_script, vault, "update", "--file", f, "--array", "rows",
             "--id", "NOPE", "--set", "x=1")
     assert r.returncode == 2
+
+
+def test_update_rejects_managed_id_reassign(run_script, vault):
+    # CR1 (slice-019/AC2): a candidates.json row's id is minted in-lock; `update --set id=...`
+    # would re-assign a managed id OUT OF BAND, bypassing the allocator -> rejected (exit 2).
+    # A non-id field update on the same managed row still works (the guard is surgical).
+    f = "candidates.json"
+    r = _ve(run_script, vault, "append", "--file", f, "--array", "candidates",
+            "--json", '{"title": "t", "status": "candidate"}')
+    assert r.returncode == 0, r.stderr
+    minted = json.loads((vault / f).read_text(encoding="utf-8"))["candidates"][0]["id"]
+
+    r2 = _ve(run_script, vault, "update", "--file", f, "--array", "candidates",
+             "--id", minted, "--set", "id=SC-099")
+    assert r2.returncode == 2, "update --set id= on a managed kind must be rejected"
+    assert "id" in r2.stderr.lower()
+
+    r3 = _ve(run_script, vault, "update", "--file", f, "--array", "candidates",
+             "--id", minted, "--set", "status=spiking")
+    assert r3.returncode == 0, r3.stderr
+    data = json.loads((vault / f).read_text(encoding="utf-8"))
+    assert data["candidates"][0]["status"] == "spiking"
+    assert data["candidates"][0]["id"] == minted  # id unchanged by the rejected attempt
 
 
 def test_append_create_stamps_plugin_version(run_script, vault):

@@ -51,7 +51,7 @@ _REPO = pathlib.Path(__file__).resolve().parents[3]  # skills/<name>/scripts/X.p
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from scripts.lib import _stdout
+from scripts.lib import _stdout, id_allocator
 from scripts.lib._vault_paths import VAULT_ROOT
 from scripts.lib._vault_write import safe_mutate_text
 
@@ -456,15 +456,16 @@ def cmd_build(args: argparse.Namespace) -> int:
                     fid_to_sc[s["ref"]] = c.get("id")
         existing = set(fid_to_sc) | archive_refs
 
-        # pass 1: assign SC ids to NEW (non-dup) protos, in recommended order
-        n = maxnum
+        # pass 1: assign SC ids to NEW (non-dup) protos, in recommended order.
+        # slice-019: mint via the shared id_allocator inside this SAME locked mutate (bumps
+        # counters.sc on candidates.json), seeded from the computed live ∪ archive max -> the
+        # one allocator path (AC2), replacing the inline n+=1 / f"SC-{n:03d}".
         assigned: dict[int, str] = {}
         for i in ordered_idx:
             fid = protos[i]["finding_id"]
             if fid in existing or fid in fid_to_sc:
                 continue
-            n += 1
-            sc = f"SC-{n:03d}"
+            sc = id_allocator.next_id(data, "sc", seed_max=maxnum)
             assigned[i] = sc
             fid_to_sc[fid] = sc
 

@@ -148,6 +148,10 @@ def main(argv: list[str] | None = None) -> int:
             sections.append(_presence(name, vault / name))
     else:
         info = resolve_active_slice(vault, ".")
+        # slice-019 (AC4): the AMBIGUOUS sentinel is truthy with path=None -> treat as no-active-slice
+        # (else Path(info["path"]) TypeErrors on the None path — the slice-019 crash class).
+        if isinstance(info, dict) and (info.get("source") == "ambiguous" or info.get("path") is None):
+            info = None
         slice_dir = Path(info["path"]) if info else None
         if slice_dir is None:
             sections.append("(no active slice)")

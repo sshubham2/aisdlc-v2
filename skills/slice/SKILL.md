@@ -130,22 +130,26 @@ status: "pending"|"in-progress"|"completed"|"deferred", findings}` (ETC-1 docstr
 Once the candidate is settled AND scope passes, in THIS order. The sequence is load-bearing: a bug-fix repro is born
 inside `$wt` (or relocated by the one explicit path), never grabbed from the main tree by a glob.
 
-1. **Compute paths**: `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder slice-NNN-<name> --repo-root .` (line 1 = `$wt` path, line 2 = `slice/NNN-<name>`). `NNN = max(existing incl. archive) + 1`.
-2. **Create the worktree**: `git -C <main> worktree add <wt_path> -b slice/NNN-<name> <default>`. Failure → **STOP**, surface (nothing else ran).
-3. **In-loop repro (Step 2 "No row" path only)**: if BFRD-1 confirmed an in-loop repro is needed, invoke
+1. **Claim FIRST — mint the slice number in-lock** (reserve-then-scaffold; [[ADR-013]]). The model NEVER
+   computes a slice number — `claim_candidate` mints it inside the locked claim and returns it:
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --vault "$AI_SDLC_VAULT_ROOT" \
+       --candidate <SC-NNN> --name <verb-object> --json
+   ```
+   In ONE locked read-modify-write it bumps `counters.slice`, allocates `slice-NNN`, sets the candidate
+   `status: spiking` / `progress: spike` / `claimed_by {git_user, git_email}` / `started_at` / `slice`, appends
+   the `pick_log` entry, and RETURNS `{"slice": "slice-NNN", "folder": "slice-NNN-<name>"}`. Read `folder` for all
+   paths below. Fail-visible on unset git identity (exit 1).
+2. **Compute paths** from the RETURNED `folder`: `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder <folder> --repo-root .` (line 1 = `$wt` path, line 2 = `slice/NNN-<name>`).
+3. **Create the worktree**: `git -C <main> worktree add <wt_path> -b slice/NNN-<name> <default>`. **Failure → wrapper-enforced compensation**: `$PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --vault "$AI_SDLC_VAULT_ROOT" --candidate <SC-NNN> --release` (reverts the claim to `candidate`; the counter is NOT decremented — monotonic-burn), then **STOP**.
+4. **In-loop repro (Step 2 "No row" path only)**: if BFRD-1 confirmed an in-loop repro is needed, invoke
    `/repro "<desc>" --target-root=<wt_path>` once via the Skill tool. `/repro` writes the failing test under
    `<wt_path>/tests/bugs/` (born on the slice branch) and confirms it fails there — **no relocation needed**.
    (Non-bug-fix, or a standalone row already present → skip; that case is handled at 6.)
-4. **Write the scaffold** to the **external vault store**:
-   - `<vault>/slices/slice-NNN-<name>/mission-brief.json` (schema: `examples/mission-brief.json`)
-   - `<vault>/slices/slice-NNN-<name>/milestone.json` (schema: `examples/milestone.json`; `stage: "spike"`, `next_action: "/risk-spike"`)
-5. **Claim the candidate** (fail-visible on unset git identity):
-   ```bash
-   $PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --vault "$AI_SDLC_VAULT_ROOT" \
-       --candidate <SC-NNN> --slice slice-NNN-<name>
-   ```
-   This routes through `vault_edit` (SVW-1): sets the candidate `status: spiking`, `progress: spike`,
-   `claimed_by {git_user, git_email}`, `started_at`, and appends the `pick_log` entry.
+5. **Write the scaffold** to the **external vault store**:
+   - `<vault>/slices/<folder>/mission-brief.json` (schema: `examples/mission-brief.json`)
+   - `<vault>/slices/<folder>/milestone.json` (schema: `examples/milestone.json`; `stage: "spike"`, `next_action: "/risk-spike"`)
+   Failure → `--release` the claim (step 3) + `git -C <main> worktree remove <wt_path>`, then STOP.
 6. **Standalone repro relocation (Step 2 "Row present" path)** — a `/repro` ran *before* `/slice` and left the
    failing test untracked on the MAIN tree. Relocate the ONE test named by its shippability row into `$wt` —
    **capability-scoped, NEVER a `tests/bugs/*` glob** (ADR-012; the glob caused cross-slice theft). Derive the grant
@@ -178,11 +182,11 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
      untracked test is structurally safe. It exits non-zero + visibly on a missing worktree / missing named source /
      git-ignored path / stage failure (never a silent partial).
 
-**Failure ladder (must-not-defer #1 — no silent partial scaffold):**
-- worktree-add (2) fails → **STOP**; nothing else ran.
-- `/repro` (3) aborts, or its "test unexpectedly passes" recovery fires (after 2, before the scaffold) → roll the
-  worktree back: `git -C <main> worktree remove <wt_path>` + `git branch -D slice/NNN-<name>`; leave no scaffold/claim.
-- scaffold (4) or claim (5) fails → roll the worktree back the same way.
+**Failure ladder (must-not-defer #1 — no silent partial scaffold; claim-first, so the claim is the FIRST committed state and the compensation is wrapper-enforced, not skippable prose):**
+- claim (1) fails → **STOP**; nothing else ran (no worktree, no scaffold).
+- worktree-add (3) fails → **wrapper-enforced compensation**: `claim_candidate.py --candidate <SC-NNN> --release` (revert the claim; counter not decremented — monotonic-burn), then STOP. No orphaned reservation.
+- `/repro` (4) aborts, or its "test unexpectedly passes" recovery fires → `--release` the claim + `git -C <main> worktree remove <wt_path>` + `git branch -D slice/NNN-<name>`; leave no scaffold.
+- scaffold (5) fails → `--release` the claim + roll the worktree back the same way.
 
 The BFRD-1 Confirm/Not-a-bug gate (Step 2) runs BEFORE the Step-2 worktree-add, so cancelling a candidate as "Not a
 bug" never orphans a worktree.

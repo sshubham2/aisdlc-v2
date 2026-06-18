@@ -147,6 +147,13 @@ def main(argv: list[str] | None = None) -> int:
         kws = _keywords(args.keywords)
     elif args.from_mission_brief:
         info = resolve_active_slice(vault, args.repo_root)
+        if isinstance(info, dict) and info.get("source") == "ambiguous":
+            # slice-019 (AC4): the AMBIGUOUS sentinel is a TRUTHY dict with path=None — catch it
+            # BEFORE `if not info` / Path(info["path"]) (which would TypeError on the None path).
+            cands = ", ".join(str(c.get("slice")) for c in (info.get("candidates") or []))
+            print(f"(ambiguous active slice — {cands} in flight; pass --slice or run from the worktree "
+                  f"— no mission brief to match reflections against)")
+            return 0
         if not info:
             print("(no active slice — no mission brief to match reflections against)")
             return 0
