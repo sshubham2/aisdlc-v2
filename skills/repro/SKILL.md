@@ -111,7 +111,6 @@ Build the JSON row as a Python dict and pass it inline:
 
 ```bash
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file shippability.json --array rows --json '{
-  "id": "SHIP-<next>",
   "slice": "<placeholder-fix-slice-name>",
   "kind": "test",
   "description": "<one-line bug description>",
@@ -123,7 +122,7 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file shippabi
 
 Schema by example: `examples/shippability.json` (`aisdlc/shippability@1`).
 
-- `id`: next `SHIP-NNN` from the injected catalog above (Step 0)
+- `id`: OMIT it — the allocator mints `SHIP-NNN` in-lock (`vault_edit append` on `shippability.json`/`rows` rejects a caller-supplied id and fills it)
 - `slice`: placeholder fix-slice name (user confirms when `/slice` runs; update if they rename it)
 - `machine_cmd`: must be a single runnable command from project root (SCMD-1: no prose, no shell expansions)
 - `critical_path`: true for all bug repros

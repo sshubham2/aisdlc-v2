@@ -130,11 +130,11 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SD
     --file candidates.json --array candidates --json '<new-candidate-object>'
 ```
 
-Candidate `id`: `SC-001` (or next available). `status: "candidate"`, `progress: "not-started"`, `source: [{"type":"risk","ref":"<R-NN>"}]`, `history: [{"event":"created","by":"discover","at":"<ts>"}]`.
+Candidate `id`: OMIT it — the allocator mints `SC-NNN` in-lock (`vault_edit append` on `candidates.json`/`candidates` rejects a caller-supplied id and fills it). `status: "candidate"`, `progress: "not-started"`, `source: [{"type":"risk","ref":"<R-NN>"}]`, `history: [{"event":"created","by":"discover","at":"<ts>"}]`.
 
 ### Standard + Heavy — `<vault>/decisions/ADR-NNN.json`
 
-Schema by example: `examples/adr.json`. One ADR per non-trivial tech decision. ADRs are **append-only** — never edit in place; supersede with a new ADR. Assign next available `ADR-NNN` id. Reference each ADR from `concept.json` `constraints.stack[].adr`.
+Schema by example: `examples/adr.json`. One ADR per non-trivial tech decision. ADRs are **append-only** — never edit in place; supersede with a new ADR. Mint the ADR number IN-LOCK — `ADR=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --vault "$AI_SDLC_VAULT_ROOT" --file candidates.json --kind adr)` (prints `ADR-NNN`, bumps `counters.adr`) — and name the file `<vault>/decisions/$ADR.json`. Never hand-pick the number. Reference each ADR from `concept.json` `constraints.stack[].adr`.
 
 ### Heavy mode only — `<vault>/requirements.json`
 

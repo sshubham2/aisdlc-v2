@@ -48,6 +48,34 @@ def audit(root: str | Path) -> list[str]:
     return violations
 
 
+# slice-019 (AC4 / M4): the PYTHON consumer family of resolve_active_slice. A file that CALLS the
+# resolver MUST handle the AMBIGUOUS sentinel (it checks source=='ambiguous' before dereferencing
+# info['path']); a caller that never mentions 'ambiguous' TypeErrors on the truthy None-path sentinel
+# (the slice-019 reflection_lookup/vault_snapshot crash). The roster is derived PROGRAMMATICALLY (every
+# importer), so a FUTURE consumer can't silently skip the guard -- slice-016: audit the family, don't hope.
+_CALL = re.compile(r"\bresolve_active_slice\s*\(")
+_GUARD_TOKEN = "ambiguous"
+_NOT_CONSUMERS = {"active_slice.py", "active_slice_guard_audit.py"}
+
+
+def audit_python_consumers(root: str | Path) -> list[str]:
+    """Sorted list of `<relpath>` python files that CALL resolve_active_slice but never handle the
+    AMBIGUOUS sentinel (no 'ambiguous' token). Empty list = clean (the programmatic family check)."""
+    root = Path(root)
+    pyfiles = list((root / "scripts" / "lib").glob("*.py")) + list((root / "skills").glob("*/scripts/*.py"))
+    out: list[str] = []
+    for py in sorted(pyfiles):
+        if py.name in _NOT_CONSUMERS:
+            continue
+        try:
+            text = py.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _CALL.search(text) and _GUARD_TOKEN not in text:
+            out.append(py.relative_to(root).as_posix())
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     p = argparse.ArgumentParser(
@@ -59,16 +87,26 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     violations = audit(args.root)
+    py_unguarded = audit_python_consumers(args.root)
+    clean = not violations and not py_unguarded
     if args.json:
-        print(json.dumps({"violations": violations, "clean": not violations}, ensure_ascii=False))
-    elif violations:
-        print("AC4 guard FAIL -- active_slice.py injections that SWALLOW the resolver stderr "
-              "(an AMBIGUOUS exit-4 HALT would be discarded -> silent skip):")
-        for v in violations:
-            print(f"  {v}")
+        print(json.dumps({"stderr_swallow": violations, "python_unguarded": py_unguarded,
+                          "clean": clean}, ensure_ascii=False))
     else:
-        print("AC4 guard: clean -- no active_slice.py injection swallows the resolver stderr.")
-    return 1 if violations else 0
+        if violations:
+            print("AC4 guard FAIL -- active_slice.py injections that SWALLOW the resolver stderr "
+                  "(an AMBIGUOUS exit-4 HALT would be discarded -> silent skip):")
+            for v in violations:
+                print(f"  {v}")
+        if py_unguarded:
+            print("AC4 guard FAIL -- resolve_active_slice PYTHON consumers missing the AMBIGUOUS guard "
+                  "(they would TypeError on the truthy None-path sentinel):")
+            for v in py_unguarded:
+                print(f"  {v}")
+        if clean:
+            print("AC4 guard: clean -- no stderr-swallow, and every resolve_active_slice python "
+                  "consumer guards the AMBIGUOUS sentinel.")
+    return 0 if clean else 1
 
 
 if __name__ == "__main__":

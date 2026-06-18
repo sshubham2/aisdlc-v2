@@ -83,7 +83,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]  # <plugin>/scripts/lib/vault
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from scripts.lib import _stdout
+from scripts.lib import _stdout, id_allocator
 from scripts.lib._vault_paths import VAULT_ROOT
 from scripts.lib._vault_write import (
     StaleVaultBaseError,
@@ -93,6 +93,14 @@ from scripts.lib._vault_write import (
 )
 
 _JSON_DUMP = {"indent": 2, "ensure_ascii": False, "sort_keys": False}
+
+# slice-019 / [[ADR-013]]: (file, array) -> managed id kind. An append to one of these mints the
+# id IN-LOCK via id_allocator (AC2) instead of accepting a caller-supplied one — so a hand-authored
+# `vault_edit append --json {id:...}` can no longer bypass the allocator and race on an id.
+_MANAGED_KIND = {
+    ("candidates.json", "candidates"): "sc",
+    ("shippability.json", "rows"): "ship",
+}
 
 
 # ── path + JSON helpers ────────────────────────────────────────────────────────
@@ -304,6 +312,16 @@ def _cmd_append(args: argparse.Namespace) -> int:
         arr = data.setdefault(key, [])
         if not isinstance(arr, list):
             raise ValueError(f"target field {key!r} is not a JSON array")
+        # slice-019 / AC2: a managed-kind array (candidates -> SC, rows -> SHIP) mints its id
+        # IN-LOCK and REJECTS any caller-supplied id (the no-explicit-PK guard). The seed floor is
+        # computed once from live ∪ archive; the persisted counter is authoritative thereafter.
+        kind = _MANAGED_KIND.get((target.name, key))
+        if kind is not None:
+            id_allocator.reject_supplied_id(kind, element)
+            seed = id_allocator.seed_max_for(_root(args), kind, data)
+            for it in (element if isinstance(element, list) else [element]):
+                if isinstance(it, dict):
+                    it[id_allocator.id_key(kind)] = id_allocator.next_id(data, kind, seed_max=seed)
         if isinstance(element, list):
             arr.extend(element)
         else:
@@ -343,6 +361,20 @@ def _cmd_update(args: argparse.Namespace) -> int:
         arr = data.get(args.array) if isinstance(data, dict) else None
         if not isinstance(arr, list):
             raise ValueError(f"{args.array!r} is not a JSON array in {target}")
+        # slice-019 / AC2 (CR1): the update path must not REASSIGN a managed id out of band.
+        # `update --set <id-key>=...` on a managed-kind file/array would bypass the in-lock
+        # allocator exactly like a caller-supplied append id — so reject it (the no-explicit-PK
+        # guard's update leg; the design's "append/update id-rejection" enforcement, not prose).
+        # Other field updates (status/progress/slice/...) are unaffected.
+        kind = _MANAGED_KIND.get((target.name, args.array))
+        if kind is not None:
+            idk = id_allocator.id_key(kind)
+            if any(k == idk for k, _ in sets):
+                raise ValueError(
+                    f"vault_edit update: refusing to set the managed {kind} id key {idk!r} on "
+                    f"{target.name}/{args.array} — managed ids are minted in-lock by the allocator, "
+                    f"never reassigned out of band (slice-019/AC2). Update other fields, not the id."
+                )
         rec = _find_by_id(arr, args.id, id_key=args.id_key)
         if rec is None:
             raise ValueError(f"no {args.array} record with {args.id_key}={args.id!r}")
@@ -466,6 +498,33 @@ def _cmd_count(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_alloc(args: argparse.Namespace) -> int:
+    """Mint the next id of --kind IN-LOCK (bump counters.<kind> on --file, seeded from
+    live ∪ archive ∪ on-disk) and print it — the allocator CLI for a record WRITTEN OUTSIDE
+    vault_edit (an ADR file). slice-019 / AC2: the only race-free way to reserve such a number."""
+    try:
+        target = _resolve_in_vault(_root(args), args.file)
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    if args.kind not in id_allocator.MANAGED_KINDS:
+        _err(f"--kind {args.kind!r} is not managed (expected one of {sorted(id_allocator.MANAGED_KINDS)})")
+        return 2
+    holder: dict = {}
+
+    def mutate(text: str) -> str:
+        data = json.loads(text) if text.strip() else {}
+        if not isinstance(data, dict):
+            raise ValueError(f"{target} top-level is not a JSON object")
+        seed = id_allocator.seed_max_for(_root(args), args.kind, data)
+        holder["id"] = id_allocator.next_id(data, args.kind, seed_max=seed)
+        return _dump(data)
+
+    rc = _run_mutate(target, mutate)
+    if rc == 0:
+        print(holder["id"])
+    return rc
+
+
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -543,13 +602,22 @@ def _build_parser() -> argparse.ArgumentParser:
     ct.add_argument("--file", required=True)
     ct.add_argument("--array", default=None, help="array to count (auto-detected when single)")
 
+    ac = sub.add_parser("alloc", parents=[common],
+                        help="mint the next id of --kind in-lock (bumps counters), print it")
+    ac.add_argument("--file", required=True)
+    ac.add_argument("--kind", required=True, choices=["adr"],
+                    help="managed id kind to mint OUT-OF-ARRAY via this CLI — only 'adr' is wired "
+                         "(ADR files are raw-written one-per-id under decisions/). sc/ship/slice are "
+                         "minted in-lock by their own append/claim path and must NEVER be alloc'd here "
+                         "(slice-019/CR2: alloc --kind slice would burn a slice number out of band)")
+
     return p
 
 
 _DISPATCH = {
     "read": _cmd_read, "get": _cmd_get, "query": _cmd_query, "append": _cmd_append,
     "update": _cmd_update, "rewrite": _cmd_rewrite, "move": _cmd_move,
-    "list": _cmd_list, "count": _cmd_count,
+    "list": _cmd_list, "count": _cmd_count, "alloc": _cmd_alloc,
 }
 
 
