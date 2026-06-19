@@ -23,7 +23,10 @@
         "vault:concept.json"
       ],
       "grounding_unverified": [
-        { "token": "crg:scripts/lib/build_backlog.py::nonexistent_flag", "reason": "symbol-absent" }
+        {
+          "token": "crg:scripts/lib/build_backlog.py::nonexistent_flag",
+          "reason": "symbol-absent"
+        }
       ],
       "grounding_check": {
         "ran": true,
