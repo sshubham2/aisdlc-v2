@@ -6,9 +6,19 @@ All notable changes, newest first. Versions are reconstructed from git history; 
 
 ## [Unreleased]
 
-_Nothing unreleased._
+### Added
 
-## [2.36.0] — 2026-06-15
+- **ci:** enforce versioned-only master advances via a release-guard CI job (slice-023-add-ci-release-guard) [ADR-015]
+
+_(records above could not be matched to a released version)_
+
+## [2.36.0] — 2026-06-19
+
+### Changed
+
+- release 2.36.0: cut uat/master model genesis baseline
+
+## [2.35.1] — 2026-06-15
 
 ### Added
 
@@ -31,11 +41,6 @@ _Nothing unreleased._
 - **vault:** mint every id/number in-lock to kill the parallel-slice id-collision race (slice-019-harden-vault-id-allocation-and-claim) [ADR-013]
 - **vault:** key vault_edit's managed-id guard on the vault-relative path (not the basename) so archive move-writes preserve the id while the live guard stays intact (slice-020-fix-managed-kind-basename-collision)
 - **skills:** thread the explicit slice id into slice-targeting skills' active_slice injections so /skill slice-NNN resolves under parallel slices (slice-021-thread-explicit-slice-into-skill-injections)
-
-## [2.35.1] — 2026-06-15
-
-### Fixed
-
 - model-invocable build/commit/setup for Remote Control (+bump 2.35.1) (#12)
 
 ## [2.35.0] — 2026-06-15
