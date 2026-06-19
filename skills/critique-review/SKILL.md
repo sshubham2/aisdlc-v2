@@ -2,6 +2,7 @@
 name: critique-review
 description: "Meta-Critic (DR-1) review of the first Critic's critique.json for false positives, false negatives, and severity miscalibrations. Runs inline on the main agent thread; spawns a 'critique-review' subagent via the Agent tool. Reads mission-brief.json, design.json, critique.json, and project-frame; classifies each finding as VALID/SUSPICIOUS/SEVERITY-WRONG; surfaces missed findings; runs the structural audit; writes critique-review.json. Use AFTER /critique, BEFORE /critique Step 4.5 TRI-1."
 when_to_use: "Trigger phrases: /critique-review, 'meta-review the critique', 'second-pass critique', 'review the Critic', 'dual review'. Tier-driven (NOT mode-gated) — MANDATORY (CRP-1-enforced) when risk_tier=high OR critic_required is true (auth/data-model/contracts/security/methodology surface; Heavy forces it everywhere) OR first-Critic findings >=5; ADVISORY on a 3+ consecutive-clean calibration smell. See the canonical trigger table in /critique Step 3.5. Not required otherwise."
+argument-hint: "[slice-id]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent
 ---
 
@@ -17,7 +18,12 @@ Step 4.5 TRI-1. The subagent is adversarial toward the first Critic's review, no
 ## Active slice + inputs — injected
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --json
+ARG="${ARGUMENTS[0]:-}"   # slice-021: an explicit /critique-review slice-NNN resolves THAT slice; shape-guarded so a non-slice arg (or none) falls to the slice-014 --repo-root HALT path
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --json
+else
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --json
+fi
 ```
 
 Read the following from the active slice folder (`<vault>/slices/slice-NNN-<name>/`):
@@ -32,7 +38,13 @@ If `critique.json` does not exist: write `critique-review.json` with
 ## Project frame — injected
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --path-only)" 2>/dev/null || echo "(project-frame unavailable)"
+ARG="${ARGUMENTS[0]:-}"
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
+else
+SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only)"
+fi
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$SDIR" 2>/dev/null || echo "(project-frame unavailable)"
 ```
 
 Use the project frame to re-check whether the first Critic missed a direction-fit concern or flagged one that
@@ -79,7 +91,13 @@ Await the subagent's return value. On error: surface it and stop.
 ### Step 3 — Run the structural audit
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py" "$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --path-only)"
+ARG="${ARGUMENTS[0]:-}"
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
+else
+SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only)"
+fi
+$PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py" "$SDIR"
 ```
 
 The audit validates: required sections present, verdict in `{accept, adjust, extend}`, `reviewed_by` and
