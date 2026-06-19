@@ -44,43 +44,52 @@ Harvest it with the CRG **MCP tool** (live-MCP context): call
 **version-grouped** (Keep-a-Changelog `## [x.y.z]` sections), with the per-slice records laid over the versions
 they cover.
 
-**The plugin version is cut HERE — after merge — not in the slice commit.** Slice commits integrate WITHOUT a
-version bump (so parallel slices never conflict on the plugin.json `version` line); `/product-doc` bumps the version
-once at the release and rolls every unreleased commit (the *open period* — everything merged since the last
-version-change) forward onto it.
+**The plugin version is cut HERE — AS the deliberate `uat->master` merge — not in the slice commit.** Slice commits
+integrate onto `uat` WITHOUT a version bump (so parallel slices never conflict on the plugin.json `version` line);
+`/product-doc`'s release cut (`release_cut.py`) bumps the version once as it merges `uat` into the released `master`,
+and rolls every unreleased commit (the *open period* — everything merged into uat since the last version-change)
+forward onto it.
 
-**Sub-step 1a — bump the plugin version (first).** The human/release supplies the target (`--new-version X.Y.Z`,
-the primary form, or `--level patch|minor|major`):
+**Sub-step 1a — the atomic release cut (`release_cut.py`).** Under the uat/master model (slice-022) the
+`uat->master` merge IS the version cut, and `release_cut.py` performs it ATOMICALLY — it is the **ONLY** path that
+advances `master` (AC4). The human/release supplies the target (`--new-version X.Y.Z`, the primary form, or
+`--level patch|minor|major`):
 
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-new_version="$($PY "${CLAUDE_SKILL_DIR}/scripts/bump_plugin_version.py" --plugin "$repo_root/.claude-plugin/plugin.json" --new-version "${TARGET:?supply the release version, e.g. 2.35.0}")"
+$PY "${CLAUDE_SKILL_DIR}/scripts/release_cut.py" --confirmed \
+    --repo-root "$repo_root" --vault "$AI_SDLC_VAULT_ROOT" \
+    --new-version "${TARGET:?supply the release version, e.g. 2.36.0}" --json
 ```
 
-`bump_plugin_version.py` validates the target (refuses a non-increasing bump, a malformed manifest, or an
-undeterminable target), is a **no-op when the version is already at the target** (so re-running `/product-doc` is
-idempotent — M4), and prints the resolved version. **`/product-doc` fails visibly if it cannot determine the new
-version (no silent skip).**
+`release_cut.py` (slice-022): REFUSES on a dirty target tree (B2); treats a uat-not-ahead state as a clean
+**no-op** (idempotent re-run — M2); else CAPTURES the pre-merge `master` SHA, stages `git merge --no-ff --no-commit uat`,
+runs `bump_plugin_version.py` (refuses a non-increasing bump / malformed manifest; no-op at-target — M4) +
+`assemble_changelog.py` (open-period grouping) into the worktree, then lands the merge + bump + changelog as **ONE
+commit** (the atomic boundary), and finally syncs `uat` back to the new release. On ANY pre-commit failure it does
+`git reset --hard <captured-SHA>` so `master` is byte-identical (the `merge --abort`-alone gap, proven by
+spike-release-cut-atomicity, is why the cleanup is an explicit reset). **`/product-doc` fails visibly if the target
+version cannot be determined (no silent skip).** Read the verdict JSON's `action` — `released` (cut landed), `no-op`
+(nothing to release), or a `refuse-*` / `*-failed` reason (master untouched). After a `released` action, verify the
+integrity invariant with `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/release_advance_audit.py" --root "$repo_root"`
+(asserts `master` advanced only via versioned cuts since the recorded `release-genesis`).
 
-**Sub-step 1b — assemble the CHANGELOG**, passing that same value as `--new-version` so the open-period commits
-group under the version that RELEASES them. **ORDERING (M4): bump FIRST, then assemble** — assemble reads the
-committed git history plus the passed `--new-version`; it never writes plugin.json (so there is no double-bump), and
-the bump-helper no-ops on a re-run, so a second `/product-doc` run is idempotent. Pass `--repo-root` so the script
-reads the code repo's git:
+**Standalone CHANGELOG regen (no release).** To refresh `CHANGELOG.md` WITHOUT advancing `master` (a docs-only
+run), invoke `assemble_changelog.py` directly — it reads committed git history + the per-slice records, never bumps
+plugin.json and never merges:
 
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"   # fresh shell — re-derive (vars don't cross ```bash blocks)
-new_version="$($PY -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$repo_root/.claude-plugin/plugin.json")"   # read back the version 1a just cut
+new_version="$($PY -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$repo_root/.claude-plugin/plugin.json")"
 $PY "${CLAUDE_SKILL_DIR}/scripts/assemble_changelog.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --new-version "$new_version" --out "$repo_root/CHANGELOG.md"
 ```
 
-If there is genuinely no unreleased work (the only commits after the last cut are merges), `--new-version` may be
-omitted and assemble degrades to the spot attribution; but if unreleased NON-merge commits are present and no
-`--new-version` is supplied, assemble **exits 2 (fail-visible)** rather than silently filing them under the old
-version.
+If there is genuinely no unreleased work, `--new-version` may be omitted and assemble degrades to spot attribution;
+with unreleased non-merge commits and no `--new-version`, assemble **exits 2 (fail-visible)**.
 
-> **M-add-1 (the first cut under this model):** the first `/product-doc` run after this change bumps from the current
-> `2.34.0` to the chosen next version, rolling slice-009's own commits forward onto it.
+> **First cut under the uat/master model (slice-022):** `uat` is established from `master@2.35.1` (the recorded
+> `release-genesis`); the first `release_cut.py` run merges `uat` into `master` and bumps from `2.35.1` to the chosen
+> next version, rolling the open-period commits forward onto it.
 
 > **M1 note (artifact version stamps under post-merge bump):** a vault artifact's `_plugin_version` stamp now
 > records *the plugin version present when the artifact was written* — which, because the bump happens after merge,

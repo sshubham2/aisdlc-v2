@@ -164,12 +164,13 @@ is the backstop for docs that drift when this hook is declined.
 Both `--merge` (5b) and `--push` (5c) reach the **REBASED** rung through this ONE section,
 so the rebase + conflict gate behave IDENTICALLY in both modes —
 `parallel_conflict_resolver.py` is invoked UNCHANGED (extracting the rebase into a script
-was rejected: its hard part, the PCR-2b gate, is interactive). Resolve the default branch:
+was rejected: its hard part, the PCR-2b gate, is interactive). Resolve the INTEGRATION branch
+(slice-022: slices rebase ONTO `uat`, not the released trunk; rebase does not advance master, so the
+read-only resolution is correct):
 ```bash
-default=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-[ -z "$default" ] && default=$(git config init.defaultBranch 2>/dev/null)
+default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root .)
 ```
-STOP exit 2 if neither resolves (NAW-1). Run `git rebase <default>` on the slice branch. Outcomes:
+STOP exit 2 if it does not resolve (NAW-1; git unusable). Run `git rebase <default>` on the slice branch. Outcomes:
 - **Fast-forward no-op** or **clean replay**: REBASED reached → return to the caller (5b sub-step 3 / 5c push).
 - **Conflict**: STOP — do NOT advance. Print conflicting U-files + `git rebase --abort` hint. Then:
 
@@ -249,7 +250,7 @@ No git operations are executed.
    ```bash
    main_tree=$(git worktree list --porcelain | awk '/^worktree / {print $2; exit}')
    ```
-   If empty: STOP — "main-tree-unresolvable." `cd "$main_tree"`. Resolve default (same helper as sub-step 2.5). `git checkout $default` + `git merge --no-ff slice/NNN-<name> -m "Merge slice/NNN-<name>: <intent>"`. If conflict: STOP with manual resolution hint (no recovery flow in v1).
+   If empty: STOP — "main-tree-unresolvable." `cd "$main_tree"`. **Resolve the integration branch as a WRITE target (slice-022 M3)** — `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --write --repo-root .)`; on non-zero exit (uat absent) **STOP**: "integration branch uat absent; refusing to merge a slice into the released trunk — establish uat first" (NEVER fall back to master for a write — a `--merge` advances `$default`). Then `git checkout "$default"` + `git merge --no-ff slice/NNN-<name> -m "Merge slice/NNN-<name>: <intent>"`. If conflict: STOP with manual resolution hint (no recovery flow in v1).
 
 4. Confirm: "Confirm merge + delete? (yes/no)" — on no: ABORT cleanly, leave merged branch intact.
 
@@ -286,13 +287,13 @@ direct-merge path was dropped at slice-008 TRI-1 (ADR-006); nothing merges local
    runs ON the slice branch, so the worktree IS the cwd — pass `--repo-root .` (do NOT reference a `$wt` from
    another block):
    ```bash
-   default=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-   [ -z "$default" ] && default=$(git config init.defaultBranch 2>/dev/null)
+   # slice-022 (B1): pr_flow self-resolves the INTEGRATION branch (uat) for the PR base + rebase target.
+   # Do NOT pass --default -- an inline origin/HEAD=master would OVERRIDE the swapped resolver.
    $PY "${CLAUDE_SKILL_DIR}/scripts/pr_flow.py" --confirmed \
-       --branch slice/NNN-<name> --default "$default" --repo-root . --json
+       --branch slice/NNN-<name> --repo-root . --json
    ```
-   (If `default` is empty, pr_flow self-resolves it from `--repo-root` — but resolving in-block keeps the verdict
-   message accurate.) `pr_flow.py` pushes (`git push -u origin slice/NNN-<name>` — never force-push, never skip
+   (pr_flow self-resolves the integration branch from `--repo-root` via `resolve_integration_branch` — uat when
+   present, the released trunk otherwise.) `pr_flow.py` pushes (`git push -u origin slice/NNN-<name>` — never force-push, never skip
    hooks) → creates the PR with `gh pr create --base <default> --head <branch> --fill` (the `--fill` is REQUIRED so
    the title/body come from the slice commits — `gh pr create` is otherwise interactive; gh present + GitHub origin,
    else it prints the hint) → enables non-blocking auto-merge ONLY when `.permissions.push==true`, **verifying the
@@ -331,7 +332,7 @@ target slice itself, so the owner need not `cd` into the slice worktree.
    - `none` → STOP with the plan's `reason` (nothing merged-and-not-in-flight to clean). Pass `--slice` to clean a
      worktree-backed merged slice explicitly.
 2. `git fetch --prune origin <default> <branch>` (explicit refspec required for Signal B).
-3. Resolve default (same helper as 5b/5c).
+3. **Resolve the integration branch** (slice-022 M-add-1): `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root .)`. A slice merges to `uat`, so the two-signal merged-detection below (`git cherry origin/<default>` / `git merge-base origin/<default>`) and the post-merge `git checkout <default>` + `git pull --ff-only origin <default>` target `origin/uat` / `uat`, NOT the released trunk. STOP exit 2 if it does not resolve.
 4. **Two-signal merged-state detection** on the RESOLVED `<branch>` (unchanged):
    - **Signal A**: `git ls-remote --exit-code origin <branch>` returns non-zero (remote absent).
    - **Signal B** (two-pass):

@@ -74,9 +74,9 @@ fresh shell), so this is the reference derivation — the executable block in ca
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
 wt_base="$(dirname "$repo_root")/$(basename "$repo_root")-wt"
-default=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-[ -z "$default" ] && default=$(git config init.defaultBranch 2>/dev/null)
-# STOP if neither resolves
+# slice-022: base a slice on the INTEGRATION branch (uat), not the released trunk.
+default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root "$repo_root")
+# STOP if it does not resolve (git unusable)
 ```
 
 Then:
@@ -85,8 +85,9 @@ Then:
    they do not carry over from the block above):
    ```bash
    repo_root="$(git rev-parse --show-toplevel)"
-   default=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-   [ -z "$default" ] && default=$(git config init.defaultBranch 2>/dev/null)
+   # slice-022: base the (re)created worktree on the INTEGRATION branch (uat).
+   default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root "$repo_root")
+   [ -z "$default" ] && { echo "STOP: cannot resolve the integration branch." >&2; exit 2; }
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder slice-NNN-<name> --repo-root "$repo_root"
    git worktree add <wt_path> -b slice/NNN-<name> "$default"
    ```

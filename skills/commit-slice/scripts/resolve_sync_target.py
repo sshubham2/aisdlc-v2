@@ -45,7 +45,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from scripts.lib import _stdout
-from scripts.lib._git_default_branch import resolve_default_branch
+from scripts.lib._git_default_branch import resolve_integration_branch
 from scripts.lib.active_slice import resolve_slice_by_id
 from scripts.lib.pulse_worktree_resolver import _parse_worktree_porcelain
 
@@ -253,15 +253,18 @@ def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     args = _build_arg_parser().parse_args(argv)
     runner = _real_runner(args.repo_root)
-    default = args.default or resolve_default_branch(args.repo_root)
+    # slice-022: a slice merges to the INTEGRATION branch (uat), so merged-detection
+    # targets origin/uat, not the released trunk.
+    default = args.default or resolve_integration_branch(args.repo_root)
     if not default:
-        sys.stderr.write("resolve_sync_target: could not resolve the default branch.\n")
+        sys.stderr.write("resolve_sync_target: could not resolve the integration branch.\n")
         return 2
     plan = resolve_target(
         runner=runner, default=default, main_tree=_main_tree(runner),
         current_branch=_current_branch(runner), explicit_slice=args.explicit_slice,
         vault=args.vault,
     )
+    plan["integration_branch"] = default  # slice-022: observable resolution (must-not-defer)
     sys.stdout.write(json.dumps(plan) + "\n")
     return 0
 
