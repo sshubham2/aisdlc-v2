@@ -133,6 +133,31 @@ def _resolve_in_vault(root: Path, file_arg: str, *, arg_name: str = "--file") ->
     return target
 
 
+def _vault_rel_key(root: Path, target: Path) -> str:
+    """The managed-kind lookup key for ``target``: its vault-relative path, POSIX-normalised.
+
+    SC-046: key on the RELATIVE path (e.g. ``archive/candidates.json``), NOT ``target.name`` (the
+    basename ``candidates.json``) — else an archived copy collides with the LIVE root-level managed
+    file and its id-bearing write is wrongly rejected. The ``_MANAGED_KIND`` keys ARE the vault-relative
+    paths of the root-level live files, so keying on the relative path keeps the live guard matching
+    exactly while ``archive/<managed-file>`` (and any nested path) no longer collides.
+
+    ``.as_posix()`` (forward slashes), NEVER ``str()`` — on Windows ``str()`` yields backslashes and
+    would silently mis-key. Relate against ``Path(root).resolve()`` — the SAME resolved root
+    ``_resolve_in_vault`` validated ``target`` under — so ``relative_to`` cannot raise; do NOT wrap it in
+    ``try/except`` (a swallow would silently disable the live managed-id guard)."""
+    return target.relative_to(Path(root).resolve()).as_posix()
+
+
+def _managed_kind_for(root: Path, target: Path, array: str) -> str | None:
+    """The managed id kind (``sc``/``ship``) for a write to ``target``'s ``array``, or ``None``.
+
+    The SINGLE consult point for BOTH write legs (``_cmd_append`` and ``_cmd_update``) — keyed on the
+    vault-relative POSIX path (``_vault_rel_key``) so the SC-046 basename collision can never recur and
+    the two legs cannot drift apart (BC-PROJ-6: the only consumers of ``_MANAGED_KIND``)."""
+    return _MANAGED_KIND.get((_vault_rel_key(root, target), array))
+
+
 def _load_json(target: Path) -> Any:
     """Parse ``target`` as JSON (``{}`` when absent/empty). Raises ValueError on
     malformed JSON (mapped to exit 2)."""
@@ -315,7 +340,7 @@ def _cmd_append(args: argparse.Namespace) -> int:
         # slice-019 / AC2: a managed-kind array (candidates -> SC, rows -> SHIP) mints its id
         # IN-LOCK and REJECTS any caller-supplied id (the no-explicit-PK guard). The seed floor is
         # computed once from live ∪ archive; the persisted counter is authoritative thereafter.
-        kind = _MANAGED_KIND.get((target.name, key))
+        kind = _managed_kind_for(_root(args), target, key)
         if kind is not None:
             id_allocator.reject_supplied_id(kind, element)
             seed = id_allocator.seed_max_for(_root(args), kind, data)
@@ -366,13 +391,14 @@ def _cmd_update(args: argparse.Namespace) -> int:
         # allocator exactly like a caller-supplied append id — so reject it (the no-explicit-PK
         # guard's update leg; the design's "append/update id-rejection" enforcement, not prose).
         # Other field updates (status/progress/slice/...) are unaffected.
-        kind = _MANAGED_KIND.get((target.name, args.array))
+        kind = _managed_kind_for(_root(args), target, args.array)
         if kind is not None:
             idk = id_allocator.id_key(kind)
             if any(k == idk for k, _ in sets):
+                rel = _vault_rel_key(_root(args), target)
                 raise ValueError(
                     f"vault_edit update: refusing to set the managed {kind} id key {idk!r} on "
-                    f"{target.name}/{args.array} — managed ids are minted in-lock by the allocator, "
+                    f"{rel}/{args.array} — managed ids are minted in-lock by the allocator, "
                     f"never reassigned out of band (slice-019/AC2). Update other fields, not the id."
                 )
         rec = _find_by_id(arr, args.id, id_key=args.id_key)
