@@ -1,6 +1,6 @@
 # ── Working / build notes — kept local, NOT part of the shipped plugin ──
+# (CLAUDE.md is now git-tracked — dropped 2026-06-19 for version history; see CLAUDE.md "Local dev workflow")
 /MILESTONE.md
-/CLAUDE.md
 .claude
 .claude/*
 
