@@ -75,3 +75,29 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
       - name: Plugin self-audits
         run: python .build/plugin_self_audits.py
+
+  release-guard:
+    name: release-guard (master advanced only via versioned cuts)
+    # Detective gate (ADR-015 / SC-049): runs ONLY on push to master, where
+    # actions/checkout creates a local refs/heads/master and leaves origin/HEAD
+    # unset, so release_advance_audit resolves released=master and the
+    # genesis-pinned first-parent walk works. A pull_request's detached merge-ref
+    # has no local master -> the audit exits 2, so this is intentionally NOT a PR
+    # check; pre-merge prevention is delegated to master branch protection.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 brings full history AND all tags (incl. the release-genesis
+          # tag); the default shallow/no-tags checkout makes the audit exit 2 (spike A1).
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Assert master advanced only via versioned release cuts
+        # Any non-zero exit fails the job: 1 = unversioned advance (prints the offending
+        # commit sha), 2 = genesis-absent / usage error. release_advance_audit is
+        # stdlib-only, so no dependency install is needed.
+        run: python scripts/lib/release_advance_audit.py --root .
