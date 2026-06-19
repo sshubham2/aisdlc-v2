@@ -53,7 +53,10 @@ from pathlib import Path  # noqa: E402
 
 from scripts.lib import _stdout  # noqa: E402
 from scripts.lib._git_default_branch import (  # noqa: E402
-    resolve_default_branch as _resolve_default_branch,
+    # slice-022: BRANCH-1 keys on the branch slices are CUT FROM and must not sit on.
+    # Under the uat/master model that is the INTEGRATION branch (uat), not the released
+    # trunk -- so the on-default-branch check fires when work is parked on uat.
+    resolve_integration_branch as _resolve_default_branch,
     run_git as _run_git,
 )
 from scripts.lib._worktree_paths import (  # noqa: E402
@@ -312,7 +315,8 @@ def audit(slice_folder: Path, repo_root: Path | None = None) -> AuditResult:
         return result
     result.actual_branch = current
 
-    # Resolve default branch (shared helper).
+    # Resolve the INTEGRATION branch (slice-022): the branch slices are cut from and
+    # must not sit on (uat when present, else the released default trunk).
     default = _resolve_default_branch(repo_root)
     if default is None:
         result.violations.append(BranchViolation(

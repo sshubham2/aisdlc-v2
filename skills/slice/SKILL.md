@@ -141,7 +141,13 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
    the `pick_log` entry, and RETURNS `{"slice": "slice-NNN", "folder": "slice-NNN-<name>"}`. Read `folder` for all
    paths below. Fail-visible on unset git identity (exit 1).
 2. **Compute paths** from the RETURNED `folder`: `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder <folder> --repo-root .` (line 1 = `$wt` path, line 2 = `slice/NNN-<name>`).
-3. **Create the worktree**: `git -C <main> worktree add <wt_path> -b slice/NNN-<name> <default>`. **Failure → wrapper-enforced compensation**: `$PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --vault "$AI_SDLC_VAULT_ROOT" --candidate <SC-NNN> --release` (reverts the claim to `candidate`; the counter is NOT decremented — monotonic-burn), then **STOP**.
+3. **Resolve the integration base + create the worktree** (slice-022: slices branch off the integration branch `uat`, degrading visibly to the default trunk when uat is absent — never a hardcoded master):
+   ```bash
+   base=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root <main>)
+   [ -z "$base" ] && { echo "STOP: cannot resolve the integration branch (git unusable)." >&2; exit 2; }
+   git -C <main> worktree add <wt_path> -b slice/NNN-<name> "$base"
+   ```
+   **Failure → wrapper-enforced compensation**: `$PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --vault "$AI_SDLC_VAULT_ROOT" --candidate <SC-NNN> --release` (reverts the claim to `candidate`; the counter is NOT decremented — monotonic-burn), then **STOP**.
 4. **In-loop repro (Step 2 "No row" path only)**: if BFRD-1 confirmed an in-loop repro is needed, invoke
    `/repro "<desc>" --target-root=<wt_path>` once via the Skill tool. `/repro` writes the failing test under
    `<wt_path>/tests/bugs/` (born on the slice branch) and confirms it fails there — **no relocation needed**.

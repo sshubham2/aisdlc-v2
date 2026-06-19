@@ -51,7 +51,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from scripts.lib import _stdout
-from scripts.lib._git_default_branch import resolve_default_branch
+from scripts.lib._git_default_branch import resolve_integration_branch
 
 __all__ = ["Verdict", "run_pr_flow", "parse_github_remote", "main"]
 
@@ -290,9 +290,10 @@ def main(argv: list[str] | None = None) -> int:
                          "(the human push/PR confirmation gate).\n")
         return 2
 
-    default = args.default or resolve_default_branch(args.repo_root)
+    # slice-022: PRs base on the INTEGRATION branch (uat), not the released trunk.
+    default = args.default or resolve_integration_branch(args.repo_root)
     if not default:
-        sys.stderr.write("pr_flow: could not resolve the default branch.\n")
+        sys.stderr.write("pr_flow: could not resolve the integration branch.\n")
         return 2
 
     def _flush(breadcrumb: dict) -> None:
