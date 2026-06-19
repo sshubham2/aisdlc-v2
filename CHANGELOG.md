@@ -8,13 +8,43 @@ All notable changes, newest first. Versions are reconstructed from git history; 
 
 _Nothing unreleased._
 
+## [2.36.0] — 2026-06-15
+
+### Added
+
+- **lint:** Make artifact_lint enforce documented schema-by-example enums (turn 'documented' into 'enforced'). (slice-013-lint-enforce-documented-schema-enums) [ADR-009]
+- **product-doc:** verify product-doc grounding against reality before recording provenance (slice-015-verify-product-doc-grounding) [ADR-011]
+- **release:** Make plugin-version integrity structural via a uat/master release-branch model (slice-022-adopt-uat-master-release-model) [ADR-014]
+
+### Changed
+
+- track CLAUDE.md + record uat/master local-dev workflow
+
+### Fixed
+
+- **risk-status:** reconcile the risk-register status enum to one shared source (slice-010-reconcile-risk-status-enum) [ADR-008]
+- **shippability:** run a valid non-pytest python -c machine_cmd row in the shippability catalog (slice-011-fix-shippability-nonpytest-machine-cmd)
+- **commit-slice:** fix write_changelog.py double-encoding non-ASCII read from stdin (cp1252 mangle) (slice-012-fix-write-changelog-stdin-utf8)
+- **active-slice:** refuse to silently mis-pick the active slice under parallel slices (slice-014-harden-active-slice-resolution) [ADR-010]
+- **secret-scrub:** reconfigure stdin to utf-8 before scrubbing so non-ASCII evidence piped over a cp1252 stdin is not mojibake'd before redaction (SC-026; the STDIN twin of UTF8-STDOUT-1, mirroring slice-012's write_changelog fix) (slice-016-fix-secret-scrub-stdin-utf8)
+- **repro:** Worktree-first repro ordering + capability-scoped single-file relocation, replacing the cross-slice-theft tests/bugs glob (slice-018-fix-repro-worktree-isolation) [ADR-012]
+- **vault:** mint every id/number in-lock to kill the parallel-slice id-collision race (slice-019-harden-vault-id-allocation-and-claim) [ADR-013]
+- **vault:** key vault_edit's managed-id guard on the vault-relative path (not the basename) so archive move-writes preserve the id while the live guard stays intact (slice-020-fix-managed-kind-basename-collision)
+- **skills:** thread the explicit slice id into slice-targeting skills' active_slice injections so /skill slice-NNN resolves under parallel slices (slice-021-thread-explicit-slice-into-skill-injections)
+
+## [2.35.1] — 2026-06-15
+
+### Fixed
+
+- model-invocable build/commit/setup for Remote Control (+bump 2.35.1) (#12)
+
 ## [2.35.0] — 2026-06-15
+
+## [2.34.1] — 2026-06-15
 
 ### Added
 
 - **product-doc:** Relocate the plugin.json version bump out of /commit-slice into /product-doc (post-merge) and add an open-period changelog roll-forward so decoupled-bump slices group under the version that releases them. (slice-009-relocate-version-bump-to-product-doc) [ADR-007]
-
-## [2.34.1] — 2026-06-15
 
 ## [2.34.0] — 2026-06-14
 
