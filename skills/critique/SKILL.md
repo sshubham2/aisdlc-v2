@@ -2,7 +2,7 @@
 name: critique
 description: "Adversarial design review of the current slice by a separate Critic AI persona. Spawns a 'critique' subagent with 9 fixed attack dimensions, writes findings to critique.json, gates /build-slice behind user-owned TRI-1 triage. Tier-driven: runs when risk_tier is medium/high OR critic_required is true; skipped on a low-tier slice with no mandatory trigger (mode is not a per-slice cost lever — it only sets the default tier + Heavy's sign-off floor). BLOCKED verdict prevents auto-advance; CLEAN or NEEDS-FIXES proceed to /slice-story (the plain-language pre-build report), then /build-slice."
 when_to_use: "Trigger phrases: /critique, 'critique this design', 'review the slice design', 'have the Critic review', 'adversarial review'. Use after /design-slice, before /build-slice. The forked adversarial review returns to the main thread for the interactive TRI-1 user triage gate."
-argument-hint: "[--force]"
+argument-hint: "[slice-id] [--force]"
 allowed-tools: Read, Grep, Bash, Write, Edit, Agent, AskUserQuestion, Skill
 ---
 
@@ -23,7 +23,7 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/pulse_worktree_resolver.py" --detect 
 Active slice mission-brief (mode + risk tier + critic_required):
 ```!
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"   # slice-014: no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently skipping
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi   # slice-014: no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently skipping
 $PY -c "import json,sys; f=sys.argv[1]; d=json.load(open(f+'/mission-brief.json',encoding='utf-8')) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
