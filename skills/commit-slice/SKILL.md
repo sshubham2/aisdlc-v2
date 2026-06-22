@@ -365,7 +365,11 @@ the live backlog stays small (Direction #3) and a `shipped` candidate ALWAYS mea
 3. Remove it from `<vault>/candidates.json` via CAS-rewrite (scratch files in a temp dir, NEVER the repo CWD —
    they'd be one `git add -A` from being committed):
    ```bash
-   T="$(mktemp -d)"
+   # slice-026: per-run temp dir UNDER $PY's gettempdir() so a git-bash write + a Windows-Python
+   # read resolve to the SAME real path (bare `mktemp -d` returns /tmp/..., which Windows-Python
+   # reads at a DIFFERENT path -> CAS divergence). The SAME $PY on both sides keeps it self-consistent.
+   TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+   T="$(mktemp -d "$TMPD/aisdlc-commit.XXXXXX")"
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file candidates.json --out-file "$T/base.bin"
    # drop the shipped candidate from candidates[], write to "$T/updated.json", then:
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file candidates.json --base-file "$T/base.bin" --content-file "$T/updated.json"

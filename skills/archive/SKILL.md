@@ -68,14 +68,22 @@ Index regeneration runs via a **Haiku subagent** (COST-1 — pure file reading +
 ### 3a — Capture CAS bases (main thread, before dispatch)
 
 ```bash
+# slice-026: portable PER-RUN temp dir. $TMPD is the dir the bundled Windows-Python tools resolve via
+# tempfile.gettempdir(), so a git-bash write + a Windows-Python read land on the SAME real path (a
+# hardcoded /tmp/... diverges on Windows). The SAME $PY on both sides keeps it self-consistent. The
+# per-run mktemp -d dir means two concurrent /archive (or /reflect auto-archive) runs never collide.
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+D="$(mktemp -d "$TMPD/aisdlc-archive.XXXXXX")"
+echo "archive CAS temp dir: $D"   # NOTE this path -- Step 3c is a FRESH shell that won't keep $D; reuse the SAME dir there
+
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read \
     --file slices/_index.json \
-    --out-file /tmp/idx_base.bin \
+    --out-file "$D/idx_base.bin" \
     --vault "$AI_SDLC_VAULT_ROOT"
 
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read \
     --file slices/archive/_index.json \
-    --out-file /tmp/archive_base.bin \
+    --out-file "$D/archive_base.bin" \
     --vault "$AI_SDLC_VAULT_ROOT"
 ```
 
@@ -96,20 +104,23 @@ The agent returns two JSON content strings: one for `slices/_index.json`, one fo
 
 ### 3c — Write via CAS (main thread)
 
-Write each content string to a temp file, then:
+Reuse the SAME per-run dir `$D` from Step 3a (a fresh shell does NOT keep `$D` — set `D=<the path Step 3a printed>`, which holds the captured bases). Write each content string to `$D/idx_new.json` and `$D/archive_new.json`, then:
 
 ```bash
+D="<the per-run dir path printed in Step 3a>"   # fresh shell -- reuse the SAME $D from 3a (it holds the captured bases)
+[ -f "$D/idx_base.bin" ] || { echo "STOP: set D to the dir Step 3a printed -- it holds the CAS bases (got '$D')" >&2; exit 1; }   # code-review m2: clear error instead of a deep vault_edit failure
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite \
     --file slices/_index.json \
-    --base-file /tmp/idx_base.bin \
-    --content-file /tmp/idx_new.json \
+    --base-file "$D/idx_base.bin" \
+    --content-file "$D/idx_new.json" \
     --vault "$AI_SDLC_VAULT_ROOT"
 
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite \
     --file slices/archive/_index.json \
-    --base-file /tmp/archive_base.bin \
-    --content-file /tmp/archive_new.json \
+    --base-file "$D/archive_base.bin" \
+    --content-file "$D/archive_new.json" \
     --vault "$AI_SDLC_VAULT_ROOT"
+rm -rf "$D"
 ```
 
 **On exit 3 (CAS conflict)**: a parallel slice completion wrote `_index.json` between base-capture and write. Re-capture the base, re-dispatch the Haiku subagent (so the regen picks up the concurrent row), re-attempt. Bound to ~5 attempts. On persistent conflict: STOP loudly. **Recovery**: Step 2 moves already completed — re-run `/archive --index-only` to redo only the index writes.
