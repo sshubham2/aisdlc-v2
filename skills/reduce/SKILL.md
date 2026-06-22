@@ -197,8 +197,11 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
     --content-file <tmp_lesson_json>
 ```
 
-(`<tmp_lesson_json>` = the lesson entry written to a temp location first — `T="$(mktemp -d)"`, write
-`"$T/lesson.json"`, append, `rm -rf "$T"`. Never write scratch files into the project CWD.)
+(`<tmp_lesson_json>` = the lesson entry written to a temp location first — derive a PORTABLE per-run dir
+`TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')"` then
+`T="$(mktemp -d "$TMPD/aisdlc-reduce.XXXXXX")"`, write `"$T/lesson.json"`, append, `rm -rf "$T"`. NEVER bare
+`mktemp -d` (it returns `/tmp/...`, which the bundled Windows-Python tools read at a DIFFERENT real path) and
+never the project CWD. Safe because the SAME $PY resolves gettempdir() for both the bash derivation and the in-tool reads.)
 
 Schema by example: `examples/lessons-learned.json` (`aisdlc/lessons-learned@1`).
 

@@ -152,7 +152,12 @@ empty entries). Serialize via Bash here-doc into a temp file, then run:
 
 ```bash
 DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"
-TMPFILE="$(mktemp /tmp/obo-decisions-XXXXXX.json)"
+# slice-026: portable temp dir ($PY gettempdir(), forward-slash) so the file mktemp creates in
+# git-bash is read back by the bundled Windows-Python tool at the SAME real path -- safe because the
+# SAME $PY resolves gettempdir() for both the bash $TMPD derivation and the in-tool reads. Keep the
+# XXXXXX randomness + the .json suffix (mktemp preserves a suffix after the X's).
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+TMPFILE="$(mktemp "$TMPD/obo-decisions-XXXXXX.json")"
 cat > "$TMPFILE" << 'DECISIONS_EOF'
 <decisions-json>
 DECISIONS_EOF
