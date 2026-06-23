@@ -2,6 +2,7 @@
 name: reflect
 description: "Capture what the just-completed slice taught you and update the vault with reality across four categories: validated, corrected, discovered, and deferred. Writes reflection.json, appends to lessons-learned.json and shippability.json, optionally promotes build-checks and auto-archives the slice. Tracks Critic calibration per TRI-1. Use after /validate-slice, before next /slice."
 when_to_use: "Trigger phrases: /reflect, 'reflect on slice', 'capture learnings', 'update vault with reality', 'slice retrospective'. Prerequisite: validation.json must exist. Auto-advance terminus — /commit-slice is always user-invoked."
+argument-hint: "[slice-id]"
 allowed-tools: Read, Write, Edit, Glob, Bash, AskUserQuestion
 ---
 
@@ -20,7 +21,10 @@ The cure for spec rot: structured vault updates at every slice boundary so the v
 ## Active slice + inputs — injected
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --json
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --json)"; else AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --json)"; fi   # slice-031: thread /reflect slice-NNN (shape-guarded). No-arg keeps --repo-root . so the slice-014 exit-4 AMBIGUOUS HALT prints to STDERR; capturing into AS (the assignment, not the block's last command) then emitting below degrades that HALT to a VISIBLE note instead of a launch-abort (M-add-2) -- NO 2>/dev/null silencing.
+if printf '%s' "$AS" | grep -q 'by-id-archive'; then echo "(M3: $ARG is already shipped/archived -- /reflect runs on the ACTIVE slice, not an archived one; nothing to reflect.)"; else printf '%s\n' "$AS"; fi
 ```
 
 Read all of the following before proceeding (stop if `validation.json` is missing — run `/validate-slice` first):

@@ -2,7 +2,7 @@
 name: risk-spike
 description: "In-loop slice spike gate with TWO modes. FEASIBILITY (default, step-0): reads the picked candidate's blocking assumptions from candidates.json, spawns field-recon, proves each with throwaway code on real environments; all proven -> /design-slice, any FAILED -> candidate blocked until a fallback is re-spiked. DESIGN (--mode design, post-synthesis): reads the synthesized design.json's pending decidable_disagreements + must-verify cross-domain invariants and lets REALITY adjudicate the tournament; all GO -> /critique, any NO-GO -> back to /design-slice to re-synthesize. Records verdicts into candidates.json/risk-register.json/spikes/ (feasibility) or design.json (design)."
 when_to_use: "Trigger phrases: /risk-spike, 'spike the risks', 'prove the assumptions', 'run feasibility spike', 'design spike'. Feasibility mode is auto-triggered by /slice as step-0 of every slice; design mode is auto-triggered by /design-slice after tournament synthesis. Also user-invokable: pass --mode design to adjudicate a design composition, or a candidate/risk id to re-spike a specific feasibility assumption."
-argument-hint: "[--mode feasibility|design] [SC-NNN | R-NN | all]"
+argument-hint: "[--mode feasibility|design] [slice-NNN | SC-NNN | R-NN | all]"
 allowed-tools: Read, Write, Edit, Bash, Agent, AskUserQuestion, Skill
 ---
 
@@ -241,7 +241,8 @@ Read the active slice's `design.json` (the active slice is resolved via `active_
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"   # slice-014: no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently skipping
+ARG=""; for a in $ARGUMENTS; do printf '%s' "$a" | grep -qE '^slice-[0-9]' && { ARG="$a"; break; }; done   # slice-031: scan positionals for the first slice-shaped token (risk-spike's arg0 is often --mode/SC-NNN/R-NN)
+if [ -n "$ARG" ]; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi   # slice-014: no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently skipping
 $PY -c "import json,sys; sd=sys.argv[1]; f=(sd+'/design.json') if sd else None; d=json.load(open(f,encoding='utf-8')) if f else {}; t=d.get('tournament',{}); dd=[x for x in t.get('decidable_disagreements',[]) if x.get('verdict','pending')=='pending']; mv=[i for i in (d.get('cross_domain_transfer') or {}).get('invariants',[]) if i.get('status')=='must-verify']; print(json.dumps({'design':f,'decidable_disagreements':dd,'must_verify_invariants':mv},indent=2))" "$SDIR"
 ```
 

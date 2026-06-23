@@ -2,6 +2,7 @@
 name: design-slice
 description: "Produces a just-enough per-slice design (design.json) via a DESIGN TOURNAMENT that runs on EVERY slice regardless of risk_tier: it spawns all 3 BLIND designer subagents (practice, cross-domain, expert), then reality-grounds a single synthesis (CRG-fit / spike-ability / reversibility / simplest-that-works) with a composition-coherence pass. Queries code-review-graph for blast-radius, runs the project-frame synthesizer, tags every new ADR with reversibility. Empirically-decidable tournament disagreements + must-verify cross-domain invariants gate a post-synthesis /risk-spike --mode design before /critique."
 when_to_use: "Trigger after /risk-spike (feasibility) passes, before /critique. Phrases: '/design-slice', 'design this slice', 'spec the current slice', 'design the slice'. Reads <vault>/slices/slice-NNN/mission-brief.json. Per-slice only — for upfront Heavy-mode vault use /heavy-architect."
+argument-hint: "[slice-id]"
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, AskUserQuestion, Skill
 ---
 
@@ -19,7 +20,8 @@ designers generate independently (the ceiling), then a sighted synthesis selects
 
 Active slice mission brief:
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$AI_SDLC_VAULT_ROOT"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --slice "$ARG"; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --repo-root .; fi   # slice-031: thread an explicit /design-slice slice-NNN (shape-guarded); active_slice_brief is exit-0-always so the no-arg AMBIGUOUS note degrades visibly, never a launch-abort (M-add-2). The reflection-lookup below + Step-0.5 project-frame stay branch-resolved advisory context (M2a; SC-063 scope).
 ```
 
 Nearest prior slice + relevant past reflections (lexical match via vault JSON — shared designer context):
