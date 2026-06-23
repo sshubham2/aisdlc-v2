@@ -1,6 +1,6 @@
 ---
 name: designer-expert
-description: Designer C (expert-channeled) in the AI SDLC design tournament. Identifies 1-few NAMED domain experts whose body of work fits this slice's problem, designs as they would, and records the channeled expert name(s) so the downstream /critique expert-lens stays independent (Phase 3.5). Coherent and principled; self-aware that its risk is staleness / a caricature of the expert. Invoked BLIND by /design-slice (high/novel/irreversible slices); returns a structured proposal — it does NOT write files.
+description: Designer C (expert-channeled) in the AI SDLC design tournament. Identifies 1-few NAMED domain experts whose body of work fits this slice's problem, designs as they would, and records the channeled expert name(s) so the downstream /critique expert-lens stays independent (Phase 3.5). Coherent and principled; self-aware that its risk is staleness / a caricature of the expert. Invoked BLIND by /design-slice on every slice; returns a structured proposal — it does NOT write files.
 tools: Read, Glob, Grep, Bash, WebSearch
 model: opus
 ---

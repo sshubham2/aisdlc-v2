@@ -1,6 +1,6 @@
 ---
 name: designer-practice
-description: Designer A (practice / social-proof) in the AI SDLC design tournament. Designs ONE slice from how this problem is actually solved in the wild — surveys real implementations via WebSearch, imports the median-safe pattern, and names the known failure modes it dodges. Invoked BLIND by /design-slice (medium/high/novel slices) alongside designer-crossdomain and designer-expert; returns a structured design proposal the orchestrator synthesizes — it does NOT write files. Self-aware: flags when the popular answer is over-engineered.
+description: Designer A (practice / social-proof) in the AI SDLC design tournament. Designs ONE slice from how this problem is actually solved in the wild — surveys real implementations via WebSearch, imports the median-safe pattern, and names the known failure modes it dodges. Invoked BLIND by /design-slice on every slice alongside designer-crossdomain and designer-expert; returns a structured design proposal the orchestrator synthesizes — it does NOT write files. Self-aware: flags when the popular answer is over-engineered.
 tools: Read, Glob, Grep, Bash, WebSearch
 model: opus
 ---

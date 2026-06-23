@@ -226,10 +226,10 @@ automatically.
 /design-slice
 ```
 
-Tier-gated. On `medium`/`high` slices: spawns 2–3 **blind** designer subagents (practice, cross-domain,
+Runs on **every** slice regardless of tier: spawns all 3 **blind** designer subagents (practice, cross-domain,
 expert), then reality-grounds a single synthesis using CRG blast-radius, spike evidence, reversibility,
-and a simplest-that-works heuristic. On `low`/mechanical slices: a single inline flight (zero added cost).
-Writes `design.json`.
+and a simplest-that-works heuristic (ADR-018 — generation breadth is always maximal; tier still drives whether
+`/critique` runs, not the tournament size). Writes `design.json`.
 
 Empirically-decidable tournament disagreements gate a post-synthesis design spike:
 

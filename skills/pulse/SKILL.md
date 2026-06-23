@@ -344,8 +344,9 @@ Balanced view plus:
 - Critic calibration history (all past runs)
 - **Designer divergence (3.3)** — from the `design-tournament` gate-log rows, the per-pair `approach_divergence`
   distribution (`identical` / `overlapping` / `disjoint`). Flag when `designer-practice ~ designer-expert` is
-  `identical`/`overlapping` on **most high-tier slices**: the expert lens is converging on practice and not earning
-  its spawn cost → note "consider dropping to 2 designers (medium-tier default)". Omit if no tournament has run.
+  `identical`/`overlapping` on **most slices**: the expert lens is converging on practice and may not be earning
+  its spawn cost → surface this for **human review of the always-3 policy** (ADR-018). Do NOT recommend dropping a
+  designer — generation is always 3; this is an advisory signal for a human, never an auto-action. Omit if no tournament has run.
 - Stranded slice branches in detail (every `halt: true` entry with its class)
 - Full gate-log history: every row, newest first — verdict rows (gate · slice · verdict · findings_count · reality_contact) and recall rows (gate · slice · `miss` · severity · caught_by)
 
