@@ -18,7 +18,9 @@ Contract:
     <py> _crg_grounding_probe.py --repo-root <dir> --health
     <py> _crg_grounding_probe.py --repo-root <dir> --path <repo-rel-path> [--symbol <name>]
   stdout: ONE JSON line.
-    --health        -> {"reachable": bool, "total_nodes": int, "last_updated": str|null}
+    --health        -> {"reachable": bool, "total_nodes": int, "last_updated": str|null,
+                        "public_nodes": int, "embeddings_count": int}
+                        (public_nodes = total - File - Test; slice-029 / ADR-019)
     --path          -> {"reachable": bool, "file_resolved": bool, "symbol_present": bool|null,
                         "ambiguous": bool, "total_nodes": int, "last_updated": str|null}
   CRG not importable -> exit 3, empty stdout (caller maps to unreachable / AC3).
@@ -60,11 +62,18 @@ def _stats(q, repo_root: str):
         with contextlib.redirect_stdout(sys.stderr):
             s = q.list_graph_stats(repo_root=repo_root)
     except Exception:
-        return False, 0, None
+        return False, 0, None, 0, 0
     if not isinstance(s, dict):
-        return False, 0, None
-    total = s.get("total_nodes") or 0
-    return (total > 0), int(total), s.get("last_updated")
+        return False, 0, None, 0, 0
+    total = int(s.get("total_nodes") or 0)
+    by_kind = s.get("nodes_by_kind") or {}
+    # public_nodes = total - File - Test (every non-container/non-test node = a public symbol;
+    # robust to CRG's full kind set {File,Class,Function,Type,Test} -- slice-029 / ADR-019)
+    files = int(by_kind.get("File") or 0)
+    tests = int(by_kind.get("Test") or 0)
+    public_nodes = max(0, total - files - tests)
+    embeddings_count = int(s.get("embeddings_count") or 0)
+    return (total > 0), total, s.get("last_updated"), public_nodes, embeddings_count
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -81,11 +90,12 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         return 3  # CRG not installed/importable in this interpreter -> caller degrades (AC3)
 
-    reachable, total, last_updated = _stats(q, args.repo_root)
+    reachable, total, last_updated, public_nodes, embeddings_count = _stats(q, args.repo_root)
 
     if args.health or not args.path:
         json.dump({"reachable": reachable, "total_nodes": total,
-                   "last_updated": last_updated}, sys.stdout)
+                   "last_updated": last_updated, "public_nodes": public_nodes,
+                   "embeddings_count": embeddings_count}, sys.stdout, ensure_ascii=False)  # BC-PROJ-3
         return 0
 
     file_resolved = False
