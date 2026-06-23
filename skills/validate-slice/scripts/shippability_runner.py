@@ -7,6 +7,19 @@ token to the live interpreter. Every segment of a row must exit 0 for the row to
 PASS; the first failing segment fails the row but the run continues so the full
 regression picture is reported.
 
+**Three-valued row verdict (SC-021 / ADR-021).** A row whose cited `tests/...py`
+test file(s) are ABSENT from the current checkout (a sibling slice's not-yet-merged
+repro under parallel slices) is recorded as a distinct third verdict ``ABSENT`` —
+NOT a regression. ABSENT is decided PRE-EXECUTION by a filesystem existence check
+on the row's own cited test path(s) (reusing
+``shippability_path_audit._extract_test_tokens``), NOT by the pytest exit code:
+pytest exit 4 conflates absent-file / phantom-citation / CLI-usage-error, so a
+present-file phantom citation must stay a FAIL. A row with >=1 present test token,
+or with no extractable test token (e.g. a ``python -c`` row), is executed normally
+so a present-but-failing test still FAILs. ABSENT rows are counted (``RunResult.absent``)
+and surfaced distinctly — never silently dropped, never folded into PASS — and never
+contribute to the failing exit code.
+
 It does NOT re-derive the split/strip — it REUSES
 `shippability_decoupling_audit._segments()` (the SCMD-1 canonical per-`;`-segment
 backtick+whitespace strip) plus that audit's JSON catalog-row /
@@ -29,7 +42,7 @@ Usage:
     python shippability_runner.py <vault>/shippability.json --json
 
 Exit codes:
-    0  every data row PASSED (or empty / zero-row catalog)
+    0  every data row PASSED or ABSENT (no regression; ABSENT = test not on this checkout)
     1  >=1 data row FAILED (a regression — blocks /reflect)
     2  usage error (catalog missing/unreadable, or not valid JSON)
 """
@@ -58,7 +71,7 @@ from shippability_decoupling_audit import (  # canonical, NOT re-derived
     _machine_cmd_cell,
     _segments,
 )
-from shippability_path_audit import _find_repo_root
+from shippability_path_audit import _extract_test_tokens, _find_repo_root
 
 # Tokens that introduce the canonical interpreter placeholder. SCMD-1 permits
 # `<interp>` (the SKILL.md-prose convention), a bare `python`, or an absolute
@@ -92,7 +105,7 @@ def _normalize_interp(tokens: list[str]) -> list[str]:
 @dataclass(frozen=True)
 class RowResult:
     row: str
-    status: str          # "PASS" | "FAIL"
+    status: str          # "PASS" | "FAIL" | "ABSENT"
     index: int
     detail: str = ""
 
@@ -106,6 +119,7 @@ class RunResult:
     rows_run: int = 0
     passed: int = 0
     failed: int = 0
+    absent: int = 0       # SC-021: rows whose cited test file(s) are not on this checkout
     rows: list[RowResult] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -113,8 +127,9 @@ class RunResult:
             "rows_run": self.rows_run,
             "passed": self.passed,
             "failed": self.failed,
+            "absent": self.absent,
             "rows": [r.to_dict() for r in self.rows],
-            "summary": {"failed_count": self.failed},
+            "summary": {"failed_count": self.failed, "absent_count": self.absent},
         }
 
 
@@ -125,7 +140,13 @@ def run_catalog(catalog_path: Path, repo_root: Path | None = None,
     Each row's command is split via the CANONICAL `_segments()` (split on `;`,
     then strip backticks + ws PER segment). Every segment of a row must exit 0
     for the row to PASS; the first failing segment fails the row but the run
-    continues so the full regression picture is reported."""
+    continues so the full regression picture is reported.
+
+    SC-021/ADR-021: a row whose cited `tests/...py` token(s) are ALL absent on
+    `repo_root` (the current checkout) is classified ABSENT pre-execution and is
+    NOT run — a sibling slice's not-yet-merged repro is unobservable here, not a
+    regression. A row with a present token, or no extractable test token, runs
+    normally so a present-but-failing test still FAILs."""
     result = RunResult()
     if repo_root is None:
         repo_root = _find_repo_root(catalog_path)
@@ -141,6 +162,23 @@ def run_catalog(catalog_path: Path, repo_root: Path | None = None,
                 row_id, "FAIL", index,
                 "no machine_cmd field (SCMD-1 pre-catalog gate should have "
                 "caught this — did Step 6 run shippability_decoupling_audit?)"))
+            continue
+
+        # SC-021: pre-flight ABSENT classification (decided by FILE EXISTENCE,
+        # never the pytest exit code — exit 4 is ambiguous; ADR-021). If the row
+        # cites >=1 tests/...py token AND every cited token is absent on this
+        # checkout, record ABSENT (distinct, counted, not run, not a regression).
+        # A row with a present token, or with NO extractable test token (e.g. a
+        # `python -c` row), falls through to normal execution so a real failure
+        # still FAILs.
+        test_tokens = [tok for tok, _sel in _extract_test_tokens(cell)]
+        if test_tokens and all(not (repo_root / tok).exists() for tok in test_tokens):
+            result.absent += 1
+            result.rows.append(RowResult(
+                row_id, "ABSENT", index,
+                "test file(s) not on this checkout — not a regression "
+                "(a sibling slice's not-yet-merged repro): "
+                + ", ".join(test_tokens)))
             continue
 
         row_ok = True
@@ -193,10 +231,20 @@ def run_catalog(catalog_path: Path, repo_root: Path | None = None,
 
 def _format_human(r: RunResult) -> str:
     head = (f"Shippability catalog run: {r.rows_run} row(s), "
-            f"{r.passed} PASS, {r.failed} FAIL\n")
+            f"{r.passed} PASS, {r.failed} FAIL, {r.absent} ABSENT\n")
+    out = [head]
+    # SC-021: surface ABSENT rows distinctly (never silently swallowed) BEFORE the
+    # early-return, so a 0-FAIL run still reports a test that was not on this
+    # checkout — information, not a regression.
+    if r.absent:
+        out.append("\nABSENT (test not on this checkout — not a regression):\n")
+        for row in r.rows:
+            if row.status == "ABSENT":
+                out.append(f"  {row.row} (shippability.json rows[{row.index}])\n"
+                           f"    {row.detail}\n")
     if not r.failed:
-        return head
-    out = [head, "\nFAILED:\n"]
+        return "".join(out)
+    out.append("\nFAILED:\n")
     for row in r.rows:
         if row.status == "FAIL":
             out.append(f"  {row.row} (shippability.json rows[{row.index}])\n"
