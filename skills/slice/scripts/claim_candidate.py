@@ -128,12 +128,24 @@ def _make_claim_mutate(path: Path, candidate_id: str, name: str,
         if rec is None:
             raise _ClaimError(f"no candidate with id {candidate_id!r} in the live backlog")
         st = rec.get("status")
-        if st not in _PICKABLE:
+        # slice-027 / M2 / ADR-016 -- the CONFIRM phase of the two-phase claim. A SAME-OWNER
+        # `reserved` hold upgrades to a durable claim (it mints slice-NNN below); a reservation held
+        # by a DIFFERENT git identity is refused HERE -- BEFORE id_allocator.next_id -- so a
+        # cross-owner upgrade never mints a number (or bumps the counter) against another owner's
+        # hold (no IDOR). Fresh {candidate, deferred} picks stay claimable by anyone (unchanged);
+        # any other status (spiking/active/blocked/...) is refused.
+        if st == "reserved":
+            owner = (rec.get("claimed_by") or {}).get("git_email")
+            if owner and owner != git_email:
+                raise _ClaimError(
+                    f"candidate {candidate_id} is reserved by {owner}, not you ({git_email}) -- "
+                    f"cannot upgrade another owner's reservation")
+        elif st not in _PICKABLE:
             who = (rec.get("claimed_by") or {}).get("git_user")
             raise _ClaimError(
                 f"candidate {candidate_id} is not pickable (status={st!r}"
                 + (f", claimed_by {who}" if who else "")
-                + ") — it is already in-flight, blocked, or shipped")
+                + ") -- it is already in-flight, blocked, or shipped")
 
         # Mint the slice number IN-LOCK (claim-first). seed_max = max(external floor, in-data
         # slice fields + pick_log) so the counter never re-issues a live OR archived number.
@@ -169,6 +181,71 @@ def _make_claim_mutate(path: Path, candidate_id: str, name: str,
     return mutate
 
 
+def _make_reserve_mutate(path: Path, candidate_id: str, git_name: str, git_email: str,
+                         ts: str, result: dict):
+    """SVW-1 mutate for the RESERVE (soft HOLD) phase (slice-027 / M2 / M4 / ADR-016).
+
+    Marks a candidate claimed-in-intent the instant the user settles the pick, so a parallel
+    /slice sees it as in-flight BEFORE the interactive define window -- WITHOUT minting a slice
+    number or bumping any counter (the scarce serial is issued only at the CONFIRM/claim phase).
+    Branch ORDER is load-bearing (M4): the same-owner idempotent no-op is checked BEFORE the
+    reservable-status gate, else re-reserving an already-`reserved` candidate would wrongly fail
+    'not reservable'. Identity-checked (a cross-owner reserve is refused) and fail-visible."""
+
+    def mutate(text: str) -> str:
+        if not text.strip():
+            raise _ClaimError(
+                f"{path} is empty or missing -- no candidates to reserve "
+                f"(run /discover or /slice-candidates first)")
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise _ClaimError(f"{path} is not valid JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise _ClaimError(f"{path} top-level is not a JSON object")
+        cands = data.get("candidates")
+        if not isinstance(cands, list):
+            raise _ClaimError(f"{path} has no candidates[] array")
+
+        rec = next((c for c in cands if isinstance(c, dict) and str(c.get("id")) == candidate_id), None)
+        if rec is None:
+            raise _ClaimError(f"no candidate with id {candidate_id!r} in the live backlog")
+
+        st = rec.get("status")
+        # M4 -- check the same-owner idempotent no-op FIRST. A `reserved` candidate is NOT in
+        # _PICKABLE, so the reservable-status gate below would otherwise reject a legitimate
+        # re-reserve. A reservation held by a different identity is refused (cross-owner).
+        if st == "reserved":
+            owner = (rec.get("claimed_by") or {}).get("git_email")
+            if owner and owner != git_email:
+                raise _ClaimError(
+                    f"candidate {candidate_id} is reserved by {owner}, not you ({git_email}) -- "
+                    f"cannot re-reserve another owner's hold")
+            result["reserved"] = False  # idempotent: already reserved by this owner -> no-op success
+            return json.dumps(data, **_JSON_DUMP) + "\n"
+        if st not in _PICKABLE:
+            who = (rec.get("claimed_by") or {}).get("git_user")
+            raise _ClaimError(
+                f"candidate {candidate_id} is not reservable (status={st!r}"
+                + (f", claimed_by {who}" if who else "")
+                + ") -- only a `candidate`/`deferred` candidate can be reserved")
+
+        rec["status"] = "reserved"
+        rec["progress"] = "reserved"   # M-add-1: a dedicated pre-spike stage so candidates_top renders coherently
+        rec["claimed_by"] = {"git_user": git_name, "git_email": git_email}
+        rec["started_at"] = ts
+        # NO slice number minted and NO counter bumped -- the scarce serial is issued only at CONFIRM.
+        hist = rec.get("history")
+        if not isinstance(hist, list):
+            hist = rec["history"] = []
+        hist.append({"event": "reserved", "by": "slice", "at": ts})
+        data["updated"] = ts
+        result["reserved"] = True
+        return json.dumps(data, **_JSON_DUMP) + "\n"
+
+    return mutate
+
+
 def _make_release_mutate(path: Path, candidate_id: str, git_email: str, ts: str, result: dict):
     """SVW-1 mutate for the saga compensation (--release). Idempotent + identity-checked +
     monotonic-burn (the counter is NOT decremented)."""
@@ -196,6 +273,7 @@ def _make_release_mutate(path: Path, candidate_id: str, git_email: str, ts: str,
             raise _ClaimError(
                 f"refusing to release {candidate_id}: it is claimed by {owner}, not you ({git_email})")
 
+        prior_status = rec.get("status")
         rec["status"] = "candidate"
         rec["progress"] = "not-started"
         rec["slice"] = None
@@ -204,10 +282,15 @@ def _make_release_mutate(path: Path, candidate_id: str, git_email: str, ts: str,
         hist = rec.get("history")
         if not isinstance(hist, list):
             hist = rec["history"] = []
-        hist.append({"event": "released", "by": "slice",
-                     "reason": "worktree create failed after the vault claim committed "
-                               "(saga compensation; counter not decremented — monotonic-burn)",
-                     "at": ts})
+        # slice-027 (code-review m1): the recorded reason depends on WHAT was reverted. A `reserved`
+        # soft HOLD never minted a slice number nor created a worktree, so the post-claim
+        # saga-compensation text would be a FALSE audit record for a reservation-abandon -- pick the
+        # reservation reason for it; keep the original wording for the post-claim compensation path.
+        reason = ("reservation abandoned before the claim (pre-claim soft HOLD released; "
+                  "no slice number was minted)" if prior_status == "reserved"
+                  else "worktree create failed after the vault claim committed "
+                       "(saga compensation; counter not decremented — monotonic-burn)")
+        hist.append({"event": "released", "by": "slice", "reason": reason, "at": ts})
         data["updated"] = ts
         result["released"] = True
         return json.dumps(data, **_JSON_DUMP) + "\n"
@@ -218,17 +301,25 @@ def _make_release_mutate(path: Path, candidate_id: str, git_email: str, ts: str,
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="claim_candidate",
-        description="Claim a slice candidate CLAIM-FIRST (mint slice-NNN in-lock) for /slice, or "
-                    "--release a reserved claim (saga compensation).")
+        description="Reserve (--reserve, soft HOLD on pick), claim (default, CLAIM-FIRST: mint "
+                    "slice-NNN in-lock), or --release (saga compensation) a slice candidate for /slice.")
     p.add_argument("--vault", default=None,
                    help="vault root (overrides $AI_SDLC_VAULT_ROOT / the computed default)")
     p.add_argument("--candidate", required=True, metavar="SC-NNN", help="the candidate id")
     p.add_argument("--name", default=None, metavar="verb-object",
                    help="the slice name (folder suffix; the slice NUMBER is minted in-lock). "
-                        "Required for a claim; ignored for --release.")
-    p.add_argument("--release", action="store_true",
-                   help="saga compensation: revert this candidate's claim (idempotent, "
-                        "identity-checked, monotonic-burn)")
+                        "Required for a claim; ignored for --reserve / --release.")
+    # slice-027 / m1: --reserve (soft HOLD on pick) and --release (saga compensation) are mutually
+    # exclusive modes; the default (neither) is the durable CLAIM/CONFIRM that mints slice-NNN.
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--reserve", action="store_true",
+                      help="soft HOLD on pick: mark the candidate `reserved` (claimed-in-intent) "
+                           "WITHOUT minting a slice number, so a parallel /slice sees it in-flight; "
+                           "the later claim upgrades a same-owner reservation. Idempotent, "
+                           "identity-checked. --name is not required.")
+    mode.add_argument("--release", action="store_true",
+                      help="saga compensation: revert this candidate's claim OR reservation "
+                           "(idempotent, identity-checked, monotonic-burn)")
     p.add_argument("--repo-root", "--root", dest="repo_root", type=Path, default=Path("."),
                    help="repo root for git identity (default: cwd)")
     p.add_argument("--json", action="store_true", help="emit JSON confirmation")
@@ -252,6 +343,8 @@ def main(argv: list[str] | None = None) -> int:
         git_name, git_email = _git_identity(args.repo_root.resolve())
         if args.release:
             mutate = _make_release_mutate(path, candidate_id, git_email, ts, result)
+        elif args.reserve:
+            mutate = _make_reserve_mutate(path, candidate_id, git_name, git_email, ts, result)
         else:
             name = (args.name or "").strip()
             if not _NAME_RE.match(name):
@@ -268,6 +361,18 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, TimeoutError) as exc:
         sys.stderr.write(f"claim_candidate: write to {path} failed (fail-visible per R-7): {exc}\n")
         return 1
+
+    if args.reserve:
+        did = result.get("reserved", False)
+        payload = {"action": "reserve-candidate", "candidate": candidate_id,
+                   "reserved": did, "status": "reserved",
+                   "claimed_by": {"git_user": git_name, "git_email": git_email}, "at": ts}
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            print(f"{'reserved' if did else 'already reserved'} {candidate_id} "
+                  f"(soft HOLD -- no slice number minted) by {git_name} <{git_email}>")
+        return 0
 
     if args.release:
         payload = {"action": "release-candidate", "candidate": candidate_id,

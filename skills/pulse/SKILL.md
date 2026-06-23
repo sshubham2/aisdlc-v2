@@ -124,11 +124,13 @@ Do NOT read individual slice design/mission files (active slice excepted). Do NO
 - Count of `not-started` + `in-flight` candidates from `candidates.json`.
 - Top-priority candidate (highest `priority.score`, not blocked-on-spike).
 - Count of `blocked-on-spike` candidates.
-- **Stale-claim heartbeat (§2.3):** for every CLAIMED candidate (`claimed_by` set, status `spiking`/`active`),
-  surface `claimed_by.git_user` and the freshest activity timestamp for its slice (max of `milestone.json.at`
-  and the last `build-log.json` event). Activity older than **5 days** → flag
-  `STALE-CLAIM: SC-NNN (<user>, idle <N>d)` — claimed-but-idle work blocks the DAG silently; the vault has no
-  locking, so this surfacing IS the team-awareness mechanism. Descriptive only — pulse changes nothing.
+- **Stale-claim heartbeat (§2.3):** for every CLAIMED candidate (`claimed_by` set, status `spiking`/`active`/`reserved`),
+  surface `claimed_by.git_user` and the freshest activity timestamp. For a `spiking`/`active` claim that is the max
+  of `milestone.json.at` and the last `build-log.json` event; a `reserved` soft HOLD (slice-027 / ADR-016) has no
+  slice/milestone yet, so key its freshness off `started_at`. Activity older than **5 days** → flag
+  `STALE-CLAIM: SC-NNN (<user>, idle <N>d)` — claimed-but-idle work (including an abandoned reservation, otherwise
+  invisible to pickers) blocks the DAG silently; the vault has no locking, so this surfacing IS the team-awareness
+  mechanism. Descriptive only — pulse changes nothing.
 
 **Retired-risk freshness (§6.1 — reality sign-offs are perishable):** from `risk-register.json`, risks with
 `status: retired` whose retiring spike (`notes`/`discovered.at`) is older than **6 months** AND whose title names
