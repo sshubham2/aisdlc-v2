@@ -205,24 +205,20 @@ After `reflection.json` is written and `milestone.json` is complete:
    ```
    Refuses if `slices/archive/slice-NNN` already exists (no-overwrite).
 
-2. **Update `<vault>/slices/_index.json`** (active → recent-10, CAS-rewrite):
+2. **Regenerate BOTH index files from the slice folders** (deterministic full recompute -> CAS-rewrite; ADR-020/SC-008). Step 1 already moved this slice into `slices/archive/`, so `slice_index_regen.py` picks it up automatically -- it drops out of `active[]` and joins the catalog. Do NOT hand-edit `active[]`/`recent[]`/`slices[]`; the generator is the single source of both indexes' SHAPE + CONTENT. Pass ONE `--updated` stamp to both emits (the only non-deterministic field -- keeps re-runs byte-identical):
    ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file slices/_index.json --out-file base.bin
-   # regen: remove slice from active[], add thin one-liner to recent[] (keep exactly 10), then:
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file slices/_index.json --base-file base.bin --content-file regen.json
-   # exit 3 → re-read + re-regen + retry (max 5)
+   TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+   T="$(mktemp -d "$TMPD/aisdlc-reflect-idx.XXXXXX")"; TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read --file slices/_index.json         --out-file "$T/idx_base.bin"
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read --file slices/archive/_index.json --out-file "$T/arch_base.bin"
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_index_regen.py" --emit live    --updated "$TS" --out-file "$T/idx_new.json"
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_index_regen.py" --emit archive --updated "$TS" --out-file "$T/arch_new.json"
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file slices/_index.json         --base-file "$T/idx_base.bin"  --content-file "$T/idx_new.json"
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file slices/archive/_index.json --base-file "$T/arch_base.bin" --content-file "$T/arch_new.json"
+   rm -rf "$T"
+   # exit 3 on either rewrite -> re-read THAT base + re-emit (the regenerator re-scans the folders, picking up any concurrent slice) + retry (max 5)
    ```
-   Schema by example: `examples/slice-index.json`. Thin one-liner ≤ 500 chars from mission-brief intent.
-
-3. **Prepend to `<vault>/slices/archive/_index.json`** (newest-first, CAS-rewrite):
-   ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file slices/archive/_index.json --out-file base.bin
-   # insert the thin one-liner row at the TOP of slices[] (newest-first), then:
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file slices/archive/_index.json --base-file base.bin --content-file edited.json
-   ```
-   NOT `vault_edit append` — appending at EOF would put the row at the oldest position.
-   Schema by example: `examples/slice-archive-index.json` — the FULL catalog; its array is `slices[]`, NOT the
-   live index's `recent[]` (3.18.1).
+   The live index keeps `recent[]` at the 10 newest archived slices; the archive index carries the full `slices[]` catalog. The generator emits the canonical per-entry shape ({slice,title,stage} active; {slice,title,shipped,summary} recent/catalog) so the conformance test (`tests/test_slice_index_regen.py`) stays green. Schema by example: `examples/slice-index.json` + `examples/slice-archive-index.json`.
 
 ---
 

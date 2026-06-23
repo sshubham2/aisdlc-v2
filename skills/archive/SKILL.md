@@ -63,7 +63,7 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" move \
 
 ## Step 3 — Regenerate `slices/_index.json` + `slices/archive/_index.json`
 
-Index regeneration runs via a **Haiku subagent** (COST-1 — pure file reading + table assembly, no synthesis). The **main thread owns the CAS write**; the subagent is a pure content generator (ADR-088).
+Index regeneration runs via the deterministic **`slice_index_regen.py`** (ADR-020/SC-008 — a pure file-scan generator; no subagent, no model round-trip). The **main thread owns the CAS write**; the generator only produces CONTENT. (This supersedes the former Haiku content-gen subagent for the index artifact — a deterministic scan replaces the COST-1 round-trip, and the index can no longer drift from its schema-by-example.)
 
 ### 3a — Capture CAS bases (main thread, before dispatch)
 
@@ -91,20 +91,22 @@ Use `--out-file`, NOT shell `>` (PowerShell `>` emits UTF-16LE+BOM → CAS livel
 
 If either file does not exist yet, write an empty placeholder first via `vault_edit` so the CAS base is established.
 
-### 3b — Dispatch Haiku subagent
+### 3b — Generate both index bodies (deterministic; no subagent)
 
-Invoke the Agent tool (`subagent_type: "general-purpose"`, `model: haiku`). Hand it:
+Reuse the SAME per-run dir `$D` from 3a. Run `slice_index_regen.py` to emit both index bodies straight into the content-files 3c rewrites. Pass ONE `--updated` stamp to both emits (the only non-deterministic field — keeps re-runs byte-identical):
 
-- The list of active slice folders in `slices/` and all archived folders in `slices/archive/`.
-- Instruction to read each folder's `mission-brief.json` (for `intent` field, first sentence — the one-liner).
-- `<vault>/concept.json` (for project name) and `<vault>/triage.json` (for mode).
-- The output shapes for both `_index.json` files (see schemas below).
+```bash
+TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# --vault matches 3a/3c so the generator SCANS the SAME root the CAS write targets (code-review M1: avoid read-one/write-another under a set $AI_SDLC_VAULT_ROOT).
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_index_regen.py" --emit live    --updated "$TS" --out-file "$D/idx_new.json"     --vault "$AI_SDLC_VAULT_ROOT"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_index_regen.py" --emit archive --updated "$TS" --out-file "$D/archive_new.json" --vault "$AI_SDLC_VAULT_ROOT"
+```
 
-The agent returns two JSON content strings: one for `slices/_index.json`, one for `slices/archive/_index.json`.
+It scans `slices/` (active) + `slices/archive/` (full catalog) and derives every field from the folders: the one-liner `summary` from each `mission-brief.json` `intent` (first sentence, ≤500 chars), the project from `concept.json` + mode from `triage.json`, the stage from the file-presence rule below — emitting the canonical per-entry shapes, so there is no hand-assembly and no per-entry drift (the conformance test `tests/test_slice_index_regen.py` enforces this).
 
 ### 3c — Write via CAS (main thread)
 
-Reuse the SAME per-run dir `$D` from Step 3a (a fresh shell does NOT keep `$D` — set `D=<the path Step 3a printed>`, which holds the captured bases). Write each content string to `$D/idx_new.json` and `$D/archive_new.json`, then:
+Reuse the SAME per-run dir `$D` from Step 3a (a fresh shell does NOT keep `$D` — set `D=<the path Step 3a printed>`, which holds the captured bases AND the `idx_new.json` / `archive_new.json` that 3b emitted). Then CAS-rewrite both:
 
 ```bash
 D="<the per-run dir path printed in Step 3a>"   # fresh shell -- reuse the SAME $D from 3a (it holds the captured bases)
@@ -123,7 +125,7 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite \
 rm -rf "$D"
 ```
 
-**On exit 3 (CAS conflict)**: a parallel slice completion wrote `_index.json` between base-capture and write. Re-capture the base, re-dispatch the Haiku subagent (so the regen picks up the concurrent row), re-attempt. Bound to ~5 attempts. On persistent conflict: STOP loudly. **Recovery**: Step 2 moves already completed — re-run `/archive --index-only` to redo only the index writes.
+**On exit 3 (CAS conflict)**: a parallel slice completion wrote `_index.json` between base-capture and write. Re-capture the base and re-run `slice_index_regen.py` (it re-scans the folders, picking up the concurrent row), re-attempt. Bound to ~5 attempts. On persistent conflict: STOP loudly. **Recovery**: Step 2 moves already completed — re-run `/archive --index-only` to redo only the index writes.
 
 ## `slices/_index.json` schema: `examples/slice-index.json`
 
