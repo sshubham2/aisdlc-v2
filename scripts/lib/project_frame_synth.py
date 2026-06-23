@@ -127,7 +127,9 @@ _NON_RULE_FAMILIES = {"ADR", "R", "SC"}
 # the live file holds only these. The pending-candidate scan filters to this set,
 # matching how v1's slice-queue.md only ever listed pending candidates.
 _LIVE_CANDIDATE_STATUSES = frozenset(
-    {"candidate", "spiking", "active", "blocked", "deferred"}
+    # slice-027: `reserved` is a live, claimed-in-intent soft HOLD (pre-confirm, no slice number
+    # minted yet, ADR-016) -- include it so a held candidate still appears in the project-frame backlog.
+    {"candidate", "reserved", "spiking", "active", "blocked", "deferred"}
 )
 
 

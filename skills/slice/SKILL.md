@@ -48,6 +48,25 @@ says "you pick" / autonomous → take #1.
 **Candidate selection is a user-input gate**: HALT for the pick unless explicit intent was supplied or the user said
 "you pick".
 
+### Step 1.5 — reserve the pick (close the selection->claim window; ADR-016)
+The instant the candidate is settled (the Step-1 pick gate resolved), RESERVE it — a soft HOLD a parallel `/slice`
+immediately sees as in-flight, so it can never re-pick the candidate you are about to spend Steps 2-4 defining
+(the gap SC-053 closed). The reservation mints NO slice number and bumps NO counter (the number is issued only at
+the Step-5.1 claim), so a later cancel costs nothing:
+```bash
+$PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --vault "$AI_SDLC_VAULT_ROOT" \
+    --candidate <SC-NNN> --reserve --repo-root .
+```
+It sets `status: reserved` / `progress: reserved` / `claimed_by` / `started_at`, is idempotent (a same-owner
+re-reserve is a no-op) and identity-checked (a candidate already reserved by someone else refuses — coordinate or
+pick another). Fail-visible on unset git identity (exit 1).
+
+**`--release` the reservation on EVERY pre-claim abandon** — the hold is live from here until the Step-5.1 claim
+upgrades it, so any exit before the claim must revert it (else it lingers `reserved`, invisible to other pickers):
+`$PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --vault "$AI_SDLC_VAULT_ROOT" --candidate <SC-NNN> --release`.
+The pre-claim abandon exits are: a Step-2 "Not a bug" cancel · a Step-4 "too big → split" · the user re-selecting a
+different candidate · abandoning the define window. (Once the Step-5.1 claim commits, the Step-5 failure ladder owns rollback.)
+
 ## Step 2 — bug-fix prelude (BFRD-1)
 If the chosen candidate is a bug fix, a **failing repro test must exist first**. Treat it as a bug fix when ANY of:
 - name matches `fix-*` / `*-fix` / `hotfix-*` / `harden-*-bug`; OR
@@ -65,7 +84,7 @@ Check `<vault>/shippability.json` for a row whose `machine_cmd` targets `tests/b
 - **No row → IN-LOOP repro**: distill a one-line repro description and confirm it via an `AskUserQuestion`
   (Confirm / Modify / Not-a-bug-cancel) **now, before any worktree exists** (so a "Not a bug" cancel costs nothing).
   On Confirm/Modify → record the description for **Step 5.3** (which invokes `/repro` *after* the worktree exists, so
-  the test is born inside `$wt`); on "Not a bug" → fail-closed (re-scope).
+  the test is born inside `$wt`); on "Not a bug" → **`--release` the Step-1.5 reservation** (revert to `candidate`) and fail-closed (re-scope).
 
 One AC must assert "the failing repro test passes at slice end". (**WT-ROOT-1 / ADR-012:** the worktree is created in
 Step 5 BEFORE `/repro` runs — the in-loop test is written straight into `$wt` via `/repro --target-root`; a standalone
@@ -124,7 +143,7 @@ command), status: "pending"|"exercised"}` (WS-1 docstring); `exploratory_charter
 status: "pending"|"in-progress"|"completed"|"deferred", findings}` (ETC-1 docstring).
 
 ## Step 4 — scope check
-≤5 ACs, ≤1 day, system stays shippable. If it exceeds → split.
+≤5 ACs, ≤1 day, system stays shippable. If it exceeds → **`--release` the Step-1.5 reservation** and split (the original SC-NNN returns to the pickable backlog; the sub-slices are picked fresh).
 
 ## Step 5 — claim + scaffold (BRANCH-3 worktree-at-pick; ADR-012 worktree-first repro ordering)
 Once the candidate is settled AND scope passes, in THIS order. The sequence is load-bearing: a bug-fix repro is born
@@ -139,7 +158,10 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
    In ONE locked read-modify-write it bumps `counters.slice`, allocates `slice-NNN`, sets the candidate
    `status: spiking` / `progress: spike` / `claimed_by {git_user, git_email}` / `started_at` / `slice`, appends
    the `pick_log` entry, and RETURNS `{"slice": "slice-NNN", "folder": "slice-NNN-<name>"}`. Read `folder` for all
-   paths below. Fail-visible on unset git identity (exit 1).
+   paths below. Fail-visible on unset git identity (exit 1). This is the **CONFIRM** phase of the two-phase claim
+   (ADR-016): if the candidate was reserved at Step 1.5 (the normal path) the same locked write UPGRADES the
+   reservation `reserved → spiking` — **same-owner only**; a reservation held by a different git identity refuses
+   (exit 1, no slice number minted). A fresh `candidate`/`deferred` pick (no prior reservation) still claims directly.
 2. **Compute paths** from the RETURNED `folder`: `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder <folder> --repo-root .` (line 1 = `$wt` path, line 2 = `slice/NNN-<name>`).
 3. **Resolve the integration base + create the worktree** (slice-022: slices branch off the integration branch `uat`, degrading visibly to the default trunk when uat is absent — never a hardcoded master):
    ```bash
@@ -189,7 +211,7 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
      git-ignored path / stage failure (never a silent partial).
 
 **Failure ladder (must-not-defer #1 — no silent partial scaffold; claim-first, so the claim is the FIRST committed state and the compensation is wrapper-enforced, not skippable prose):**
-- claim (1) fails → **STOP**; nothing else ran (no worktree, no scaffold).
+- claim (1) fails → **STOP**; nothing else ran (no worktree, no scaffold). If a Step-1.5 reservation is live, `--release` it — the claim/upgrade did not commit, so the hold must not linger `reserved`.
 - worktree-add (3) fails → **wrapper-enforced compensation**: `claim_candidate.py --candidate <SC-NNN> --release` (revert the claim; counter not decremented — monotonic-burn), then STOP. No orphaned reservation.
 - `/repro` (4) aborts, or its "test unexpectedly passes" recovery fires → `--release` the claim + `git -C <main> worktree remove <wt_path>` + `git branch -D slice/NNN-<name>`; leave no scaffold.
 - scaffold (5) fails → `--release` the claim + roll the worktree back the same way.

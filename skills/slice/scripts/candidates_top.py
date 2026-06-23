@@ -48,7 +48,7 @@ from scripts.lib._vault_paths import VAULT_ROOT
 
 _PICKABLE = {"candidate", "deferred"}
 _BLOCKED = {"blocked"}
-_IN_FLIGHT = {"spiking", "active"}
+_IN_FLIGHT = {"spiking", "active", "reserved"}  # slice-027: a `reserved` soft HOLD is claimed-in-intent (in-flight), never re-pickable
 # effort -> sort rank (smaller cut first on a score tie). Unknown effort sorts last.
 _EFFORT_RANK = {"XS": 0, "S": 1, "M": 2, "L": 3, "XL": 4}
 
@@ -199,7 +199,9 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
         lines.append("In-flight (claimed; parallel slices are normal — do not re-pick):")
         for cand in in_flight:
             who = (cand.get("claimed_by") or {}).get("git_user") or "?"
-            slc = cand.get("slice") or "?"
+            # slice-027 / M-add-1: a `reserved` hold has minted no slice number yet -- show 'held'
+            # rather than a bare '?' so the In-flight row reads coherently (slice=null is expected).
+            slc = cand.get("slice") or ("held" if cand.get("status") == "reserved" else "?")
             prog = cand.get("progress") or "?"
             lines.append(
                 f"  {cand.get('id', '?')}  {cand.get('title', '')}  [{slc}, {prog}, by {who}]"
