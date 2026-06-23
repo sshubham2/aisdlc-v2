@@ -28,12 +28,28 @@ are agent-drafted (Step 2).
 - **CRG public surface** (the ground truth for interface facts). If `.code-review-graph/` is missing/stale,
   `"${CRG:-code-review-graph}" build` (or `update`). Then harvest the public surface:
 
-Harvest it with the CRG **MCP tool** (live-MCP context): call
-`mcp__code-review-graph__semantic_search_nodes_tool` with a query like
-`"entrypoint OR export OR cli OR endpoint OR public api"`. (CRG 2.3.x has no `search` CLI verb — it is MCP-only.)
+Harvest the public surface via the CRG `semantic_search_nodes` query (e.g.
+`"entrypoint OR export OR cli OR endpoint OR public api"`) — available as the
+`mcp__code-review-graph__semantic_search_nodes_tool` MCP tool in a live-MCP context, OR as the deterministic
+`code_review_graph.tools.query.semantic_search_nodes` subprocess (no MCP needed; there is no `search` CLI verb, but
+the Python API is fully usable). Capture a compact summary (entry points / exported functions / CLI commands /
+endpoints) — what the agent documents and what goes into the manifest's `public_surface`.
 
-  Capture a compact summary (entry points / exported functions / CLI commands / endpoints) — this is what the agent
-  documents and what goes into the manifest's `public_surface`.
+**Harvest-degrade gate (slice-029 / ADR-019) — prose docs only.** When this run requests an agent-drafted prose doc
+(`readme` / `api-reference` / `user-guide`; **SKIP for a `--docs changelog`-only run**), decide DETERMINISTICALLY
+whether the code map can ground interface facts at all — independent of whether the semantic harvest returned
+anything (in a no-embedding-provider env the semantic query returns ~nothing on a perfectly healthy graph):
+```bash
+$PY "${CLAUDE_SKILL_DIR}/scripts/harvest_degrade.py" --repo-root "$(git rev-parse --show-toplevel)"
+```
+It reads `list_graph_stats` counts (no MCP, no embeddings) and emits one JSON line
+`{degraded, cause, total_nodes, public_nodes, embeddings_count, message}`. `cause` ∈ `graph-unavailable` (no code
+map — build it) | `embeddings-absent` (public symbols exist but no embeddings, so the semantic harvest can't
+retrieve them — `code-review-graph embed`) | `genuinely-empty` (no public symbols — NOT a degrade) | `null`
+(harvestable). **Fail-closed:** a missing/non-int probe key (a stale cached probe) → `graph-unavailable`, never a
+silent pass. On `degraded: true`, SHOW the user the `message` (cause + remedy) and carry the degrade flag into the
+Step 3 overwrite gate — do NOT silently let the agent draft interface-stripped prose. (Step 2.5's `graph_stale` is
+an additional advisory.)
 - **Vault reads:** `concept.json` (what/why/actors), `triage.json` (mode), `slices/_index.json` (shipped features).
 - **Existing docs:** read the current `README.md` + `docs/*` if present — to refresh, not blindly rewrite.
 
@@ -163,6 +179,14 @@ Write each requested agent-doc to the repo: `README.md`, `docs/api-reference.md`
 prior `/product-doc` run (check `doc-manifest.json` — if the path isn't listed there, treat it as hand-written),
 show the user a diff and `AskUserQuestion`: **overwrite / skip / let me merge**. A file absent from the manifest +
 present on disk = hand-authored; default to NOT overwriting without confirmation. New files: write directly.
+
+**Degraded-harvest branch (slice-029 / ADR-019):** if Step 0's harvest-degrade gate returned `degraded: true`, the
+prose draft is interface-light (the code map could not ground interface facts). For a **populated** target —
+**REGARDLESS of manifest membership** (so a prior-`/product-doc`-generated doc, normally written directly, is now
+gated) — `AskUserQuestion`: **overwrite-with-degraded-draft / skip / keep-existing / proceed-anyway**, showing the
+degrade `cause` + remedy. The degraded branch takes PRECEDENCE over the manifest-membership check; never silently
+overwrite a populated doc with an interface-stripped one. A genuinely-new/absent target may be written with a
+prominent degraded banner (generic cause text only — no machine-local paths). This composes with the null/omit rule below.
 
 Never write a doc the agent returned `null` for or omitted.
 
