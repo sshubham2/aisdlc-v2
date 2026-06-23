@@ -200,7 +200,7 @@ SKIPs entirely on an empty test-file list; BC-1 scopes to what it is told). Fres
 repo_root="$(git rev-parse --show-toplevel)"
 slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
-base="$(git -C "$wt" merge-base HEAD origin/HEAD 2>/dev/null || echo HEAD)"
+base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"   # SC-043: fork point vs the LOCAL integration branch (never origin/HEAD); HEAD fallback, never aborts
 changed="$( { git -C "$wt" diff --name-only "$base"; git -C "$wt" ls-files --others --exclude-standard; } | sort -u )"
 # --changed-test-files = the subset of $changed matching the project's test layout (tests/**, *_test.*, *.test.*)
 ```

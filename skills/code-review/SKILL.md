@@ -46,12 +46,8 @@ repo_root="$(git rev-parse --show-toplevel)"
 slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 paths='src/** skills/** agents/** scripts/** tests/**'
-base="$(git -C "$wt" merge-base HEAD origin/HEAD 2>/dev/null)"   # fork point (real repos w/ origin/HEAD)
-if [ -n "$base" ]; then
-  git -C "$wt" diff "$base" -- $paths 2>/dev/null | head -1200    # committed + uncommitted since fork
-else
-  git -C "$wt" diff HEAD -- $paths 2>/dev/null | head -1200       # no remote: work is uncommitted (WT-ROOT-1 contract)
-fi
+base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"   # SC-043: fork point vs the LOCAL integration branch (never origin/HEAD); always non-empty (HEAD fallback when no remote -- WT-ROOT-1)
+git -C "$wt" diff "$base" -- $paths 2>/dev/null | head -1200    # committed + uncommitted since fork (base is a ref or the HEAD fallback)
 git -C "$wt" ls-files --others --exclude-standard -- $paths 2>/dev/null | sed 's/^/NEW-UNTRACKED: /'
 ```
 

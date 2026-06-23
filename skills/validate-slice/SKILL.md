@@ -126,7 +126,7 @@ wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-fol
 cd "$wt"
 ```
 Run all three audits before the shippability catalog. Pass `--changed-files` as the list of files this slice
-changed — from `build-log.json`, or (from `$wt`) `git -C "$wt" diff --name-only "$(git -C "$wt" merge-base HEAD origin/HEAD 2>/dev/null || echo HEAD)"` ∪ `git -C "$wt" ls-files --others --exclude-standard`.
+changed — from `build-log.json`, or (from `$wt`) `git -C "$wt" diff --name-only "$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"` ∪ `git -C "$wt" ls-files --others --exclude-standard` (SC-043: base = fork point vs the LOCAL integration branch, never origin/HEAD).
 
 ### Layer A + B audit (VAL-1)
 
