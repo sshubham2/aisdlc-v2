@@ -210,6 +210,14 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_path_audit.py" <vault>/shippabilit
 ```
 Non-zero → STOP: report the phantom test-file citation (the repro test must live in `$wt/tests/bugs/`) and fix it.
 
+> **Parallel-slice residual (SC-021 / SC-058).** PTFCD-1 audits EVERY catalog row's token with no per-slice
+> scoping, so under parallel slices it STILL STOPs here on a *sibling* slice's not-yet-merged repro test —
+> BEFORE the runner runs. SC-021 made the **runner** (SRSC-1, below) treat an absent-on-checkout row as a
+> distinct non-regression `ABSENT` verdict, but it deliberately did NOT touch this PTFCD-1 pre-gate (out of
+> scope). So the live parallel-slice false-STOP at THIS gate is **not yet cleared** — that is **SC-058**'s job
+> (symmetric absent-test scoping in the path audit). Until SC-058 ships, a sibling's absent repro still STOPs
+> Step 6 here; the slice-025 workaround (filter the catalog to worktree-present rows) applies.
+
 _(SVW-1 — the skill-vault-write-safety scan — is no longer run here. With no `--root` it audited the **plugin's
 own** `SKILL.md` prose (a constant per plugin version, zero per-slice user value — same 1.5 reasoning that evicted
 the other self-audits), and 3.11 demoted it to a CI-only **advisory** check via `.build/plugin_self_audits.py`. The
@@ -228,9 +236,16 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py" <vault>/shippability.js
 ```
 
 The runner reads each row's Machine-cmd, splits on ` ; `, strips backticks per segment (reuses SCMD-1
-`_segments()`), executes each interpreter-anchored segment from the worktree root (`$wt`), reports PASS/FAIL per row.
+`_segments()`), executes each interpreter-anchored segment from the worktree root (`$wt`), and reports a
+three-valued verdict per row — **PASS / FAIL / ABSENT** (SC-021 / ADR-021). A row whose cited `tests/...py`
+file(s) are absent on this checkout (a sibling slice's not-yet-merged repro) is recorded **ABSENT** — decided
+by file existence, never the pytest exit code (exit 4 conflates absent-file / phantom-citation / usage-error) —
+and is NOT counted as a regression; a row with a present test file, or no test token, still runs (so a
+present-but-failing test still FAILs).
 
-If any row FAILS: the current slice broke something a past slice established — this blocks /reflect. Record the
+**ABSENT rows do NOT block** — they are reported distinctly (a test not on this checkout is information, not a
+regression) and never enter `failed_rows`; only a **FAIL** blocks. If any row FAILS: the current slice broke
+something a past slice established — this blocks /reflect. Record the
 failed rows in `validation.json.shippability_regression.failed_rows` and leave `deferral: null`. **This skill runs
 as a forked context (`context: fork`) and CANNOT `AskUserQuestion`** — so the fork does NOT self-approve a deferral
 and does NOT prompt. It returns `blocked: needs-deferral-decision` to the main thread, which resolves it post-return
