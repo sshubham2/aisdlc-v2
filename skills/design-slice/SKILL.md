@@ -1,6 +1,6 @@
 ---
 name: design-slice
-description: "Produces a just-enough per-slice design (design.json) via a tier-gated DESIGN TOURNAMENT: on medium/high/novel slices it spawns 2-3 BLIND designer subagents (practice, cross-domain, expert), then reality-grounds a single synthesis (CRG-fit / spike-ability / reversibility / simplest-that-works) with a composition-coherence pass; low/mechanical slices use a single inline flight (zero added cost). Queries code-review-graph for blast-radius, runs the project-frame synthesizer, tags every new ADR with reversibility. Empirically-decidable tournament disagreements + must-verify cross-domain invariants gate a post-synthesis /risk-spike --mode design before /critique."
+description: "Produces a just-enough per-slice design (design.json) via a DESIGN TOURNAMENT that runs on EVERY slice regardless of risk_tier: it spawns all 3 BLIND designer subagents (practice, cross-domain, expert), then reality-grounds a single synthesis (CRG-fit / spike-ability / reversibility / simplest-that-works) with a composition-coherence pass. Queries code-review-graph for blast-radius, runs the project-frame synthesizer, tags every new ADR with reversibility. Empirically-decidable tournament disagreements + must-verify cross-domain invariants gate a post-synthesis /risk-spike --mode design before /critique."
 when_to_use: "Trigger after /risk-spike (feasibility) passes, before /critique. Phrases: '/design-slice', 'design this slice', 'spec the current slice', 'design the slice'. Reads <vault>/slices/slice-NNN/mission-brief.json. Per-slice only — for upfront Heavy-mode vault use /heavy-architect."
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, AskUserQuestion, Skill
 ---
@@ -10,7 +10,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, AskUserQuestion, Skil
 Design ONLY what THIS slice needs to ship. Not full architecture. Output feeds `/critique`.
 
 **Generate diversely · select against reality · review independently.** The brilliant design is a *generation*
-event, sampled once today and lost. So on slices that warrant it, design-slice runs a **tournament**: 2–3 *blind*
+event, sampled once today and lost. So design-slice runs a **tournament** on EVERY slice: all 3 *blind*
 designers generate independently (the ceiling), then a sighted synthesis selects against reality (the floor).
 
 > Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / git config `aisdlc/vault-root`).
@@ -62,30 +62,20 @@ At this point `design.json` does not exist yet; the Impact section will be missi
 
 Capture stdout — it is shared designer context too.
 
-## Step 1 — the design tournament (tier-gated)
+## Step 1 — the design tournament (always 3 blind designers)
 
-Read `risk_tier` from the injected mission-brief. Pick the tournament size — **the tournament is insurance; do
-not buy platinum on a $5 slice:**
+Read `risk_tier` from the injected mission-brief — you still record it in `tournament.tier`, and it still drives
+the downstream `/critique` + `/critique-review` gates and the Step-8 design-spike triggers. **But the tournament
+runs on EVERY slice regardless of risk_tier — generation breadth is always maximal: spawn all 3 blind designers
+(`designer-practice` + `designer-crossdomain` + `designer-expert`) feeding the Step-2 reality-grounded synthesis.**
+There is no single-flight short-circuit and no tier-scaled designer count — tier no longer sizes the tournament
+(ADR-018). The cost guard is the Step-2 synthesis + `/reduce` (a forced cross-domain analogy is discarded at
+selection via `transfer_found: false`, never adopted), and the retained `approach_divergence` measurement (Step 2
+item 5) keeps the always-3 cost honest.
 
-| Tier | Designers | Path |
-|------|-----------|------|
-| **low / mechanical** (typo, config, rename, obvious CRUD) | **1 (inline)** | **Single flight** — use the "Single flight" path just below, then skip Step 2 (synthesis) → Step 3. No agents spawned, no design spike. **Zero added cost.** |
-| **medium** | **2 blind**: `designer-practice` + `designer-crossdomain` | Tournament |
-| **high / novel / irreversible** | **3 blind**: + `designer-expert` | Tournament + mandatory coherence pass + design spike **iff** the synthesis left a `pending` decidable disagreement or a `must-verify` invariant (Step 8) |
+### The tournament — spawn the 3 BLIND designers
 
-**Escalate within medium → full 3** when the slice is genuinely *novel* (no similar prior slice in the injected
-reflections) or locks an *irreversible* ADR — those are exactly the slices where the expert lens earns its cost.
-
-### Single flight (low / mechanical only — today's behavior)
-
-Compare mission-brief.json to existing vault + code-graph output and design inline. List ONLY what this slice
-introduces (components, contracts, data-model deltas, new ADRs). **Do not list things this slice doesn't touch.**
-Skip the cross-domain hunt — forcing an analogy on a trivial cut is noise. Go straight to Step 3. No `tournament`
-block is written; no design spike runs.
-
-### Tournament (medium / high) — spawn BLIND designers
-
-Spawn the tier-appropriate designers **in a single message (parallel)** via the **Agent tool**
+Spawn all three designers **in a single message (parallel)** via the **Agent tool**
 (`subagent_type: "designer-practice"` / `"designer-crossdomain"` / `"designer-expert"`). The personas carry their
 own epistemology, procedure, and output schema — **do NOT re-state them here.** Pass every designer the **same**
 context block, and **nothing else** — they must not see each other's output (blind = the diversity you're paying for):
@@ -108,8 +98,8 @@ Mode: <Minimal | Standard | Heavy>   Risk tier: <low | medium | high>
 ```
 
 **Await the real agents — never fabricate a designer's output.** Each returns one `aisdlc/design-proposal@1`
-JSON object. If a designer errors or returns null, synthesize from those that returned; if **all** fail, fall
-back to the "Single flight" inline design above and note it.
+JSON object. If a designer errors or returns null, synthesize from those that returned; if **all** fail, design
+inline from the mission-brief + the Step-0 context and note that all designers failed.
 
 **Persist the raw proposals BEFORE synthesizing (tournament path only).** Raw-Write
 `<vault>/slices/slice-NNN-<name>/design-proposals.json`:
@@ -151,10 +141,12 @@ You now hold 2–3 independent proposals. Compose **one** design — this is the
    **pair**, classify how different their proposals actually were: `identical` (same approach modulo wording),
    `overlapping` (shared core, differing details), or `disjoint` (materially different approaches). Record one
    entry per pair into `tournament.approach_divergence`. This is the empirical check on the tournament's whole
-   premise — and the **decision rule** it feeds: if a project's `designer-practice ~ designer-expert` pair comes
-   back `identical`/`overlapping` on **most high-tier slices**, the expert lens is converging on practice and not
-   earning its spawn cost → **drop to 2 designers** (the medium-tier default) for this project. `/pulse --full`
-   surfaces the cross-slice aggregate from the design-tournament gate-log row (Step 5).
+   premise, and it is **advisory only — a monitor, not a controller (ADR-018):** keep MEASURING it into
+   `tournament.approach_divergence` and the design-tournament gate-log row every slice, but it **never auto-drops a
+   designer** — generation is always 3. If a project's `designer-practice ~ designer-expert` pair comes back
+   `identical`/`overlapping` on **most slices**, that is surfaced for **human review** of the always-3 policy via
+   `/pulse --full`; it does not change the spawn set on its own. `/pulse --full` surfaces the cross-slice aggregate
+   from the design-tournament gate-log row (Step 5).
 
 The synthesized design is "what's new for this slice." **Thin-vault discipline**: reference code locations, don't
 duplicate them; design ONLY what this slice ships. The vault grows with the system, not ahead of it.
@@ -213,22 +205,22 @@ Key fields:
   `designer-crossdomain`): `source_domain`, `pattern`, `rationale`, `invariants[]` (each
   `{precondition, status: holds|must-verify|fails, evidence}`). Omit when no transfer was selected. The
   `must-verify` invariants are what the design spike and `/critique` check.
-- `tournament` — **only on the tournament path** (omit on single-flight low-tier slices): `tier`, `designers[]`,
+- `tournament` — **present on every slice** (the 3-designer tournament always runs): `tier`, `designers[]`,
   `proposals[]` (`designer`, `approach`, `selected: core|partial|none`), `channeled_experts[]`,
   `selection_rationale`, `coherence_check`, `decidable_disagreements[]`, `taste_disagreements[]`,
   `approach_divergence[]` (3.3 — per designer-pair `{pair, divergence: identical|overlapping|disjoint}`).
 - `at` — ISO-8601 timestamp
 
-**Gate-log the divergence (tournament path only — 3.3).** After writing design.json, append one *informational*
-`design-tournament` gate-log row so "diverse at generation" is measurable across slices (skip on single-flight
-low-tier slices — no tournament ran):
+**Gate-log the divergence (every slice — 3.3).** After writing design.json, append one *informational*
+`design-tournament` gate-log row so "diverse at generation" is measurable across slices (the tournament runs on
+every slice, so this row is always written):
 
 ```bash
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate design-tournament --slice slice-NNN-<name> \
     --verdict <most-divergent pair: identical|overlapping|disjoint> --findings-count 0 \
     --approach-divergence "practice~crossdomain:<d>; practice~expert:<d>; crossdomain~expert:<d>" \
-    --mode <minimal|standard|heavy> --tier <medium|high> \
+    --mode <minimal|standard|heavy> --tier <low|medium|high> \
   | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
         --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
 ```
@@ -296,13 +288,14 @@ invariants, logs a **high** reality-contact gate row, and then:
   `<slice>/design-proposals.json` (written in Step 1 — do NOT rely on conversation memory; after a
   compaction/restart that file is the only complete record). Do NOT re-spawn the designers.
 
-**Single-flight low-tier slices never reach Step 8.**
+**Step 8 is condition-gated, never tier-gated:** a slice with no pending decidable disagreement and no
+`must-verify` invariant has nothing for reality to adjudicate — it skips Step 8 and goes straight to Step 9.
 
 ## Step 9 — confirm and auto-advance
 
 Report:
 ```
-Design complete — slice NNN. Tournament: <none (single-flight) | 2 designers | 3 designers>. Wrote: design.json,
+Design complete — slice NNN. Tournament: 3 designers. Wrote: design.json,
 ADR-NNN (count), milestone.json (stage: design). Next: <design spike | /critique | /build-slice>.
 ```
 
@@ -329,7 +322,7 @@ Then advance — **do not wait for the user** unless Step 3 clarifying questions
 - Designers anchoring on each other (sequential or shared-context-leaking spawns) — that's not a tournament.
 - Selecting the "most elegant" proposal — taste regresses to popular/over-engineered.
 - Frankenstein composition: gluing pieces with contradictory consistency/error/concurrency models.
-- Running the full 3-designer tournament + design spike on a typo (tier-gate exists for this).
+- Running the post-synthesis design spike (Step 8) when nothing is pending — it gates on decidable disagreements / must-verify invariants, never on tier.
 - Speculative interfaces / pre-defined "phase 2" contracts / ADRs for trivial choices.
 
 ## Pipeline position

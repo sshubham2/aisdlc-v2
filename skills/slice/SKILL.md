@@ -97,7 +97,7 @@ sweeping `tests/bugs/*`. This is the fix for the cross-slice repro-theft the old
   **Must-not-defer** (auth/validation/error paths/logging — EVERY slice). **Out of scope**. Mid-slice smoke gate.
 
 ### Step 3a — risk tier (the per-slice cost lever)
-Tier drives in-loop cost — the design-tournament size AND whether `/critique` runs — so pick it honestly:
+Tier drives in-loop cost — whether `/critique` runs (the design tournament runs all 3 designers on every slice regardless of tier; ADR-018) — so pick it honestly:
 `low` = pure CSS/copy/docs/test-only OR a genuinely small bug-fix / small feature; `medium` = a normal change;
 `high` = novel domain / first integration / irreversible / needs extra scrutiny.
 

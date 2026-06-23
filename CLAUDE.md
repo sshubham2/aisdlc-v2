@@ -304,7 +304,7 @@ Start here to answer "what touches X?" or "what does skill Y produce?". `stats` 
 
 `triage`/`adopt` → `discover` → (`user-test`) → **per-slice loop:** `slice` (pick candidate) →
 `risk-spike` (**feasibility spike** — step-0; prove the candidate's blocking assumptions or block) →
-`design-slice` (**tier-gated design tournament** — 2-3 BLIND designers [practice/cross-domain/expert] → reality-grounded synthesis; low/mechanical = single inline flight) →
+`design-slice` (**design tournament — all 3 BLIND designers [practice/cross-domain/expert] on EVERY slice** → reality-grounded synthesis) →
 `risk-spike --mode design` (**design spike** — post-synthesis; reality adjudicates the tournament's empirically-decidable disagreements + must-verify invariants; conditional) →
 `critique` (+`critique-review`) → `slice-story` (plain-language pre-build report; delivered to you via SendUserFile) → `build-slice` → `code-review` → `validate-slice` →
 `reflect` → next `slice`. `commit-slice` finalizes. Maintenance: `drift-check`, `reduce`, `archive`, `sync`,

@@ -106,7 +106,7 @@ Pick mode:
 | **Standard** | everything else (default) |
 
 **What mode actually controls (be honest with the user).** Mode is NOT the per-slice review cost — that is set
-by each slice's **risk tier** (`/slice` Step 3a; the design tournament + `/critique` key on tier, not mode). Mode
+by each slice's **risk tier** (`/slice` Step 3a; `/critique` keys on tier, not mode — the design tournament now runs all 3 designers on every slice regardless of tier, ADR-018). Mode
 controls three things: (1) the **default tier** for new slices — Minimal ⇒ `low` (small work is cheap by default;
 bump up for risky cuts), Standard/Heavy ⇒ `medium`; (2) **vault structure** — Heavy creates components/contracts/
 threat-model/etc., Standard/Minimal stay thin; (3) **Heavy's compliance floor** — Heavy forces `critic_required`
