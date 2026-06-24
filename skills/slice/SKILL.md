@@ -185,11 +185,12 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
    the ones still untracked on the main tree:
    ```bash
    repo_root="$(git rev-parse --show-toplevel)"
+   VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is no longer exported -- resolve the vault per-invocation, never inline-read the bare env var
    cand=$($PY -c "
    import sys, json, subprocess
    sys.path.insert(0, 'skills/validate-slice/scripts')
    from shippability_path_audit import _extract_test_tokens
-   rows = json.load(open('$AI_SDLC_VAULT_ROOT/shippability.json')).get('rows', [])
+   rows = json.load(open('$VAULT/shippability.json')).get('rows', [])
    paths = {t for r in rows for t,_ in _extract_test_tokens(r.get('machine_cmd','')) if t.startswith('tests/bugs/')}
    def untracked(p):  # scoped to the ONE grant path p -- never globs the whole tests/bugs/ folder
        r = subprocess.run(['git','-C','$repo_root','ls-files','--others','--exclude-standard','--',p],capture_output=True,text=True)
