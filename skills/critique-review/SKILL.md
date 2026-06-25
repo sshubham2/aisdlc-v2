@@ -15,14 +15,20 @@ Step 4.5 TRI-1. The subagent is adversarial toward the first Critic's review, no
 > Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / the git config
 > `aisdlc/vault-root`). The spawned subagent does NOT inherit the project CLAUDE.md — resolve it in context.
 
-## Active slice + inputs — injected
+## Step 0 — resolve the active slice (run this FIRST, BEFORE the Step-2 spawn)
 
-```!
-ARG="${ARGUMENTS[0]:-}"   # slice-021: an explicit /critique-review slice-NNN resolves THAT slice; shape-guarded so a non-slice arg (or none) falls to the slice-014 --repo-root HALT path
+Run this `bash` block first — it resolves the active slice in a BODY step that BINDS an explicit
+`/critique-review slice-NNN` `$ARG`. A `!`-injection runs at skill-LOAD *before* `${ARGUMENTS}` binds, so
+it CANNOT resolve a named slice (SC-064 / ADR-022). Read the printed JSON; use the resolved slice
+**folder** for the Step-1 reads AND the Step-2 agent inputs — the spawn below MUST consume THIS
+body-resolved slice, never a load-time injection (SC-064 M3 — the composition seam).
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"   # an explicit /critique-review slice-NNN resolves THAT slice; shape-guarded so a non-slice arg (or none) falls to the slice-014 --repo-root HALT path
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --json
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --json
 else
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --json
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --json
 fi
 ```
 
@@ -35,14 +41,15 @@ Read the following from the active slice folder (`<vault>/slices/slice-NNN-<name
 If `critique.json` does not exist: write `critique-review.json` with
 `"result":"PREREQUISITE-MISSING","message":"critique.json not found — run /critique first"` and stop.
 
-## Project frame — injected
+## Project frame — run this `bash` block
 
-```!
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
+SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"
 else
-SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only)"
+SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"
 fi
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$SDIR" 2>/dev/null || echo "(project-frame unavailable)"
 ```

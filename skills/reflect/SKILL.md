@@ -18,12 +18,17 @@ The cure for spec rot: structured vault updates at every slice boundary so the v
 > `bc-rule.json`, `ship-row.json`, `regen.json`, …) goes in a TEMP dir — `T="$(mktemp -d)"` then `"$T/base.bin"`
 > etc., `rm -rf "$T"` when done — NEVER in the project CWD (one `git add -A` away from being committed).
 
-## Active slice + inputs — injected
+## Step 0 — resolve the active slice (run this FIRST)
 
-```!
+Run the `bash` block below **first** — it resolves the active slice in a BODY step that BINDS an explicit
+`/reflect slice-NNN` `$ARG`. A `!`-injection runs at skill-LOAD *before* `${ARGUMENTS}` binds, so it CANNOT
+resolve a named slice (SC-064 / ADR-022). Read the printed JSON; use THIS resolved slice (its folder/id)
+for every `slice-NNN` reference in the Step-1 reads and the Step-6 archive steps — never re-derive it
+elsewhere (SC-064 M5: the dropped injection must not become a second, wrong source).
+```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"
-if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --json)"; else AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --json)"; fi   # slice-031: thread /reflect slice-NNN (shape-guarded). No-arg keeps --repo-root . so the slice-014 exit-4 AMBIGUOUS HALT prints to STDERR; capturing into AS (the assignment, not the block's last command) then emitting below degrades that HALT to a VISIBLE note instead of a launch-abort (M-add-2) -- NO 2>/dev/null silencing.
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --json)"; else AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --json)"; fi   # SC-064: resolution moved from a `!`-injection to this BODY step so $ARG binds. No-arg keeps --repo-root . so the slice-014 exit-4 AMBIGUOUS HALT surfaces (NO 2>/dev/null); capturing into AS then emitting degrades it to a VISIBLE note, never a launch-abort.
 if printf '%s' "$AS" | grep -q 'by-id-archive'; then echo "(M3: $ARG is already shipped/archived -- /reflect runs on the ACTIVE slice, not an archived one; nothing to reflect.)"; else printf '%s\n' "$AS"; fi
 ```
 

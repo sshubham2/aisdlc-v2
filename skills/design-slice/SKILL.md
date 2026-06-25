@@ -16,13 +16,18 @@ designers generate independently (the ceiling), then a sighted synthesis selects
 
 > Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / git config `aisdlc/vault-root`).
 
-## Live state — injected
+## Resolve the active slice (run this FIRST)
 
-Active slice mission brief:
-```!
+Run the `bash` block below **first** and read the printed brief — it resolves the active slice in a BODY
+step that BINDS an explicit `/design-slice slice-NNN` `$ARG`. A `!`-injection runs at skill-LOAD *before*
+`${ARGUMENTS}` binds, so it CANNOT resolve a named slice (SC-064 / ADR-022). Use the resolved slice's
+**folder** for the `<active-slice>` placeholder in Step 0.5 and the Step-1 reads.
+```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --slice "$ARG"; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --repo-root .; fi   # slice-031: thread an explicit /design-slice slice-NNN (shape-guarded); active_slice_brief is exit-0-always so the no-arg AMBIGUOUS note degrades visibly, never a launch-abort (M-add-2). The reflection-lookup below + Step-0.5 project-frame stay branch-resolved advisory context (M2a; SC-063 scope).
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --slice "$ARG"; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --repo-root .; fi   # SC-064: resolution moved from a `!`-injection to this BODY step so $ARG binds. active_slice_brief is exit-0-always so the no-arg AMBIGUOUS note degrades VISIBLY, never an exit-4 HALT (ADR-022 design-slice carve-out -- M-add-2). reflection-lookup + Step-0.5 project-frame stay branch-resolved advisory context (SC-063 scope).
 ```
+
+## Live state — injected
 
 Nearest prior slice + relevant past reflections (lexical match via vault JSON — shared designer context):
 ```!
