@@ -179,12 +179,26 @@ fields: `id`, `title`, `status: "accepted"`, `reversibility` (cheap|expensive|ir
 **SVW-1 note**: ADR files are new-file creates (`write_semantics: create`) — raw-write is correct. Do NOT
 overwrite an existing ADR — always write a NEW file (supersede via `supersedes`).
 
+**ADR-append seal (ADR-023 / SC-019):** immediately after writing the new `$ADR.json`, baseline it (SCOPED to
+that id) so the append-only gate carries its content fingerprint, then VERIFY the decisions set is clean:
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$AI_SDLC_VAULT_ROOT" --seal "$ADR"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$AI_SDLC_VAULT_ROOT"
+```
+`--seal "$ADR"` is SCOPED to the just-minted id ONLY -- never blanket (a blanket re-seal on every mint would
+re-open the trust window and launder an unrelated unsealed edit). A VERIFY **exit 1** here means a PRIOR ADR was
+edited in place out-of-band -- STOP and surface it, do NOT seal over it. (A project that already had ADRs *before*
+adopting this gate runs `adr_append_only_audit.py --vault "$AI_SDLC_VAULT_ROOT" --backfill` ONCE to baseline them.)
+
 Reversibility tags:
 - **cheap** — 1-hour change: UI tokens, log format, library swap
 - **expensive** — framework, DB engine, contract shape with multiple consumers: lock only if THIS slice needs it
 - **irreversible** — identity model, tenant model, primary entity shape: lock only after a spike confirmed it
 
-ADRs are append-only — supersede with a new ADR, never edit one in place.
+ADRs are append-only — supersede with a new ADR, never edit one in place. This is **enforced** by the
+`adr-append-only` gate (`scripts/lib/adr_append_only_audit.py`, ADR-023): the scoped `--seal` above records the
+new ADR's fingerprint, and the `/build-slice` pre-finish gate (ADR-APPEND-1) fails if any sealed ADR's immutable
+content later changes.
 
 ## Step 5 — write design.json
 

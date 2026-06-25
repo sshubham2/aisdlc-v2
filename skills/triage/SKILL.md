@@ -252,7 +252,7 @@ Claude Code only notifies on options prompts; a free-text question blocks silent
 
 ## Vault discipline
 
-- ADRs (`<vault>/decisions/ADR-*.json`) are append-only — supersede with a new ADR, never edit in place
+- ADRs (`<vault>/decisions/ADR-*.json`) are append-only — supersede with a new ADR, never edit in place -- enforced by the **adr-append-only** gate (ADR-APPEND-1 at `/build-slice` pre-finish), not just convention
 - Mid-build deviations → update active slice's `design.json` + note in `build-log.json`
 - Run `/drift-check` before commit
 
@@ -280,7 +280,7 @@ only notifies on options prompts; a bare ask blocks silently.
 
 **Testing**: inside an active slice, "tests pass" means `/validate-slice` passed (incl. shippability).
 
-ADRs are append-only (supersede, don't edit). Run `/drift-check` before commit.
+ADRs are append-only (supersede, don't edit) -- enforced by the adr-append-only gate (ADR-APPEND-1). Run `/drift-check` before commit.
 ```
 
 ## Step 6 — Tell user what's next (mode-specific)
