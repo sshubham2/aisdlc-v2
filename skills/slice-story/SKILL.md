@@ -20,33 +20,37 @@ to the user via `SendUserFile`** (it reaches them wherever they are, phone inclu
 > Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` /
 > git config `aisdlc/vault-root`). Active slice = latest `<vault>/slices/slice-NNN-*/` (not under `archive/`).
 
-## Live state — injected
+## Step 0 — resolve the active slice + its artifacts (run this FIRST)
 
-Active slice + which artifacts exist (drives which sections the story includes):
-```!
+Run the `bash` block below **first** — it resolves the active slice in a BODY step that BINDS an explicit
+`/slice-story slice-NNN` `$ARG` (a `!`-injection runs at skill-LOAD before `${ARGUMENTS}` binds, so it
+CANNOT — SC-064 / ADR-022) and prints which artifacts exist (this drives which story sections to include).
+`--slice` is archive-aware (a `/commit-slice` on-ship auto-emit may target an already-ARCHIVED slice); the
+no-arg case resolves the active, non-archived slice.
+```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"   # a slice id (e.g. /commit-slice's on-ship auto-emit) may target an ARCHIVED slice
 if [ -n "$ARG" ]; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
 $PY -c "import json,glob,os,sys; d=sys.argv[1] or None; have=[os.path.basename(f) for f in sorted(glob.glob(f'{d}/*.json'))] if d else []; mb=json.load(open(f'{d}/mission-brief.json',encoding='utf-8')) if d and os.path.exists(f'{d}/mission-brief.json') else {}; ms=json.load(open(f'{d}/milestone.json',encoding='utf-8')) if d and os.path.exists(f'{d}/milestone.json') else {}; print(json.dumps({'active_slice_dir':d,'slice':mb.get('slice'),'title':mb.get('title'),'mode':mb.get('mode'),'risk_tier':mb.get('risk_tier'),'stage':ms.get('stage'),'artifacts_present':have},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
-## Step 0 — resolve the target slice
+## Step 0b — resolve the write target (archive-aware)
 
-From the injection above take `active_slice_dir` (absolute path), `slice`, `title`, `mode`, `risk_tier`, `stage`.
+From the Step-0 block above take `active_slice_dir` (absolute path), `slice`, `title`, `mode`, `risk_tier`, `stage`.
 
 **If `$ARGUMENTS` names a slice id** (e.g. `slice-017`, or `/commit-slice`'s on-ship auto-emit passing the
 just-shipped slice id) the target may already be **archived** — by `/reflect`'s DD-20 a slice is moved to
 `slices/archive/` *before* `/commit-slice` runs. So resolve it **archive-aware** and use the resolved ABSOLUTE
-path as `<target-slice>` for ALL subsequent reads (Step 1) and writes (Steps 3, 4), overriding any injected
+path as `<target-slice>` for ALL subsequent reads (Step 1) and writes (Steps 3, 4), overriding the Step-0
 active-slice path:
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"
-TARGET="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"
+if [ -n "$ARG" ]; then TARGET="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else TARGET=""; fi   # SC-064/M2: guard so a no-arg invocation never runs `--slice ""` (which mis-resolves); no-arg authority is the Step-0 active_slice_dir. --slice stays archive-aware for the explicit/archived case -- NEVER --repo-root, which EXCLUDES archive/.
 ```
 `--slice` searches BOTH `slices/` and `slices/archive/` (active first) and prints an ABSOLUTE path — so the write
 target is cwd-independent (correct under `/commit-slice --merge`, which `cd`s to the main tree, AND `--push`,
-which stays on the slice worktree). With NO `$ARGUMENTS`, use the injected `active_slice_dir` (the active,
+which stays on the slice worktree). With NO `$ARGUMENTS`, use the Step-0 `active_slice_dir` (the active,
 non-archived slice) as before.
 
 Prerequisite: the resolved folder must contain at least `mission-brief.json`. If it doesn't (empty `TARGET` /

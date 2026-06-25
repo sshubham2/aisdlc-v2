@@ -20,10 +20,14 @@ is delegated to a forked `critique` subagent. Skill = orchestration; agent = wor
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/pulse_worktree_resolver.py" --detect --repo-root . --json 2>/dev/null || echo "{}"
 ```
 
-Active slice mission-brief (mode + risk tier + critic_required):
-```!
+Active slice mission-brief (mode + risk tier + critic_required) — **run this `bash` block FIRST**: it
+resolves the active slice in a BODY step that BINDS an explicit `/critique slice-NNN` `$ARG` (a
+`!`-injection runs at skill-LOAD before `${ARGUMENTS}` binds, so it CANNOT — SC-064 / ADR-022). Use the
+printed `risk_tier` / `critic_required` for the Gating decision below, and `$SDIR` (the resolved slice
+folder) for the Step-1 reads.
+```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi   # slice-014: no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently skipping
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi   # SC-064: resolution moved from a `!`-injection to this BODY step so $ARG binds. slice-014: no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently mis-resolving.
 $PY -c "import json,sys; f=sys.argv[1]; d=json.load(open(f+'/mission-brief.json',encoding='utf-8')) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
