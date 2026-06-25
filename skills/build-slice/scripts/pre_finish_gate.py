@@ -169,6 +169,21 @@ def run_gate(args: argparse.Namespace) -> tuple[str, list[CheckResult]]:
         cwd,
     ))
 
+    # ADR-APPEND-1 (SC-019 / ADR-023) — VERIFY ADR append-only via the content-hash baseline.
+    # No new --vault flag: derive the decisions dir from the existing --slice arg, since
+    # slice_folder == <vault>/slices/slice-NNN, so parents[1] == <vault> (critique M3).
+    # SKIP cleanly when the project has no decisions/ dir.
+    decisions_dir = Path(slice_folder).resolve().parents[1] / "decisions"
+    if decisions_dir.is_dir():
+        results.append(_run(
+            "ADR-APPEND-1",
+            [_PY, str(_LIB / "adr_append_only_audit.py"), "--decisions", str(decisions_dir)],
+            cwd,
+        ))
+    else:
+        results.append(CheckResult(name="ADR-APPEND-1", status="SKIP",
+                                   summary="no decisions/ dir for this vault"))
+
     gate = "FAIL" if any(r.status == "FAIL" for r in results) else "PASS"
     return gate, results
 

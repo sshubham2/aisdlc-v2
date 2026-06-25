@@ -217,7 +217,7 @@ never a bare free-text prompt. AskUserQuestion notifies the user; bare prose ask
 
 ## Vault discipline
 
-ADRs are append-only (supersede with new ADR, never edit). Run /drift-check before commit.
+ADRs are append-only (supersede with new ADR, never edit) -- enforced by the adr-append-only gate (ADR-APPEND-1 at /build-slice pre-finish). Run /drift-check before commit.
 All vault appends route through vault_edit (SVW-1) — never raw whole-file overwrite.
 ```
 
@@ -233,7 +233,7 @@ All vault appends route through vault_edit (SVW-1) — never raw whole-file over
 
 **Brownfield rules**: code is truth, docs are hypothesis; respect existing conventions; deviations require ADRs; refactors need slices; tests-first for bug fixes; use CRG impact-radius before wide changes.
 
-ADRs are append-only. Vault appends via vault_edit (SVW-1). Run /drift-check before commit.
+ADRs are append-only (enforced by the adr-append-only gate). Vault appends via vault_edit (SVW-1). Run /drift-check before commit.
 ```
 
 ## Step 11 — report + hand off
