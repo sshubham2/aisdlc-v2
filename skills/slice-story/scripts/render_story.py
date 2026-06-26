@@ -16,13 +16,19 @@ Usage:
     python render_story.py --sections-file story-sections.json --out story.html
     cat story-sections.json | python render_story.py --out story.html
     python render_story.py --sections-file s.json            # writes story.html beside it
+    # slice-043: compose the design-tournament detail INTO the one page (replaces the old separate tournament.html)
+    python render_story.py --sections-file s.json --slice-dir <slice folder> --gate-log <vault>/gate-log.json --out story.html
 
-Exit codes:
-    0  rendered
-    1  bad/empty input JSON
-    2  usage error (unreadable input / unwritable output)
-    3  JARGON-LEAK: pipeline jargon found in prose fields (DD-9 tripwire) — nothing
+Exit codes (the combined exit-code contract; render_story.main() is the single authority):
+    0  rendered (story only, or story + composed tournament)
+    1  bad/empty input JSON                       -> NOTHING written
+    2  usage error (unreadable input / unwritable output) -> NOTHING written
+    3  JARGON-LEAK: pipeline jargon found in prose fields (DD-9 tripwire) -> NOTHING
        written; re-translate the named fields or re-run with --allow-jargon
+    4  rendered, but the composed design-tournament detail was UNAVAILABLE (malformed
+       design-proposals.json / tournament render error): the story half + a visible
+       "tournament view unavailable" notice IS written and delivered; the cause is on
+       stderr (M1/M3). Only reachable with --slice-dir.
 """
 from __future__ import annotations
 
@@ -38,6 +44,10 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parents[3]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
+# slice-043: also put THIS script's dir on the path so the composer can import its sibling render_tournament.
+_SKILL_SCRIPTS = Path(__file__).resolve().parent
+if str(_SKILL_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SKILL_SCRIPTS))
 
 from scripts.lib import _stdout  # noqa: E402
 
@@ -329,11 +339,36 @@ color:var(--muted);font-weight:700;margin-bottom:4px;}
 .glossary dd{margin:2px 0 0;color:var(--muted);}
 footer.foot{margin-top:40px;padding-top:18px;border-top:1px solid var(--line);
 font-size:13px;color:#9aa3af;}
-@media print{body{background:#fff}.section,.tldr,.signoff{break-inside:avoid;border-color:#ccc}}
+.tournament-scope{margin-top:36px;padding-top:6px;border-top:2px solid var(--line);}
+.region-heading{font-size:23px;line-height:1.25;margin:22px 0 2px;}
+.region-sub{color:var(--muted);font-size:15px;margin:0 0 6px;}
+@media print{body{background:#fff}.section,.tldr,.signoff{break-inside:avoid;border-color:#ccc}.tournament-scope{break-inside:auto}}
 """
 
 
-def render(data: dict) -> str:
+def _compose_tournament_region(body: str) -> str:
+    """Wrap the tournament body fragment in the .tournament-scope region (so scoped_css() applies) with an
+    introducing region heading (m4 -- a clear story/tournament boundary for visual + screen-reader/outline users)."""
+    return (
+        '<section class="tournament-scope">'
+        '<h2 class="region-heading">The design tournament behind this slice</h2>'
+        '<p class="region-sub">The technical record of how this slice\'s approach was chosen — '
+        'the competing proposals, the source badges, and which reviews ran.</p>'
+        f'{body}</section>'
+    )
+
+
+def _compose_tournament_unavailable() -> str:
+    """The honest-degradation notice (M1/M3): the readable story IS delivered; the technical half could not
+    be rendered. Uses the STORY shell's own classes (it sits OUTSIDE .tournament-scope)."""
+    return (
+        '<section class="section"><h2>The design tournament behind this slice</h2>'
+        '<p>The technical design-tournament detail could not be rendered for this slice (its source records '
+        'were unreadable). The plain-language report above is complete and unaffected.</p></section>'
+    )
+
+
+def render(data: dict, *, tournament_section: str = "", tournament_css: str = "") -> str:
     title = html.escape(str(data.get("title") or data.get("slice") or "Slice story"), quote=False)
     slice_id = html.escape(str(data.get("slice", "")).strip(), quote=False)
     headline = _inline(str(data.get("headline", "")).strip())
@@ -374,7 +409,7 @@ def render(data: dict) -> str:
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} — slice story</title>
-<style>{_CSS}</style></head>
+<style>{_CSS}{tournament_css}</style></head>
 <body><div class="wrap">
 <header class="top">
 <div class="eyebrow">Slice story</div>
@@ -386,6 +421,7 @@ def render(data: dict) -> str:
 {signoff_html}
 {sections_html}
 {glossary_html}
+{tournament_section}
 <footer class="foot">
 Generated {html.escape(generated, quote=False)} from this slice's own working notes — written to be read by
 anyone, technical or not. Small grey tags (e.g. <code>AC1</code>, <code>ADR-014</code>) are trace references
@@ -405,6 +441,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-jargon", action="store_true",
                         help="Render despite JARGON-LEAK findings (after a failed re-translate; the leak is "
                              "reported on stderr but does not block).")
+    parser.add_argument("--slice-dir", type=Path, default=None,
+                        help="slice-043: the slice folder (design-proposals.json/design.json/critique*.json/"
+                             "milestone.json). When given, the design-tournament detail is COMPOSED into this one "
+                             "page as a second region (replacing the former separate tournament.html).")
+    parser.add_argument("--gate-log", type=Path, default=None,
+                        help="path to the vault-root gate-log.json (for the composed tournament's 'which reviews ran' panel)")
     args = parser.parse_args(argv)
 
     try:
@@ -440,7 +482,29 @@ def main(argv: list[str] | None = None) -> int:
     if out is None:
         out = (args.sections_file.parent / "story.html") if args.sections_file else Path("story.html")
 
-    html_text = render(data)
+    # slice-043: compose the design-tournament detail INTO this one page when --slice-dir is given.
+    # The story has already passed (valid JSON + jargon-clean here); a tournament-render problem must NOT
+    # sink the keystone story deliverable (M1) -- it degrades to the story half + a visible notice and a
+    # DISTINCT exit code 4 (M3), so the orchestrator can still deliver story.html.
+    tournament_section = ""
+    tournament_css = ""
+    tournament_degraded = False
+    if args.slice_dir is not None:
+        import render_tournament as _rt  # sibling on the _SKILL_SCRIPTS path (slice-043)
+        try:
+            t_body, t_code, _t_slice, _t_title = _rt.render_body(args.slice_dir, args.gate_log)
+        except Exception as exc:  # a read-only tournament render must never crash the story delivery (M1)
+            sys.stderr.write(f"render_story: tournament view unavailable (render error: {exc})\n")
+            t_body, t_code = "", 1
+        if t_code == 0:
+            tournament_css = _rt.scoped_css()
+            tournament_section = _compose_tournament_region(t_body)
+        else:
+            sys.stderr.write(f"render_story: tournament view unavailable ({t_body or 'render error'})\n")
+            tournament_section = _compose_tournament_unavailable()
+            tournament_degraded = True
+
+    html_text = render(data, tournament_section=tournament_section, tournament_css=tournament_css)
     try:
         out.write_text(html_text, encoding="utf-8")
     except OSError as e:
@@ -448,8 +512,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     # ASCII-only status line (Windows cp1252-safe).
-    print(f"render_story: wrote {out} ({len(html_text)} bytes, {len(data.get('sections') or [])} sections)")
-    return 0
+    composed = "" if args.slice_dir is None else (
+        ", tournament composed" if not tournament_degraded else ", tournament UNAVAILABLE (exit 4)")
+    print(f"render_story: wrote {out} ({len(html_text)} bytes, {len(data.get('sections') or [])} sections{composed})")
+    return 4 if tournament_degraded else 0
 
 
 if __name__ == "__main__":

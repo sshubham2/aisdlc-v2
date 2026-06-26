@@ -123,43 +123,42 @@ Write the narrator's returned object to `<target-slice>/story-sections.json` (ra
 active-folder artifact, not a shared aggregate, so SVW-1's `vault_edit` requirement does not apply). Set/keep
 `slice`, `title`, `stage`, `mode`, `risk_tier` consistent with Step 0 if the narrator left any blank.
 
-## Step 4 — render story.html
+## Step 4 — render the ONE combined story.html
 
-```bash
-$PY "${CLAUDE_SKILL_DIR}/scripts/render_story.py" \
-    --sections-file "<target-slice>/story-sections.json" \
-    --out "<target-slice>/story.html"
-```
-
-`render_story.py` is deterministic, stdlib-only, and stamps the generation time. **Exit 3 = JARGON-LEAK** (the
-deterministic no-pipeline-jargon tripwire): stderr names each leaking field + token. Ask the narrator to
-re-translate exactly those fields (refs belong in `ref`, never prose), rewrite `story-sections.json`, re-render —
-**once**. If it still exits 3, re-run with `--allow-jargon` and tell the user which tokens leaked. On any other
-non-zero exit, report the stderr and stop — do not hand-assemble HTML.
-
-## Step 4b — render tournament.html (the technical companion; slice-039)
-
-ALSO render the **design-tournament view** — a deterministic, full-vocabulary technical companion to the
-plain-language `story.html`. It surfaces the full per-designer detail the design tournament captured
-(`design-proposals.json`) plus an honest offline expert-source badge ("cites a source" / "self-attested" /
-"no source") and a "which reviews ran" panel. Unlike `render_story.py` it has NO jargon tripwire — the designer
-names and the review detail ARE its content. It is READ-ONLY and degrades honestly (a slice with no
-three-designer contest renders an honest "no contest" page; it never invents one).
+`render_story.py` renders **one self-contained page** that carries the plain-language story AND — composed into it
+as a second region — the full design-tournament detail (the per-designer proposals, the honest offline
+expert-source badge "cites a source" / "self-attested" / "no source", and the "which reviews ran" panel). Pass
+`--slice-dir` + `--gate-log` so the tournament half is composed in, and carry the `$VAULT` resolution into THIS
+call so `--gate-log` resolves (slice-043: the former separate Step-4b `tournament.html` is gone — one render, one
+file):
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-$PY "${CLAUDE_SKILL_DIR}/scripts/render_tournament.py" \
+$PY "${CLAUDE_SKILL_DIR}/scripts/render_story.py" \
+    --sections-file "<target-slice>/story-sections.json" \
     --slice-dir "<target-slice>" \
     --gate-log "$VAULT/gate-log.json" \
-    --out "<target-slice>/tournament.html"
+    --out "<target-slice>/story.html"
 ```
 
-`<target-slice>` is the SAME archive-aware resolved folder used for `story.html` (Step 0b), so the tournament view
-works for an in-flight OR an already-shipped/archived slice (M-add-2). Exit 0 = rendered (including the honest
-no-contest page); exit 1 = `design-proposals.json` is malformed; exit 2 = an io error — on a non-zero exit, report
-the stderr and continue with `story.html` only (never fail the whole skill over the companion view). Note (M-add-1):
-the view shows what each designer *found and proposed*, NOT the literal search queries it ran (capturing those would
-change how the designers generate — out of scope).
+`render_story.py` is deterministic, stdlib-only, stamps the generation time, and is the SINGLE exit-code authority
+for the combined render. `<target-slice>` is the archive-aware resolved folder (Step 0b), so the tournament half
+composes for an in-flight OR an already-shipped/archived slice. The tournament half degrades honestly: a slice with
+no three-designer contest composes an honest "no contest" region, never an invented one; and (M-add-1) it shows
+what each designer *found and proposed*, NOT the literal search queries it ran. The jargon tripwire guards ONLY the
+story prose — the tournament half (designer names, review detail) keeps its full vocabulary.
+
+Exit codes (the combined contract):
+- **0** — rendered (story + composed tournament, or story-only when `--slice-dir` is omitted).
+- **3 = JARGON-LEAK** (story prose only): stderr names each leaking field + token. Ask the narrator to re-translate
+  exactly those fields (refs belong in `ref`, never prose), rewrite `story-sections.json`, re-render — **once**. If
+  it still exits 3, re-run with `--allow-jargon` and tell the user which tokens leaked. **Nothing is written.**
+- **4** — the story rendered but the composed tournament detail was UNAVAILABLE (malformed `design-proposals.json`
+  / render error): `story.html` **IS** written with the story half intact + a visible "tournament view unavailable"
+  notice, and the cause is on stderr. **Deliver it** (Step 5) — the readable story is the keystone deliverable and
+  must never be dropped over the companion view.
+- **1 / 2** — bad/empty story JSON / io error: **nothing is written** — report the stderr and stop (Step 5 delivers
+  no file). Do not hand-assemble HTML.
 
 ## Step 5 — deliver the report to the user
 
@@ -167,9 +166,10 @@ Send the rendered report straight to the user with the **`SendUserFile`** tool. 
 are — including a phone over Remote Control — with no external service and no extra permission, and (because the
 file goes to the user's own session, not a third-party endpoint) the auto-mode safety classifier does not block it:
 
-- `files`: `["<target-slice>/story.html", "<target-slice>/tournament.html"]` — deliver BOTH the plain-language
-  story AND its technical design-tournament companion. If `tournament.html` was not produced (Step 4b exited
-  non-zero), send just `story.html`.
+- `files`: `["<target-slice>/story.html"]` — the ONE combined report (the design-tournament detail is composed
+  into it as a second region; there is no separate `tournament.html` anymore). On exit **4** still deliver this one
+  file (the story half is intact + carries the tournament-unavailable notice). On exit **1/2/3** NOTHING was written
+  — deliver NO file and report the stderr (never `SendUserFile` a path that does not exist).
 - `status`: use `"proactive"` when `/slice-story` was auto-invoked (by `/critique` pre-build, or by
   `/commit-slice` on ship — the shipped story is the keystone deliverable) or the user may be away (so it pushes
   to their phone); use `"normal"` when the user just invoked `/slice-story` themselves and is watching.

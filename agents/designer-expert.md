@@ -69,7 +69,7 @@ three designers) + your distinctive `channeled_experts`:
 ```
 
 > **`source` is the provenance anchor (slice-039 / ADR-026).** It is classified offline and shown to the owner in
-> the design-tournament view (`/slice-story`'s `tournament.html`): a citable web source reads **"cites a source"**,
+> the design-tournament region of `/slice-story`'s combined report (`story.html`): a citable web source reads **"cites a source"**,
 > the literal `training-knowledge` reads **"self-attested" (UNVERIFIED)**, and a missing/bare-name source reads
 > **"no source" (UNVERIFIED)**. A bare DOI/ISBN currently reads as no citable URL, so when the position genuinely
 > has a citable URL, prefer recording it. This is a deliberate, mild clarification of *what you record* (not how you
