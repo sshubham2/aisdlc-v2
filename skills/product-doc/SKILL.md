@@ -159,7 +159,7 @@ repo_root="$(git rev-parse --show-toplevel)"
 # then be unable to resolve vault: tokens against the right root). Resolve deterministically, fail-visible.
 vault_root="${AI_SDLC_VAULT_ROOT:-$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 [ -n "$vault_root" ] || { echo "grounding-verify: vault root unresolved — run /setup or set AI_SDLC_VAULT_ROOT" >&2; exit 1; }
-$PY -c "import json,sys; json.dump({'grounding': <agent.grounding>, 'repo_root': sys.argv[1], 'vault_root': sys.argv[2]}, sys.stdout)" "$repo_root" "$vault_root" \
+$PY -c "import json,sys; json.dump({'grounding': <agent.grounding>, 'public_surface': <step-0 public_surface {entry_points, exports} -- slice-040>, 'repo_root': sys.argv[1], 'vault_root': sys.argv[2]}, sys.stdout)" "$repo_root" "$vault_root" \
   | $PY "${CLAUDE_SKILL_DIR}/scripts/grounding_verify.py"
 ```
 
@@ -168,8 +168,17 @@ graph_last_updated, graph_stale, public_surface_verified}}`. Each token is `crg:
 `file:<repo-rel-path>` / `vault:<path>` (path-based — B1); a token it can't confirm is dropped. **Fail-CLOSED**:
 when `crg_reachable` is false (code map unreachable) the affected tokens are `source-unavailable`, NOT silently
 passed (AC3). **Surface to the user** the verified vs unverified counts per doc + whether the code map was
-reachable and stale — these are real gaps, not noise. (`public_surface` stays Step-0 fuzzy-harvested and
-`public_surface_verified: false` — a known, visible unverified anchor; M-add-1.)
+reachable and stale — these are real gaps, not noise.
+
+**public_surface is verified too (slice-040 / ADR-028).** The Step-0 harvested `public_surface.exports` +
+`entry_points` are routed through the SAME deterministic exact-membership check — against the reality set built
+by `_crg_grounding_probe --names` (symbol names UNION file stems; NOT the fuzzy `search_nodes`). The verifier
+returns a `public_surface: {verified[], unverified[{token,reason}]}` block, and `grounding_check.public_surface_verified`
+is now COMPUTED (a one-way fail-closed gate): true ONLY when the check ran against a reachable graph over a
+well-formed input; unsupplied / CRG-unreachable / malformed keeps it false (never crashes, never maps a failure to
+verified). An entry_point packaging label that is not itself a code node (e.g. `cli: <name>`) reads unverified by
+design and does NOT sink the flag when real exports verify. **M-add-1:** the FULL `public_surface` snapshot is kept
+intact (Step 4) — the verified/unverified split only ANNOTATES it, so `/drift-check`'s baseline-diff is preserved.
 
 ## Step 3 — write the docs to the repo (overwrite gate)
 
@@ -194,7 +203,13 @@ Never write a doc the agent returned `null` for or omitted.
 
 Write `<vault>/doc-manifest.json` (schema: `examples/doc-manifest.json`) — the anchor `/drift-check` audits:
 
-- `at`, `source_commit` (`git rev-parse --short HEAD`), `public_surface` (the Step 0 snapshot)
+- `at`, `source_commit` (`git rev-parse --short HEAD`), `public_surface` (the **FULL** Step 0 snapshot — kept
+  intact as the `/drift-check` baseline, M-add-1), and **`public_surface_unverified`** (slice-040: the verifier's
+  `public_surface.unverified` `{token, reason}` list — the harvested exports/entry_points that did NOT exactly
+  resolve to a real symbol or file stem, so the snapshot is honestly annotated verified-vs-unverified rather than
+  narrowed). `public_surface_verified` (in each doc's `grounding_check`) is the verifier's computed flag, no longer hardcoded false.
+  **`endpoints` are out of scope for verification** (runtime routes, not code symbols): they stay in the FULL `public_surface`
+  snapshot but the verifier never checks them, so they never enter the verified set and never flip `public_surface_verified` on their own.
 - `docs[]` — one entry per doc actually written: `path`, `kind`, `generated_at`, and **`grounded_in` = the Step 2.5
   verifier's `verified[]` ONLY** (never the agent's raw `grounding` — slice-015). Also write the sibling
   `grounding_unverified` (the dropped `{token, reason}` list) + `grounding_check` (`ran`, `crg_reachable`,

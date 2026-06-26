@@ -26,7 +26,10 @@ IO: reads a JSON object on stdin {"grounding": <agent grounding>, "repo_root": "
                        "graph_stale": bool, "public_surface_verified": false},
    "log": [...]}
 NEVER crashes on malformed input and NEVER maps a failure to verified (OCSP soft-fail rule).
-public_surface stays Step-0 fuzzy-harvested + UNVERIFIED -> public_surface_verified=false (M-add-1).
+public_surface (exports + entry_points) is verified by EXACT membership against the reality set
+(symbol names UNION file stems; slice-040 / ADR-028). public_surface_verified is COMPUTED -- true
+ONLY when the check ran against a reachable graph over well-formed input (fail-closed otherwise);
+the FULL snapshot is kept + a public_surface_unverified sibling annotates it (M-add-1).
 """
 from __future__ import annotations
 
@@ -171,6 +174,38 @@ def _classify(token, repo_root: pathlib.Path, vault_root: pathlib.Path | None,
     return "malformed"
 
 
+_LABEL_PREFIX = re.compile(r"^(?:cli|console|entry|script)\s*:\s*", re.IGNORECASE)
+# slice-040 (m3): the harvest's File nodes are absolute PATHS; the producer contract reduces them to
+# the bare stem, but a deviation may pass an 'X.py'-shaped export -- tolerate it by also testing the
+# extension-stripped stem (only these code extensions). SAFE: it resolves only if the stem is real.
+_CODE_EXTS = {".py", ".js", ".ts", ".tsx", ".jsx", ".mjs", ".sh"}
+
+
+def _classify_name(token, names: set, stems: set, ambiguous: set) -> str | None:
+    """slice-040: classify a public_surface entry (export or entry_point) by EXACT membership in
+    the reality set (symbol names UNION file stems). Returns None (verified) or an enum reason.
+    An entry_point may carry a producer label ('cli: aisdlc'); strip a KNOWN prefix, then require
+    a clean bare name -- an empty residual, or one carrying whitespace/path-sep/'::' is malformed
+    (m1), never an empty-string membership test. Ambiguous (>1 referent) is checked FIRST because
+    an ambiguous name is itself a member of names|stems."""
+    if not isinstance(token, str) or not token.strip():
+        return "malformed"
+    name = _LABEL_PREFIX.sub("", token, count=1).strip()
+    if not name or any(c in name for c in (" ", "\t", "/", "\\")) or "::" in name:
+        return "malformed"
+    # m3: tolerate an 'X.py'-shaped file export by also testing the extension-stripped stem. A dotted
+    # module.func (non-code ext) is NOT normalized -> reads not-indexed (fail-closed, no over-verify).
+    cand = name
+    _base, _ext = os.path.splitext(name)
+    if _base and _ext.lower() in _CODE_EXTS:
+        cand = _base
+    if cand in ambiguous:
+        return "ambiguous-match"
+    if cand in names or cand in stems:
+        return None
+    return "not-indexed"
+
+
 def verify(payload: dict) -> dict:
     grounding = payload.get("grounding")
     repo_root = pathlib.Path(payload.get("repo_root") or ".").resolve()
@@ -223,6 +258,55 @@ def verify(payload: dict) -> dict:
                               "grounding_unverified": [{"token": json.dumps(grounding)[:120],
                                                         "reason": "malformed"}]}
         log.append("grounding is neither a map nor a list -> malformed")
+
+    # slice-040: public_surface verification leg. public_surface_verified is a ONE-WAY fail-closed
+    # gate (parse-don't-validate): false by construction, set true at exactly ONE point below, only
+    # when the reality set was built from a reachable graph AND the input was a well-formed dict.
+    # M-add-1: the manifest keeps the FULL public_surface snapshot; this leg only ANNOTATES which
+    # entries are reality-grounded (verified vs unverified) -- it never narrows the snapshot.
+    public_surface = payload.get("public_surface")
+    if public_surface is not None:
+        ps_verified = False
+        ps: dict[str, list] = {"verified": [], "unverified": []}
+        if not isinstance(public_surface, dict):
+            ps["unverified"].append({"token": json.dumps(public_surface)[:120], "reason": "malformed"})
+            log.append("public_surface is not a dict -> malformed; public_surface_verified stays false")
+        else:
+            names_res = _probe(str(repo_root), ["--names"]) if crg_reachable else None
+            set_ready = bool(names_res and names_res.get("reachable"))
+            if not set_ready:
+                # fail-closed: the authority is unreachable/empty -> admit nothing
+                for key in ("exports", "entry_points"):
+                    vals = public_surface.get(key)
+                    for tok in vals if isinstance(vals, list) else []:
+                        ps["unverified"].append({"token": tok if isinstance(tok, str) else json.dumps(tok)[:120],
+                                                 "reason": "source-unavailable"})
+                log.append("public_surface: reality set unavailable -> all source-unavailable, verified=false")
+            else:
+                names = set(names_res.get("names") or [])
+                stems = set(names_res.get("stems") or [])
+                ambiguous = set(names_res.get("ambiguous_names") or [])
+                ok_shape = True
+                for key in ("exports", "entry_points"):
+                    vals = public_surface.get(key, [])
+                    if not isinstance(vals, list):
+                        ok_shape = False
+                        ps["unverified"].append({"token": f"{key}={json.dumps(vals)[:80]}", "reason": "malformed"})
+                        continue
+                    for tok in vals:
+                        reason = _classify_name(tok, names, stems, ambiguous)
+                        if reason is None:
+                            ps["verified"].append(tok)
+                        else:
+                            ps["unverified"].append({"token": tok if isinstance(tok, str) else json.dumps(tok)[:120],
+                                                     "reason": reason})
+                # the SINGLE true-assignment point: set ready AND well-formed input. A fabricated or
+                # unresolved ENTRY lands in unverified and does NOT sink the gate ('check ran'); only
+                # a failure-to-run (unset / unreachable / malformed-shape) keeps it false.
+                ps_verified = ok_shape
+        grounding_check["public_surface_verified"] = ps_verified
+        return {"docs": docs, "grounding_check": grounding_check, "log": log,
+                "public_surface": ps}
 
     return {"docs": docs, "grounding_check": grounding_check, "log": log}
 

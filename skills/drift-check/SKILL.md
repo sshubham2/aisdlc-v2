@@ -89,8 +89,13 @@ truth, don't re-describe the resolution), `file:<repo-rel-path>` by repo-file ex
 describes something gone (the tokens are verified-only now, so a non-resolving one is a real STALE-DOC signal, not a
 conceptual-node miss); (c) diff the manifest's `public_surface` snapshot
 against the current CRG surface — a removed/renamed public symbol means the README / API-reference likely document a
-vanished interface. Each mismatch → a **STALE DOC** finding citing the doc path + the specific vanished symbol, with
-`Resolve: regenerate via /product-doc`. No manifest → skip this check (no-op).
+vanished interface. **slice-040 (M-add-1):** `public_surface` is the **FULL** harvested snapshot (kept intact — NOT
+narrowed to verified-only), with a sibling `public_surface_unverified[{token, reason}]` annotating which entries were
+reality-grounded at doc-gen. **Diff the FULL snapshot** so a real symbol that was momentarily unverifiable at doc-gen
+(stale graph, packaging label, or ambiguous name) still has a baseline and is caught when it genuinely vanishes; the
+annotation only records an entry's doc-gen provenance, it never shrinks the baseline. Each mismatch → a **STALE DOC**
+finding citing the doc path + the specific vanished symbol, with `Resolve: regenerate via /product-doc`. No manifest →
+skip this check (no-op).
 
 In `--fast` mode: only check claims in files touched by the injected diff. Skip deep graph traversal.
 

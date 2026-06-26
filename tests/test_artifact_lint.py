@@ -327,3 +327,18 @@ def test_enum_path_resolves_detects_dead_row(monkeypatch):
     fake[("code-review", "no_such_field")] = frozenset({"x"})
     monkeypatch.setattr(artifact_lint, "KNOWN_ENUMS", fake)
     assert any("no_such_field" in d for d in artifact_lint.enum_path_resolves())
+
+
+def test_public_surface_unverified_reason_enum_enforced():
+    # BC-PROJ-1 / M2 (slice-040): the new public_surface_unverified[].reason enum is only real
+    # where the linter enforces it -- a bogus value must fail lint; the canonical value passes.
+    examples = _load_examples()
+    ex = examples["doc-manifest"]
+    bad = copy.deepcopy(ex)
+    bad["public_surface_unverified"] = [{"token": "x", "reason": "BOGUS-REASON"}]
+    assert any("BOGUS-REASON" in v or "public_surface_unverified" in v
+               for v in lint_artifact(bad, "doc-manifest", ex, "test"))
+    good = copy.deepcopy(ex)
+    good["public_surface_unverified"] = [{"token": "x", "reason": "not-indexed"}]
+    assert not any("public_surface_unverified" in v
+                   for v in lint_artifact(good, "doc-manifest", ex, "test"))
