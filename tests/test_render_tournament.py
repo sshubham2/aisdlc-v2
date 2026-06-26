@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -196,3 +197,89 @@ def test_recall_miss_gate_row_m2(tmp_path):
     html, _ = rt.render(d, gl)
     assert "recall MISS" in html
     assert "verdict ?" not in html
+
+
+# --- slice-043: render_body() extraction + scoped_css() isolation -----------------
+
+def test_render_body_is_a_fragment_no_page_chrome(tmp_path):
+    d = _make_slice(tmp_path)
+    body, code, slice_id, title = rt.render_body(d, None)
+    assert code == 0
+    # a fragment: NO doctype / head / style / footer chrome
+    assert "<!doctype" not in body.lower()
+    assert "<head" not in body.lower()
+    assert "<style" not in body.lower()
+    # ...but it DOES carry the inner blocks
+    assert 'class="card designer"' in body
+    assert slice_id == "slice-039"
+
+
+def test_render_is_page_of_render_body_seam(tmp_path):
+    """Feathers seam: render() must equal _page() wrapped around render_body() (byte-identical CLI output)."""
+    d = _make_slice(tmp_path)
+    gl = tmp_path / "gl.json"
+    gl.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    body, code, slice_id, title = rt.render_body(d, gl)
+    full, full_code = rt.render(d, gl)
+    assert code == full_code == 0
+    assert full == rt._page(slice_id, title, body)
+
+
+def test_render_body_malformed_returns_code_1(tmp_path):
+    d = _make_slice(tmp_path)
+    (d / "design-proposals.json").write_text("{ not json", encoding="utf-8")
+    body, code, slice_id, title = rt.render_body(d, None)
+    assert code == 1
+    assert "not valid JSON" in body
+
+
+def test_scoped_css_isolates_under_tournament_scope_M2(tmp_path):
+    css = rt.scoped_css()
+    # the load-bearing collision: .badge is scoped, not global
+    assert ".tournament-scope .badge{" in css
+    # M2: the bare code/a rules become DESCENDANTS, never global (they would bleed into the story half)
+    assert ".tournament-scope code{" in css
+    assert ".tournament-scope a{" in css
+    assert ".tournament-scope a:hover{" in css
+    assert not re.search(r"(?m)^code\{", css)
+    assert not re.search(r"(?m)^a\{", css)
+    # the shell-hoisted rules are DROPPED (the composer's shell supplies value-identical :root + *)
+    assert ":root" not in css
+    assert not re.search(r"(?m)^body\{", css)
+    assert not re.search(r"(?m)^h1\{", css)
+    assert not re.search(r"(?m)^\*\{", css)
+    # @media print survives with its inner class rule scoped + the inner bare body dropped
+    assert "@media print{" in css
+    assert ".tournament-scope .card{break-inside" in css
+
+
+def test_no_contest_body_has_no_page_chrome(tmp_path):
+    body = rt._no_contest_body("nothing here")
+    assert "No design contest was captured" in body
+    assert "<!doctype" not in body.lower()
+    # and the standalone no-contest PAGE still wraps it (back-compat)
+    page = rt._no_contest_page("slice-039", "nothing here")
+    assert page == rt._page("slice-039", "Design tournament", body)
+
+
+# --- code-review m1: guard the scoped_css brace-scanner's '_CSS is plain' precondition -------------
+# The hand-rolled find('{')/find('}') splitter is correct ONLY while _CSS has no CSS comment and no brace
+# inside a quoted string. Both are absent today; pin them so a future _CSS edit that violates the
+# precondition fails HERE (loudly) rather than silently mis-scoping and reintroducing the M2 story-half bleed.
+
+def test_scoped_css_precondition_no_css_comment_m1():
+    # a `/* ... */` comment would fold into the FOLLOWING selector and silently corrupt scoping.
+    assert "/*" not in rt._CSS
+
+
+def test_scoped_css_precondition_no_brace_inside_quotes_m1():
+    # a brace inside a quoted string (e.g. content:"}") would mis-split the scanner. _CSS legitimately
+    # contains quotes (font-family "Segoe UI"), so assert the precise invariant: no { or } inside any "...".
+    for quoted in re.findall(r'"[^"]*"', rt._CSS):
+        assert "{" not in quoted and "}" not in quoted, f"brace inside quoted string breaks the scanner: {quoted!r}"
+
+
+def test_scoped_css_output_is_brace_balanced_m1():
+    css = rt.scoped_css()
+    assert css.count("{") == css.count("}")   # a mis-split would leave the merged <style> unbalanced
+    assert css.count("{") >= 20               # all the real rules survived the scope pass

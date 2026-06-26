@@ -8,8 +8,14 @@ summary, the full per-designer detail, an honest expert-source badge, and a "whi
 
 It is the TECHNICAL companion to story.html (the plain-language narrative). Unlike `render_story.py` it has
 NO jargon tripwire -- designer names / `core`/`partial` / "the Critic" ARE the content here. It is
-deterministic, stdlib-only, read-only, and emitted as a SECOND `/slice-story` artifact (slice-039 folded the
-view into slice-story rather than a new skill).
+deterministic, stdlib-only, read-only.
+
+slice-043 (ADR-030): the design-tournament detail is now COMPOSED INTO the one `story.html` -- `render_story`
+imports `render_body()` (the inner fragment, no page chrome) + `scoped_css()` (its CSS namespaced under
+`.tournament-scope`) and appends it as a second region of the single combined report. There is no separate
+`tournament.html` from `/slice-story` anymore. The standalone `render()` / `main()` CLI (`--out tournament.html`)
+is RETAINED for back-compat + the characterization tests (`render() == _page(render_body())`), but is no longer
+wired into `/slice-story`.
 
 Anti-hallucination (AC2 / ADR-026): each channeled expert's recorded `source` is classified OFFLINE by
 `scripts/lib/expert_provenance.py` into "cites a source" | "self-attested" | "no source". The badge is
@@ -275,13 +281,16 @@ def _render_reviews(slice_dir: Path, slice_id: str, gate_log_path: Path) -> str:
             f'<p>{crit_line}</p><p>{crev_line}</p>{gate_html}</section>')
 
 
-def _no_contest_page(slice_id: str, reason: str) -> str:
-    body = (f'<section class="card"><h2>No design contest was captured for this work</h2>'
+def _no_contest_body(reason: str) -> str:
+    return (f'<section class="card"><h2>No design contest was captured for this work</h2>'
             f'<p>{_esc(reason)}</p>'
             "<p class=\"muted\">A single-approach (low-risk) piece of work runs no three-designer contest, so "
             "there is no per-designer detail to show. This page is intentionally empty rather than inventing one.</p>"
             "</section>")
-    return _page(slice_id, "Design tournament", body)
+
+
+def _no_contest_page(slice_id: str, reason: str) -> str:
+    return _page(slice_id, "Design tournament", _no_contest_body(reason))
 
 
 def _footnotes() -> str:
@@ -348,6 +357,65 @@ footer.foot{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);fo
 @media print{body{background:#fff}.card{break-inside:avoid;border-color:#ccc}}
 """
 
+SCOPE_CLASS = "tournament-scope"
+# Selectors NOT prefixed by scoped_css() -- reconciled into the COMPOSER's shared shell instead:
+#   :root + *  -> hoisted (their values are shared/IDENTICAL with the story shell, verified at design spike)
+#   body + h1  -> page chrome the fragment never emits (render_body excludes _page)
+# Everything else (incl. the bare `code`/`a`/`a:hover` rules) is scoped as a descendant so it cannot bleed
+# into the story half (M2).
+_SHELL_HOISTED = {":root", "*", "body", "h1"}
+
+
+def _scope_selector_list(selectors: str, scope: str) -> str:
+    """Prefix each comma-separated selector with `.{scope} ` (descendant combinator)."""
+    parts = [p.strip() for p in selectors.split(",") if p.strip()]
+    return ", ".join(f".{scope} {p}" for p in parts)
+
+
+def _scope_rules(css: str, scope: str) -> list[str]:
+    """Prefix every top-level rule's selector under `.{scope}`, DROPPING the _SHELL_HOISTED rules.
+    @media blocks are preserved: their condition stays and their inner rules are prefixed (an inner bare
+    body/* is dropped). Tolerant brace scanner -- _CSS is plain (selectors hold no `{`, declarations hold
+    no `}`, @-nesting is at most one @media level)."""
+    out: list[str] = []
+    i, n = 0, len(css)
+    while i < n:
+        brace = css.find("{", i)
+        if brace == -1:
+            break
+        head = css[i:brace].strip()
+        if head.startswith("@media"):
+            depth, j = 1, brace + 1
+            while j < n and depth:
+                if css[j] == "{":
+                    depth += 1
+                elif css[j] == "}":
+                    depth -= 1
+                j += 1
+            inner_scoped = "".join(_scope_rules(css[brace + 1:j - 1], scope))
+            if inner_scoped.strip():
+                out.append(f"{head}{{{inner_scoped}}}")
+            i = j
+            continue
+        close = css.find("}", brace)
+        if close == -1:
+            break
+        decls = css[brace + 1:close].strip()
+        parts = [p.strip() for p in head.split(",") if p.strip()]
+        if parts and all(p in _SHELL_HOISTED for p in parts):
+            i = close + 1  # drop -- reconciled into the shell
+            continue
+        out.append(f"{_scope_selector_list(head, scope)}{{{decls}}}")
+        i = close + 1
+    return out
+
+
+def scoped_css(scope: str = SCOPE_CLASS) -> str:
+    """Return _CSS with every selector namespaced under `.{scope}` so the tournament half cannot restyle
+    the story half (M2). The _SHELL_HOISTED rules (:root/*/body/h1) are DROPPED -- the composer's own shell
+    supplies the value-identical :root + *; body/h1 are page chrome the fragment never emits."""
+    return "\n".join(_scope_rules(_CSS, scope))
+
 
 def _page(slice_id: str, title: str, body: str) -> str:
     generated = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -369,21 +437,24 @@ read-only view; nothing here is paraphrased or invented.</footer>
 """
 
 
-def render(slice_dir: Path, gate_log_path: Path) -> tuple[str, int]:
-    """Return (html, exit_code). exit 1 only when design-proposals.json is present but malformed."""
+def render_body(slice_dir: Path, gate_log_path: Path) -> tuple[str, int, str, str]:
+    """Return (body_html, exit_code, slice_id, page_title) -- the tournament's INNER blocks with NO page
+    chrome (no <!doctype>/<head>/<style>/footer), so a composer (render_story) can append them inside ONE
+    shared document. On exit 1 body_html is the error message; on the empty path it is the no-contest body.
+    render() wraps this in _page() to produce the standalone page (byte-identical to the pre-extraction output)."""
     design, _ = _load_json(slice_dir / "design.json")
     slice_id = _canon_slice((design or {}).get("slice") or slice_dir.name)
-    title = (design or {}).get("slice") or slice_dir.name
+    title = str((design or {}).get("slice") or slice_dir.name)
 
     proposals_data, err = _load_json(slice_dir / "design-proposals.json")
     if err is not None:
-        return f"design-proposals.json is not valid JSON: {err}", 1
+        return f"design-proposals.json is not valid JSON: {err}", 1, slice_id, title
     if proposals_data is None:
-        return _no_contest_page(slice_id, "No design-proposals.json was found for this work."), 0
+        return _no_contest_body("No design-proposals.json was found for this work."), 0, slice_id, "Design tournament"
 
     proposals = proposals_data.get("proposals") if isinstance(proposals_data, dict) else None
     if not isinstance(proposals, list) or not proposals:
-        return _no_contest_page(slice_id, "The design records hold no designer proposals to show."), 0
+        return _no_contest_body("The design records hold no designer proposals to show."), 0, slice_id, "Design tournament"
 
     blocks = [_render_summary(proposals, design or {})]
     for pr in proposals:
@@ -395,7 +466,16 @@ def render(slice_dir: Path, gate_log_path: Path) -> tuple[str, int]:
         blocks.append(f'<section class="card designer"><h2>{_esc(label)}</h2>{detail}</section>')
     blocks.append(_render_reviews(slice_dir, slice_id, gate_log_path))
     blocks.append(_footnotes())
-    return _page(slice_id, str(title), "\n".join(b for b in blocks if b)), 0
+    return "\n".join(b for b in blocks if b), 0, slice_id, title
+
+
+def render(slice_dir: Path, gate_log_path: Path) -> tuple[str, int]:
+    """Return (html, exit_code). exit 1 only when design-proposals.json is present but malformed.
+    Thin wrapper over render_body() + _page() so the standalone CLI output stays byte-identical."""
+    body, code, slice_id, title = render_body(slice_dir, gate_log_path)
+    if code != 0:
+        return body, code
+    return _page(slice_id, title, body), 0
 
 
 def main(argv: list[str] | None = None) -> int:
