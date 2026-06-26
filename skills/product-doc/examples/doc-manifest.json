@@ -13,6 +13,9 @@
     ],
     "endpoints": []
   },
+  "public_surface_unverified": [
+    { "token": "cli: aisdlc", "reason": "not-indexed" }
+  ],
   "docs": [
     {
       "path": "README.md",
@@ -33,7 +36,7 @@
         "crg_reachable": true,
         "graph_last_updated": "<ts>",
         "graph_stale": false,
-        "public_surface_verified": false
+        "public_surface_verified": true
       }
     },
     {

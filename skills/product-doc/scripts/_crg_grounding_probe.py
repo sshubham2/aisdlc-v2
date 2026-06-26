@@ -57,6 +57,47 @@ def _norm_repo_rel(target: str, repo_root: str) -> str:
     return t
 
 
+def _graph_db_path(repo_root: str) -> str | None:
+    """Resolve the CRG graph db path for repo_root (slice-040): the conventional
+    <repo>/.code-review-graph/graph.db (the CRG 2.3.5 location, spike-verified). Returns None if no
+    db exists -- the caller then fails CLOSED (never constructs a GraphStore on a missing path, which
+    would silently CREATE an empty db and look healthy-but-empty; m2)."""
+    cand = pathlib.Path(repo_root) / ".code-review-graph" / "graph.db"
+    return str(cand) if cand.exists() else None
+
+
+def _names_set(repo_root: str):
+    """Build the deterministic reality set for public_surface verification (slice-040):
+    exact symbol names (every non-File/non-Test node kind -- Class/Function/Type; the INVERSE, not
+    an allowlist, per ADR-019/slice-029 so a kind the tool adds (e.g. CRG's Type on TS repos) is not
+    silently missed) + file stems, plus the ambiguous set (a name with >1 referent -- >1 symbol node,
+    >1 file sharing a stem, or present as BOTH a symbol and a stem). EXACT enumeration via
+    GraphStore.get_all_nodes/get_all_files -- never the fuzzy search_nodes (FTS5/LIKE) which would
+    re-import the false-accept slice-015 killed."""
+    from collections import Counter
+    from code_review_graph.graph import GraphStore
+
+    dbp = _graph_db_path(repo_root)
+    if not dbp:
+        return None  # health said >0 but the db path is unresolvable -> caller fails closed
+    with contextlib.redirect_stdout(sys.stderr):  # CRG stdout noise -> stderr (strict JSON contract)
+        store = GraphStore(dbp)
+        nodes = list(store.get_all_nodes())
+        files = list(store.get_all_files())
+
+    def _attr(n, k):
+        return n.get(k) if isinstance(n, dict) else getattr(n, k, None)
+
+    sym = Counter(_attr(n, "name") for n in nodes
+                  if _attr(n, "kind") not in ("Test", "File"))  # inverse, not allowlist (ADR-019)
+    sym.pop(None, None)
+    stem = Counter(pathlib.Path(str(f)).stem for f in files)
+    ambiguous = ({k for k, c in sym.items() if c > 1}
+                 | {k for k, c in stem.items() if c > 1}
+                 | (set(sym) & set(stem)))
+    return sorted(sym), sorted(stem), sorted(ambiguous)
+
+
 def _stats(q, repo_root: str):
     try:
         with contextlib.redirect_stdout(sys.stderr):
@@ -83,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--path")
     ap.add_argument("--symbol")
     ap.add_argument("--health", action="store_true")
+    ap.add_argument("--names", action="store_true")  # slice-040: emit the public_surface reality set
     args = ap.parse_args(argv)
 
     try:
@@ -91,6 +133,27 @@ def main(argv: list[str] | None = None) -> int:
         return 3  # CRG not installed/importable in this interpreter -> caller degrades (AC3)
 
     reachable, total, last_updated, public_nodes, embeddings_count = _stats(q, args.repo_root)
+
+    if args.names:
+        # slice-040: the public_surface reality set. set_ready (reachable) is the total_nodes>0
+        # health gate above -- NOT 'get_all_nodes did not raise' (m2: GraphStore on a missing db
+        # silently returns an empty set that looks healthy-but-empty). Build only when reachable.
+        names: list[str] = []
+        stems: list[str] = []
+        ambiguous: list[str] = []
+        if reachable:
+            try:
+                built = _names_set(args.repo_root)
+                if built is None:
+                    reachable = False  # db path unresolvable -> fail-closed (admit nothing)
+                else:
+                    names, stems, ambiguous = built
+            except Exception:
+                reachable = False  # CRG present but enumeration failed -> fail-closed
+        json.dump({"reachable": reachable, "names": names, "stems": stems,
+                   "ambiguous_names": ambiguous, "total_nodes": total},
+                  sys.stdout, ensure_ascii=False)
+        return 0
 
     if args.health or not args.path:
         json.dump({"reachable": reachable, "total_nodes": total,

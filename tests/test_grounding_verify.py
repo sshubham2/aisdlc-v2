@@ -77,6 +77,10 @@ def built_repo(tmp_path_factory):
     # a second file with the SAME basename -> bare-filename ambiguity (m3/ambiguous)
     (root / "other").mkdir()
     (root / "other" / "widget.py").write_text("def twin():\n    return 2\n", encoding="utf-8")
+    # slice-040: a UNIQUE file stem ('toolbox') whose only symbol is 'helper' -> exercises a
+    # public_surface export that is a FILE STEM, not a symbol (the design-spike's load-bearing
+    # build_backlog/vault_edit case: symbols UNION file-stems is required, symbols-only misses it).
+    (root / "pkg" / "toolbox.py").write_text("def helper():\n    return 3\n", encoding="utf-8")
     _git(root, "init", "-q")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "init")
@@ -251,3 +255,178 @@ def test_vault_root_unresolved_source_unavailable(tmp_path):
     doc = json.loads(p.stdout)["docs"]["readme"]
     assert "vault:concept.json" not in doc["verified"]  # NOT resolved against repo_root
     assert "source-unavailable" in {u["reason"] for u in doc["grounding_unverified"]}
+
+
+# ============================================================================
+# slice-040: public_surface verification (exact membership, symbols UNION file-stems)
+#   AC1  : verify() accepts a public_surface input and runs the SAME exact membership check.
+#   AC2  : a fabricated export -> unverified with a reason from the existing enum.
+#   AC3  : a genuine export/entry_point (symbol OR file stem) -> verified.
+#   AC4  : public_surface_verified is true ONLY when the check ran against a reachable graph;
+#          unsupplied / unreachable / malformed each keep it false, never crash (fail-closed).
+#   AC5  : /product-doc routes public_surface through verification before the manifest write.
+#   m1   : entry_point label-strip ('cli: x' -> 'x'); empty residual -> malformed.
+#   M1   : an unresolved label entry_point reads unverified but verified EXPORTS still flip the gate.
+#   m2   : --names set_ready derives from the total_nodes>0 health gate, not a non-raising call.
+#   M-add-2: a pure file-stem match (no symbol of that name) still verifies (the union is required).
+# ============================================================================
+
+PROBE = REPO / "skills" / "product-doc" / "scripts" / "_crg_grounding_probe.py"
+
+
+def _run_ps(public_surface, repo_root, grounding=None, env=None):
+    """Run the verifier with a public_surface key in the payload."""
+    payload = json.dumps({"grounding": grounding or {}, "public_surface": public_surface,
+                          "repo_root": str(repo_root), "vault_root": str(repo_root)})
+    p = subprocess.run([PY, str(VERIFY)], input=payload, capture_output=True,
+                       text=True, env={**os.environ, **(env or {})})
+    assert p.returncode == 0, f"verify exited {p.returncode}: {p.stderr}"
+    return json.loads(p.stdout)
+
+
+def _run_names_probe(repo_root, env=None):
+    return subprocess.run([PY, str(PROBE), "--repo-root", str(repo_root), "--names"],
+                          capture_output=True, text=True, env={**os.environ, **(env or {})})
+
+
+# ---- AC1 + AC3 + AC4(true): the anchor row (genuinely FAILS before impl) ----
+
+def test_public_surface_real_export_verified(built_repo):
+    ps = {"exports": ["make_widget", "Gadget"], "entry_points": []}
+    out = _run_ps(ps, built_repo)
+    block = out["public_surface"]
+    assert "make_widget" in block["verified"]
+    assert "Gadget" in block["verified"]
+    assert out["grounding_check"]["public_surface_verified"] is True
+
+
+# ---- AC3 / M-add-2: an export that is a FILE STEM (not a symbol) verifies ----
+
+def test_public_surface_file_stem_export_verified(built_repo):
+    # 'toolbox' is a unique file stem (pkg/toolbox.py) with NO symbol of that name; symbols-only
+    # would false-negative it. This is the design-spike's load-bearing build_backlog/vault_edit case.
+    out = _run_ps({"exports": ["toolbox"], "entry_points": []}, built_repo)
+    assert "toolbox" in out["public_surface"]["verified"]
+    assert out["grounding_check"]["public_surface_verified"] is True
+
+
+# ---- AC2: a fabricated export is dropped with an enum reason (check still ran) ----
+
+def test_public_surface_fabricated_unverified(built_repo):
+    out = _run_ps({"exports": ["ghostExport"], "entry_points": []}, built_repo)
+    block = out["public_surface"]
+    assert "ghostExport" not in block["verified"]
+    reasons = {u["reason"] for u in block["unverified"]}
+    assert "not-indexed" in reasons
+    assert reasons <= {"source-unavailable", "symbol-absent", "ambiguous-match",
+                       "malformed", "file-absent", "not-indexed"}
+    # 'check ran' semantics: a fabricated entry does NOT sink the gate.
+    assert out["grounding_check"]["public_surface_verified"] is True
+
+
+# ---- ambiguity: a name with >1 referent is dropped, not guessed ----
+
+def test_public_surface_ambiguous_dropped(built_repo):
+    # 'widget' is a file stem shared by pkg/widget.py + other/widget.py -> ambiguous.
+    out = _run_ps({"exports": ["widget"], "entry_points": []}, built_repo)
+    block = out["public_surface"]
+    assert "widget" not in block["verified"]
+    assert "ambiguous-match" in {u["reason"] for u in block["unverified"]}
+
+
+# ---- m1: entry_point label strip; empty residual -> malformed ----
+
+def test_public_surface_entry_point_label_strip(built_repo):
+    out = _run_ps({"exports": [], "entry_points": ["cli: make_widget"]}, built_repo)
+    assert "cli: make_widget" in out["public_surface"]["verified"]
+    out2 = _run_ps({"exports": [], "entry_points": ["cli: "]}, built_repo)
+    assert "malformed" in {u["reason"] for u in out2["public_surface"]["unverified"]}
+
+
+# ---- M1: an unresolved label entry_point does not sink verified EXPORTS ----
+
+def test_public_surface_entry_point_unresolved_keeps_flag(built_repo):
+    out = _run_ps({"exports": ["make_widget"], "entry_points": ["cli: nonexistent_cmd"]}, built_repo)
+    block = out["public_surface"]
+    assert "make_widget" in block["verified"]
+    assert "cli: nonexistent_cmd" not in block["verified"]
+    assert out["grounding_check"]["public_surface_verified"] is True
+
+
+# ---- AC4 / must-not-defer: unsupplied | unreachable | malformed -> false, no crash ----
+
+def test_public_surface_verified_false_on_failures(built_repo, tmp_path):
+    # (a) unsupplied (no public_surface key) -> stays false, backward compatible
+    out_a = _run_verify({"readme": ["crg:pkg/widget.py::make_widget"]}, built_repo)
+    assert out_a["grounding_check"]["public_surface_verified"] is False
+    # (b) CRG unreachable (no graph) -> false + source-unavailable
+    root = tmp_path / "nograph"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "x.py").write_text("def f():\n    return 0\n", encoding="utf-8")
+    _git(root, "init", "-q"); _git(root, "add", "-A"); _git(root, "commit", "-qm", "i")
+    out_b = _run_ps({"exports": ["f"], "entry_points": []}, root)
+    assert out_b["grounding_check"]["public_surface_verified"] is False
+    assert "source-unavailable" in {u["reason"] for u in out_b["public_surface"]["unverified"]}
+    # (c) malformed public_surface (a list, not a dict) -> false, malformed, NEVER crash
+    payload = json.dumps({"grounding": {}, "public_surface": ["not", "a", "dict"],
+                          "repo_root": str(built_repo), "vault_root": str(built_repo)})
+    p = subprocess.run([PY, str(VERIFY)], input=payload, capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    out_c = json.loads(p.stdout)
+    assert out_c["grounding_check"]["public_surface_verified"] is False
+
+
+# ---- m2: --names builds the reality set; set_ready via the total_nodes>0 health gate ----
+
+def test_names_probe_real_graph(built_repo):
+    p = _run_names_probe(built_repo)
+    assert p.returncode == 0, p.stderr
+    out = json.loads(p.stdout)
+    assert out["reachable"] is True
+    assert "make_widget" in out["names"]          # a function symbol
+    assert "Gadget" in out["names"]               # a class symbol
+    assert "toolbox" in out["stems"]              # a unique file stem
+    assert "widget" in out["ambiguous_names"]     # stem shared by two files
+
+
+def test_names_probe_unbuilt_graph_not_ready(tmp_path):
+    # m2: GraphStore(missing-db) silently returns 0 nodes -> reachable MUST be false via the
+    # total_nodes>0 health gate, NOT 'get_all_nodes did not raise'.
+    root = tmp_path / "nograph"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "x.py").write_text("def f():\n    return 0\n", encoding="utf-8")
+    _git(root, "init", "-q"); _git(root, "add", "-A"); _git(root, "commit", "-qm", "i")
+    p = _run_names_probe(root)
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["reachable"] is False
+
+
+# ---- AC5: /product-doc wires public_surface through verification + persists the sibling ----
+
+def test_product_doc_wires_public_surface():
+    skill = (REPO / "skills" / "product-doc" / "SKILL.md").read_text(encoding="utf-8")
+    # Step 4 / M-add-1: the manifest write persists the unverified sibling (a NEW token; not
+    # present before this slice) -> proves the wiring was updated end-to-end.
+    assert "public_surface_unverified" in skill
+
+
+# ---- m3: an 'X.py'-shaped export resolves to the real stem; a dotted non-code name stays fail-closed ----
+
+def test_public_surface_export_with_extension_verified(built_repo):
+    out = _run_ps({"exports": ["toolbox.py"], "entry_points": []}, built_repo)
+    assert "toolbox.py" in out["public_surface"]["verified"]   # toolbox.py -> stem 'toolbox' (real)
+    out2 = _run_ps({"exports": ["toolbox.nonexistent"], "entry_points": []}, built_repo)
+    assert "toolbox.nonexistent" not in out2["public_surface"]["verified"]  # non-code ext NOT stripped
+    assert "not-indexed" in {u["reason"] for u in out2["public_surface"]["unverified"]}
+
+
+# ---- m4: endpoints are out of scope -- never enter the verified anchor ----
+
+def test_public_surface_endpoints_not_verified(built_repo):
+    # endpoints are runtime routes, not code symbols -> the verifier ignores them; they never appear
+    # in verified[], and a verified export still flips the gate (the full snapshot keeps endpoints, M-add-1).
+    out = _run_ps({"exports": ["make_widget"], "entry_points": [], "endpoints": ["GET /widgets"]}, built_repo)
+    block = out["public_surface"]
+    assert "GET /widgets" not in block["verified"]
+    assert "make_widget" in block["verified"]
+    assert out["grounding_check"]["public_surface_verified"] is True

@@ -123,6 +123,13 @@ KNOWN_ENUMS: dict[tuple[str, str], frozenset[str]] = {
     ("doc-manifest", "docs[].grounding_unverified[].reason"):
         frozenset({"source-unavailable", "symbol-absent", "ambiguous-match",
                    "malformed", "file-absent", "not-indexed"}),
+    # slice-040 (M2): the public_surface verifier's per-entry drop reason. The public_surface_unverified
+    # sibling annotates the FULL snapshot (M-add-1). Same 6-value set; registered so a bad value can't
+    # ship silently (slice-013: an enum is only real where the linter enforces it). public_surface_verified
+    # stays BOOLEAN (not registered), like crg_reachable / graph_stale.
+    ("doc-manifest", "public_surface_unverified[].reason"):
+        frozenset({"source-unavailable", "symbol-absent", "ambiguous-match",
+                   "malformed", "file-absent", "not-indexed"}),
 }
 
 # Top-level keys that appear in a canonical example but are genuinely OPTIONAL on a
