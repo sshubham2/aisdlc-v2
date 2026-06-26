@@ -51,6 +51,7 @@ from scripts.lib import _stdout
 from scripts.lib._git_default_branch import resolve_default_branch as _resolve_default_branch
 from scripts.lib._git_default_branch import run_git as _run_git
 from scripts.lib._vault_paths import VAULT_ROOT
+from scripts.lib.milestone_stages import TERMINAL_STAGES as _TERMINAL_STAGES
 
 __all__ = [
     "WorktreeState",
@@ -66,8 +67,8 @@ __all__ = [
 # Canonical slice-branch shape `slice/NNN-<name>` (zero-padded 3-digit number).
 _SLICE_BRANCH_RE = re.compile(r"^slice/(\d{3})-(.+)$")
 
-# Terminal "built, ready to merge" stages (v2 loop ends at /reflect -> `complete`).
-_TERMINAL_STAGES = frozenset({"reflect", "complete"})
+# Terminal "built, ready to merge" milestone stages come from the ONE shared source of truth
+# scripts/lib/milestone_stages.TERMINAL_STAGES (slice-037 / ADR-024); imported aliased above.
 
 # UNKNOWN-reason enumeration (fail-closed classification paths).
 _UNKNOWN_REASONS = (
