@@ -4,6 +4,7 @@ description: "Adversarial code-Critic review of the just-built slice's code diff
 when_to_use: "Trigger phrases: /code-review, 'review the slice code', 'adversarial code review on the diff'. Auto-advances from /build-slice."
 context: fork
 agent: code-review
+argument-hint: "[slice-id]"
 allowed-tools: Read, Grep, Glob, Bash, WebSearch, Write
 ---
 
@@ -35,15 +36,24 @@ For each note, treat the named dimension as lower-yield FOR THIS PROJECT (it has
 cited window): hold a higher bar before filing in it, and do not pad severity. This NEVER suppresses a real issue
 (file it if you see one) and NEVER applies to a reality gate — it only counters this project's measured over-firing.
 
-## Slice diff (in-scope only) — injected
+## Slice diff (in-scope only) — run this block FIRST (a body step, not a load-time injection)
 
 **WT-ROOT-1:** the diff and any targeted Reads come from the slice WORKTREE `$wt` (HEAD = the slice branch),
 NOT the main tree (HEAD = default there → an empty diff). The build leaves changes UNCOMMITTED in `$wt`
 (commit happens at `/commit-slice`), so diff the working tree against the branch base, not `base...HEAD`.
 
-```!
+```bash
+# slice-036: a bash BODY block (NOT a !-injection) so a forked /code-review invoked as `/code-review slice-NNN`
+# (build-slice's handoff passes the id) BINDS ${ARGUMENTS} and resolves the NAMED slice -- a !-injection runs at
+# skill-LOAD before ${ARGUMENTS} binds (SC-064/ADR-022), so the named-from-main diff would target the wrong slice.
+# Run this block FIRST: it fetches the diff you review.
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
+ARG="${ARGUMENTS[0]:-}"
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+else
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 paths='src/** skills/** agents/** scripts/** tests/**'
 base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"   # SC-043: fork point vs the LOCAL integration branch (never origin/HEAD); always non-empty (HEAD fallback when no remote -- WT-ROOT-1)
