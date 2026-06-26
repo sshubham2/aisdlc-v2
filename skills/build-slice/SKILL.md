@@ -38,7 +38,7 @@ SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI
 1. Find the active slice folder. Read `mission-brief.json`, `design.json`, `critique.json`, `critique-review.json` (if present — incorporate any MUST-FIX items as hard build constraints), and any ADRs created this slice.
 2. If `critique.json` is absent: this is OK **iff** the Critic was deliberately skipped. Read `milestone.json` `progress[]` and look for `{ "step": "critique", "done": "skipped" }` (the `/critique` skip path writes this on a low-tier slice with no mandatory triggers — `done` is the string `"skipped"`, not the boolean `true`). Skip recorded → proceed (Builder self-review applies). No such marker → STOP: run `/critique` first.
 3. If `critique.json` shows `"verdict": "blocked"`: STOP — address blockers before build.
-4. **TPHD-1 pre-flight**: scan the `mission-brief.json` TF-1 plan table; verify each Test path will exist at the right path and the Test function name matches what will be built. Flag any drift for user fix BEFORE entering plan mode.
+4. **TPHD-1 pre-flight**: on a `test_first` slice the `test_first_plan[]` is **build-authored** (Step 1 drafts it from the ACs — by design it is NOT in `mission-brief.json` at `/slice`, because the test functions do not exist yet). So this pre-flight verifies the **planned** Test paths/functions the builder is about to author cover every AC, NOT a pre-existing mission-brief table. Flag any drift for user fix BEFORE entering plan mode.
 5. **CRP-1** (critique-review prerequisite):
    ```bash
    $PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py" <vault>/slices/slice-NNN-<name>
@@ -124,6 +124,14 @@ Create `<vault>/slices/slice-NNN-<name>/build-log.json` now (empty `events[]`, s
 if it does not exist — Step 4 appends events to it *before* risky tool calls, so it must exist before execution
 starts, not be created at Step 8.
 
+**`test_first` slice — draft the `test_first_plan[]` NOW (TF-1 / SC-023):** if `mission-brief.json` has
+`variants.test_first == true`, draft the `test_first_plan[]` at build start — one row per AC, drafted from the ACs,
+each `{ac, status, test_path, test_function}`. Rows may start at `status: "PENDING"` (the non-strict audit accepts
+an ac-only row; the test functions do not exist yet); you walk each `PENDING -> WRITTEN-FAILING -> PASSING` in
+Step 4 as the tests are written. Authoring it HERE — not at the Step-6 gate — is what prevents the surprise
+pre-finish FAIL: the Step-6 `brief_variants_audit --variant test_first --strict-pre-finish` gate requires every
+row `PASSING` (at least one per AC). The canonical shape is `SPECS['test_first']` in `scripts/lib/brief_variants_audit.py`.
+
 ## Step 2: Plan mode — explore actual code
 
 **WT-ROOT-1:** explore the WORKTREE — `Read`/`Grep`/`Glob` files under `"$wt/"`, not the main tree. The task
@@ -157,6 +165,10 @@ If the plan reveals the design is wrong: STOP. Surface to user: "Design says X. 
 
 **WT-ROOT-1:** every `Edit`/`Write` targets a `"$wt/<relpath>"` absolute path; every code-touching bash block
 re-derives `$wt` and `cd "$wt"` first (fresh shell each block). The main tree is never written.
+
+**`test_first`:** for each AC, write its test FIRST (it must FAIL — RED), implement, then flip that AC's
+`test_first_plan[]` row `PENDING -> WRITTEN-FAILING -> PASSING` with its on-disk `test_path` + `test_function`
+(the plan was drafted at Step 1).
 
 For each task:
 1. Implement the task.
@@ -228,7 +240,9 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/pre_finish_gate.py" \
     --changed-test-files <changed-test-files> \
     --ack-critical <addressed-ids>
 # Append optional flags as applicable: --seam-allowlist <vault>/.cross-chunk-seams (if present);
-#   --test-first (when mission-brief.json test_first == true); --strict (Heavy mode, LINT-MOCK Important rules block).
+#   --test-first (when mission-brief.json test_first == true) -> TF-1 runs brief_variants_audit --variant
+#     test_first --strict-pre-finish, requiring every test_first_plan[] row PASSING (the plan drafted at Step 1);
+#   --strict (Heavy mode, LINT-MOCK Important rules block).
 ```
 The gate prints `=== pre-finish gate: PASS|FAIL ===` with one line per check (`ok` / `FAIL` / `skip`). **Any FAIL
 → do not declare done; fix or escalate.** (CRP-1 already ran as prerequisite #5 before plan mode — not re-run here;

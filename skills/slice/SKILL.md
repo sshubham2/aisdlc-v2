@@ -119,8 +119,10 @@ are standard). Each opted-in flag activates its own build/validate gate, so only
 its cost. **Pre-suggest** by slice shape: a bug-fix → suggest `test_first`; a first integration / new transport →
 `walking_skeleton`; an unknown-shaped area → `exploratory_charter`; otherwise none.
 
-- **`test_first`** (TDD) — write the failing tests BEFORE the implementation. Activates TF-1 (build gate: the test
-  files must exist + cover the ACs) and TPHD-1 (test-plan harmonization).
+- **`test_first`** (TDD) — write the failing tests BEFORE the implementation. Activates TF-1 (the `/build-slice` pre-finish
+  gate) and TPHD-1 (test-plan harmonization). TF-1 requires a builder-authored **`test_first_plan[]`** (one
+  terminal/PASSING row per AC, each `{ac, status, test_path, test_function}` pointing at a real on-disk test) --
+  authored at BUILD time, NOT here, because the test functions do not exist yet at `/slice`.
 - **`walking_skeleton`** (Cockburn) — the thinnest end-to-end cut that exercises EVERY architectural layer.
   Activates WS-1, which at `/validate-slice` **actually runs** each layer's verification command (`--execute`,
   reality contact — 3.1).
@@ -135,12 +137,15 @@ Write the result into `mission-brief.json` (Step 5.3):
   fills the exact commands.
 - **exploratory_charter chosen** → also write `exploratory_charters[]`: one row per mission (`mission`, `timebox`,
   `status: "pending"`, `findings: ""`).
-- **test_first chosen** → no extra field; the ACs' tests are written first and TF-1 verifies them at build.
+- **test_first chosen** → no field is written *here*. The `test_first_plan[]` it activates is **authored by the builder at BUILD time** (the test functions do not exist yet), one PASSING row per AC; `/build-slice` drafts it from these ACs at build start and the TF-1 pre-finish gate verifies it. See the Shapes block below for its shape.
 
-Shapes (omitted from the standard mission-brief example — present only when opted in; `artifact_lint` validates
-their `status` enums when present): `architectural_layers[]` = `{layer, component, verification (a runnable
+Shapes (omitted from the standard mission-brief example — present only when opted in): `test_first_plan[]` = `{ac, status: "PENDING"|"WRITTEN-FAILING"|"PASSING",
+test_path, test_function}` -- its canonical shape is `SPECS['test_first']` in
+`scripts/lib/brief_variants_audit.py` (builder-authored at BUILD time, >=1 PASSING row per AC; NOT validated by
+`artifact_lint`); `architectural_layers[]` = `{layer, component, verification (a runnable
 command), status: "pending"|"exercised"}` (WS-1 docstring); `exploratory_charters[]` = `{mission, timebox,
-status: "pending"|"in-progress"|"completed"|"deferred", findings}` (ETC-1 docstring).
+status: "pending"|"in-progress"|"completed"|"deferred", findings}` (ETC-1 docstring). `artifact_lint` validates
+the `status` enums of `architectural_layers`/`exploratory_charters` when present.
 
 ## Step 4 — scope check
 ≤5 ACs, ≤1 day, system stays shippable. If it exceeds → **`--release` the Step-1.5 reservation** and split (the original SC-NNN returns to the pickable backlog; the sub-slices are picked fresh).
