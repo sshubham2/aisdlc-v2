@@ -56,14 +56,15 @@ if str(_PLUGIN_ROOT) not in sys.path:
 
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
+from scripts.lib.milestone_stages import TERMINAL_STAGES as _TERMINAL_STAGES
 
 _SLICE_BRANCH_RE = re.compile(r"^slice/(\d+)-(.+)$")
 _SLICE_FOLDER_RE = re.compile(r"^slice-(\d+)-(.+)$")
-# Terminal stage(s): the v2 loop ends at /reflect -> milestone stage "complete".
-# (NOTE: /reflect writes stage 'complete' directly -- no stage named 'reflect' is ever
-# written, so {complete} is the in-flight boundary. The 3-resolver divergence with
-# pulse_worktree_resolver/stranded_slice_audit {reflect,complete} is filed as SC-027.)
-_TERMINAL_STAGES = frozenset({"complete"})
+# Terminal milestone stage(s) come from the ONE shared source of truth
+# scripts/lib/milestone_stages.TERMINAL_STAGES (imported aliased above as _TERMINAL_STAGES).
+# slice-037 / ADR-024 reconciled the prior 3-resolver divergence (this file once used
+# {complete}-only) to the superset {reflect, complete}: a real archived done-slice records the
+# legacy 'reflect' marker, so it is terminal here too (READ-side only -- 'reflect' is never written).
 
 # AMBIGUOUS CLI exit code (slice-014 / B3): distinct + NON-retryable. Exit 3 is RESERVED
 # for the retryable CAS-write-conflict signal (vault_edit rewrite); reusing it here would
