@@ -63,10 +63,17 @@ three designers) + your distinctive `channeled_experts`:
   "contracts": [ { "name": "", "kind": "rest|sse|event|grpc", "auth_model": "", "error_cases": "", "notes": "<code ref>" } ],
   "key_decisions": [ { "decision": "", "reversibility": "cheap|expensive|irreversible", "rationale": "" } ],
   "risks": ["<where this principled approach could be stale or wrong here>"],
-  "channeled_experts": [ { "name": "", "why_relevant": "", "source": "<URL where their position was verified, or 'training-knowledge'>" } ],
+  "channeled_experts": [ { "name": "", "why_relevant": "", "source": "<a citable source where the position was verified -- a URL (or DOI/ISBN), or the literal 'training-knowledge'>" } ],
   "staleness_note": "<where the expert's canon may predate a constraint this slice faces, or 'none noted'>"
 }
 ```
+
+> **`source` is the provenance anchor (slice-039 / ADR-026).** It is classified offline and shown to the owner in
+> the design-tournament view (`/slice-story`'s `tournament.html`): a citable web source reads **"cites a source"**,
+> the literal `training-knowledge` reads **"self-attested" (UNVERIFIED)**, and a missing/bare-name source reads
+> **"no source" (UNVERIFIED)**. A bare DOI/ISBN currently reads as no citable URL, so when the position genuinely
+> has a citable URL, prefer recording it. This is a deliberate, mild clarification of *what you record* (not how you
+> reason); `training-knowledge` stays a legitimate, honest answer — just **never fabricate a source to earn a badge**.
 
 ## What you DO NOT do
 - **Do not write files.** Return the JSON; the orchestrator composes the final `design.json`.

@@ -137,13 +137,39 @@ re-translate exactly those fields (refs belong in `ref`, never prose), rewrite `
 **once**. If it still exits 3, re-run with `--allow-jargon` and tell the user which tokens leaked. On any other
 non-zero exit, report the stderr and stop — do not hand-assemble HTML.
 
+## Step 4b — render tournament.html (the technical companion; slice-039)
+
+ALSO render the **design-tournament view** — a deterministic, full-vocabulary technical companion to the
+plain-language `story.html`. It surfaces the full per-designer detail the design tournament captured
+(`design-proposals.json`) plus an honest offline expert-source badge ("cites a source" / "self-attested" /
+"no source") and a "which reviews ran" panel. Unlike `render_story.py` it has NO jargon tripwire — the designer
+names and the review detail ARE its content. It is READ-ONLY and degrades honestly (a slice with no
+three-designer contest renders an honest "no contest" page; it never invents one).
+
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY "${CLAUDE_SKILL_DIR}/scripts/render_tournament.py" \
+    --slice-dir "<target-slice>" \
+    --gate-log "$VAULT/gate-log.json" \
+    --out "<target-slice>/tournament.html"
+```
+
+`<target-slice>` is the SAME archive-aware resolved folder used for `story.html` (Step 0b), so the tournament view
+works for an in-flight OR an already-shipped/archived slice (M-add-2). Exit 0 = rendered (including the honest
+no-contest page); exit 1 = `design-proposals.json` is malformed; exit 2 = an io error — on a non-zero exit, report
+the stderr and continue with `story.html` only (never fail the whole skill over the companion view). Note (M-add-1):
+the view shows what each designer *found and proposed*, NOT the literal search queries it ran (capturing those would
+change how the designers generate — out of scope).
+
 ## Step 5 — deliver the report to the user
 
 Send the rendered report straight to the user with the **`SendUserFile`** tool. This reaches them wherever they
 are — including a phone over Remote Control — with no external service and no extra permission, and (because the
 file goes to the user's own session, not a third-party endpoint) the auto-mode safety classifier does not block it:
 
-- `files`: `["<target-slice>/story.html"]`
+- `files`: `["<target-slice>/story.html", "<target-slice>/tournament.html"]` — deliver BOTH the plain-language
+  story AND its technical design-tournament companion. If `tournament.html` was not produced (Step 4b exited
+  non-zero), send just `story.html`.
 - `status`: use `"proactive"` when `/slice-story` was auto-invoked (by `/critique` pre-build, or by
   `/commit-slice` on ship — the shipped story is the keystone deliverable) or the user may be away (so it pushes
   to their phone); use `"normal"` when the user just invoked `/slice-story` themselves and is watching.
