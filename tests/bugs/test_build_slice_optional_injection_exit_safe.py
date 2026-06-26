@@ -12,15 +12,20 @@ non-zero. The `2>/dev/null` suppresses stderr but NOT the exit code, so the `&&`
 the harness aborts the ENTIRE /build-slice skill load with 'Shell command failed'. Observed live in slice-023.
 
 This module pins THREE behaviours of every optional-file injection block, run as the real extracted block:
-  * absent file       -> exit 0   (the bug; AC1/AC2/AC4)
+  * absent file       -> exit 0   (the SC-050 bug; AC1/AC2/AC4)
   * present file       -> exit 0 AND content still emitted, for EVERY block (happy-path guard; AC3 / m1)
-  * EMPTY $SDIR        -> exit NON-ZERO (slice-014 AMBIGUOUS HALT preserved; AC5)
+  * EMPTY $SDIR        -> exit 0   (slice-036/ADR-025: at-a-glance tolerance; the fail-closed HALT MOVED to the body)
 
-The correct fix makes the block exit 0 when the file is absent WITHOUT swallowing the empty-$SDIR HALT, i.e.
-`[ -n "$SDIR" ] && { cat "$SDIR/<file>" 2>/dev/null || true; }` -- the `|| true` is scoped INSIDE the `&&`
-group. A bare `[ -f "$SDIR/<file>" ] && cat ...` does NOT suffice (the `[ -f ]` test itself returns 1 when the
-file is absent, so the block still exits non-zero); a naive whole-line `... || true` exits 0 even on empty
-$SDIR and silently demotes the hard HALT (AC5 catches that).
+slice-036 / ADR-025 UPDATE: the empty-$SDIR case now exits 0 (it was exit NON-ZERO under slice-014/SC-050). A
+`!`-injection runs at skill-LOAD before ${ARGUMENTS} binds (SC-064/ADR-022), so a `/build-slice slice-NNN` from
+a main session would abort AT the injection if it HALTed on the (load-blind) ambiguity -- defeating named-from-
+main, which is slice-036's whole purpose. So the injection is now EXIT-0 TOLERANT (an `else echo <hint>` branch),
+and the fail-closed "never build the wrong slice" goal MOVES to the BODY resolution: a no-arg `--repo-root .`
+(NO 2>/dev/null) -> exit-4 AMBIGUOUS + empty slice_folder -> the build STOPs (C3 `[ -d "$wt" ]` / BRANCH-2/3).
+The body fail-close is pinned by test_code_acting_skills_thread_slice_arg.py::{test_exit4_repo_root_fallback_
+retained, test_no_active_slice_invocation_swallows_stderr}. The absent-file exit-0 (the original SC-050 fix) and
+the no-`2>/dev/null` invariant (active_slice_guard_audit) are UNCHANGED -- the tolerance is `|| true` / `else echo`,
+NEVER a stderr-swallow.
 
 Blocks are discovered by the executable ` ```! ` fence marker (m2) -- a plain ```bash/```json/```text doc
 fence that merely *contains* the `cat "$SDIR/...` literal is documentation, never sourced, and is ignored.
@@ -157,23 +162,30 @@ def test_present_file_content_is_still_emitted():
 
 
 @pytest.mark.skipif(_bash() is None, reason="no POSIX shell available")
-def test_optional_file_injections_halt_when_sdir_empty():
-    """HALT preservation (AC5 / slice-014): each injection block must exit NON-ZERO when $SDIR is the EMPTY
-    string (the active_slice.py AMBIGUOUS/unresolved case). The fix's `|| true` must be scoped INSIDE the
-    `[ -n "$SDIR" ] && { ... }` group -- a naive whole-line `... || true` exits 0 here and silently demotes
-    the hard skill-load HALT to a soft warning."""
+def test_optional_file_injections_tolerate_empty_sdir_body_owns_halt():
+    """slice-036 / ADR-025: each build-slice optional-file injection block must EXIT 0 when $SDIR is the EMPTY
+    string (the load-blind AMBIGUOUS case) -- it shows an at-a-glance hint and does NOT abort skill-load, so a
+    main-launched `/build-slice slice-NNN` survives to the BODY where ${ARGUMENTS} binds and the named slice is
+    resolved. This SUPERSEDES the slice-014/SC-050 injection-HALT (which required exit NON-ZERO here): an
+    injection runs at skill-LOAD before ${ARGUMENTS} binds, so HALTing on the ambiguity it cannot disambiguate
+    would make named-from-main structurally impossible. The fail-closed 'never build the wrong slice' goal MOVED
+    to the body (a no-arg `--repo-root .` -> exit-4 + empty slice_folder -> STOP), pinned by
+    test_code_acting_skills_thread_slice_arg.py::{test_exit4_repo_root_fallback_retained,
+    test_no_active_slice_invocation_swallows_stderr}. The tolerance must be `|| true` / `else echo` and NEVER a
+    `2>/dev/null` on the active_slice resolution (active_slice_guard_audit still enforces no-stderr-swallow)."""
     blocks = _injection_blocks()
     assert blocks, "no executable `cat \"$SDIR/...\"` injection block found (test stale?)"
 
-    leaks = []
+    aborts = []
     for block in blocks:
-        proc = _run(_stub_sdir(block, ""))  # empty $SDIR -- the unresolved/AMBIGUOUS case
-        if proc.returncode == 0:
-            leaks.append(_targets(block))
-    assert not leaks, (
-        "injection block(s) exit 0 when $SDIR is EMPTY -> the slice-014 AMBIGUOUS HALT is demoted to a soft "
-        "warning (the `|| true` is not scoped inside the `&&` group):\n"
-        + "\n".join(f"  targets={t}" for t in leaks)
+        proc = _run(_stub_sdir(block, ""))  # empty $SDIR -- the load-blind AMBIGUOUS case
+        if proc.returncode != 0:
+            aborts.append((_targets(block), proc.returncode, proc.stderr.strip()))
+    assert not aborts, (
+        "build-slice optional-file injection block(s) ABORT skill-load on empty $SDIR -> a main-launched "
+        "`/build-slice slice-NNN` aborts at the injection BEFORE the body can resolve the named slice "
+        "(ADR-025: the injection must be exit-0 tolerant; the body owns the fail-closed HALT):\n"
+        + "\n".join(f"  targets={t} rc={rc} stderr={err!r}" for t, rc, err in aborts)
     )
 
 

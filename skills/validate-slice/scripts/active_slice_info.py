@@ -26,7 +26,7 @@ if str(_REPO) not in sys.path:
 
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
-from scripts.lib.active_slice import resolve_active_slice
+from scripts.lib.active_slice import resolve_active_slice, resolve_slice_by_id
 
 
 def _root(vault_arg: str | None) -> Path:
@@ -43,8 +43,12 @@ def _load(path: Path) -> dict | None:
     return d if isinstance(d, dict) else None
 
 
-def _info(vault: Path, repo_root: str) -> dict:
-    slc = resolve_active_slice(vault, repo_root)
+def _info(vault: Path, repo_root: str, slice_id: str | None = None) -> dict:
+    # slice-036 (m2): an explicit --slice resolves THAT slice by id (ARCHIVE-AWARE, via resolve_slice_by_id),
+    # mirroring active_slice_brief.py / active_slice.py --slice -- so `/validate-slice slice-NNN` resolves the
+    # named slice from a main session; the no-arg path keeps resolve_active_slice (branch-first + exit-4 HALT).
+    # A named-but-missing id -> None -> the `if not slc` branch below -> ready_to_validate=false (exit-0 preserved).
+    slc = resolve_slice_by_id(vault, slice_id) if slice_id else resolve_active_slice(vault, repo_root)
     if isinstance(slc, dict) and slc.get("source") == "ambiguous":
         # slice-014 (B1/M-add-1): catch the TRUTHY AMBIGUOUS sentinel BEFORE `if not slc`
         # (else `Path(slc['path'])` crashes on path=None), and NAME the candidates rather
@@ -97,10 +101,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--vault", default=None)
     p.add_argument("--repo-root", "--root", dest="repo_root", default=".")
+    p.add_argument("--slice", default=None, metavar="slice-NNN",
+                   help="resolve THIS slice by id (archive-aware, via resolve_slice_by_id) -- mirrors "
+                        "active_slice_brief.py --slice; for `/validate-slice slice-NNN`. Else the active slice.")
     p.add_argument("--json", action="store_true", help="emit JSON (default: text)")
     args = p.parse_args(argv)
 
-    info = _info(_root(args.vault), args.repo_root)
+    info = _info(_root(args.vault), args.repo_root, args.slice)
     if args.json:
         print(json.dumps(info, ensure_ascii=False))
     elif info["slice"] is None:

@@ -2,6 +2,7 @@
 name: validate-slice
 description: "Reality check the current slice against real environments — real device, real user, real data. Executes per-criterion PASS/FAIL/PARTIAL checks with captured evidence, classifies failures (implementation bug / spec gap / reality surprise), runs VAL-1/WS-1/ETC-1 layered audits, and runs the shippability catalog regression check before handing off to /reflect."
 when_to_use: "Trigger phrases: /validate-slice, 'validate this slice', 'reality check the slice', 'check slice on real device'. Use after /code-review, before /reflect. Per-slice continuous validation — NOT a terminal full-codebase audit. Auto-advances to /reflect only on aggregate Result: PASS."
+argument-hint: "[slice-id]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 context: fork
 agent: general-purpose
@@ -15,10 +16,20 @@ user, real data. Both phases must pass before the slice is considered validated.
 > Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / the git-common-dir
 > `aisdlc/vault-root` config). You run forked and do NOT inherit the project CLAUDE.md — resolve it here.
 
-## Active slice + inputs — injected
+## Active slice + inputs — run this block FIRST (a body step, not a load-time injection)
 
-```!
-$PY "${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py" --vault "$AI_SDLC_VAULT_ROOT" --json
+```bash
+# slice-036: a bash BODY block (NOT a !-injection) so a forked /validate-slice invoked as `/validate-slice slice-NNN`
+# (build-slice/code-review thread the id onward) BINDS ${ARGUMENTS} and the prerequisite digest resolves the NAMED
+# slice -- a !-injection runs at fork-LOAD before ${ARGUMENTS} binds (SC-064/ADR-022), so the named-from-main digest
+# would mis-resolve to ambiguous/not-ready. Run this FIRST. active_slice_info.py is exit-0-always, so the no-arg
+# branch degrades visibly (ambiguous/ready_to_validate=false) rather than aborting.
+ARG="${ARGUMENTS[0]:-}"
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+  $PY "${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --json
+else
+  $PY "${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py" --vault "$AI_SDLC_VAULT_ROOT" --json
+fi
 ```
 
 Read from the active slice folder:
@@ -37,7 +48,12 @@ Read from the active slice folder:
   rationale in `code-review.json` `triage`, then re-run `/validate-slice`."_ Check:
   ```bash
   repo_root="$(git rev-parse --show-toplevel)"
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"
+  ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+  if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
+  else
+    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+  fi
   $PY -c "import json,os,sys; p=sys.argv[1]+'/code-review.json'; d=json.load(open(p,encoding='utf-8')) if os.path.exists(p) else {}; F=d.get('findings') or []; tr=d.get('triage') or {}; D={str(x.get('finding','')).strip() for x in (tr.get('dispositions') or []) if str(x.get('action','')).strip().lower() in {'fixed','overridden'} and str(x.get('rationale','')).strip()}; miss=[str(f.get('id')) for f in F if str(f.get('severity','')).lower()=='blocker' and str(f.get('id','')).strip() not in D]; print('CRD-1 un-dispositioned code-review blocker(s): '+', '.join(miss)) if miss else print('CRD-1: ok'); sys.exit(1 if miss else 0)" "$slice_folder"
   ```
   Exit 1 → STOP. (Major/minor code-review findings are advisory — not gated here.)
@@ -121,7 +137,12 @@ the repro test live), NOT the main tree. Each code ```bash block below is a fres
 `$wt` and `cd "$wt"` first:
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
+ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+else
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 cd "$wt"
 ```
@@ -132,7 +153,12 @@ changed — from `build-log.json`, or (from `$wt`) `git -C "$wt" diff --name-onl
 
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
+ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+else
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"   # WT-ROOT-1: scan worktree code
 $PY "${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py" \
   --slice <vault>/slices/slice-NNN-<name> \
@@ -155,7 +181,12 @@ Only when `mission-brief.json` sets `variants.walking_skeleton: true`:
 
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
+ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+else
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"   # WT-ROOT-1: re-resolve $wt (fresh shell)
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/brief_variants_audit.py" <vault>/slices/slice-NNN-<name> --variant walking_skeleton --execute --repo-root "$wt"
 ```
@@ -189,7 +220,12 @@ Skip if `<vault>/shippability.json` does not exist (first slice — /reflect wil
 **WT-ROOT-1** — the slice's code (fix + repro test) is in the WORKTREE; the main tree must be clean:
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
+ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+else
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py" --worktree "$wt"
 ```
@@ -204,7 +240,12 @@ Non-zero → STOP: fix the row before running the catalog.
 **PTFCD-1** — verifies every `tests/<...>.py` token in Machine-cmd cells resolves to a file on disk (in `$wt`):
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
+ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+else
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"
 $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_path_audit.py" <vault>/shippability.json
 ```
@@ -230,7 +271,12 @@ worktree, where this slice's fix AND its repro test both live (running from the 
 the fix → false regression):
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
+ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+else
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"
 $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py" <vault>/shippability.json
 ```
