@@ -60,6 +60,25 @@ def _scan(values, kind):
     return nums
 
 
+def _slice_folder_dups(folder_names):
+    """Slice numbers carried by >=2 DISTINCT folder identities -- the genuine-collision signal.
+
+    slice-041 / ADR-027: the on-disk folder name ``slice-NNN-<name>`` is the AUTHORITATIVE identity
+    of a slice; bare ``slice-NNN`` references (``candidate.slice`` / ``pick_log[].slice``) are
+    pointers SUBSUMED onto a same-number folder, so a slice observed through multiple sources counts
+    ONCE (the SC-045 false positive was counting those observations as separate slices). A real
+    collision is two genuinely-distinct folder NAMES sharing one number. Authoritative-vs-bare is
+    decided by SOURCE -- this helper is fed ONLY the folder globs -- never by a regex on the string
+    (``parse_num`` carries no full/bare signal: ``slice-005`` and ``slice-005-foo`` both parse to 5).
+    """
+    by_num: dict[int, set] = {}
+    for name in folder_names:
+        n = id_allocator.parse_num("slice", name)
+        if n is not None:
+            by_num.setdefault(n, set()).add(name)
+    return {n for n, names in by_num.items() if len(names) > 1}
+
+
 def counters_violations(vault: str | Path) -> list[str]:
     """Counter-consistency violations on a real vault (empty = clean / counters not yet seeded)."""
     vault = Path(vault)
@@ -92,11 +111,21 @@ def counters_violations(vault: str | Path) -> list[str]:
     ship_counters = ship.get("counters") if isinstance(ship.get("counters"), dict) else {}
     sources["ship"] = _scan([r.get("id") for r in ship.get("rows", []) if isinstance(r, dict)], "ship")
 
+    # slice-041 / ADR-027: the slice kind's AUTHORITATIVE identities are its on-disk folder names
+    # (slices/ + slices/archive/); a number is a real collision only when >=2 DISTINCT folders carry
+    # it. Bare slice-NNN refs (candidate.slice / pick_log[].slice) are subsumed -- decided by SOURCE,
+    # not by a string regex -- so a slice observed through multiple sources counts once (SC-045 fix).
+    # The full sources["slice"] multiset above is untouched, so the staleness (counters.slice < max)
+    # check below is unchanged.
+    slice_folders = ([p.name for p in (vault / "slices").glob("slice-*")]
+                     + [p.name for p in (vault / "slices" / "archive").glob("slice-*")])
+    slice_dups = _slice_folder_dups(slice_folders)
     for kind, nums in sources.items():
         if not nums:
             continue
-        # duplicate-id detector (the original bug's signature)
-        dups = {n for n in nums if nums.count(n) > 1}
+        # duplicate-id detector. sc/adr/ship: raw number-multiset (single-source / moved-not-copied).
+        # slice: DISTINCT folder identities (ADR-027), so multi-source observations of one slice count once.
+        dups = slice_dups if kind == "slice" else {n for n in nums if nums.count(n) > 1}
         if dups:
             out.append(f"{kind}: DUPLICATE id number(s) {sorted(dups)} — the collision this slice kills")
         ctr = (ship_counters if kind == "ship" else counters).get(kind)
