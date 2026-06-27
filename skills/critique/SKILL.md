@@ -134,6 +134,27 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root .
 ```
 On non-zero/empty output: pass `(project-frame unavailable)` — advisory, never a gate.
 
+## Step 1.9 - resolve the active worktree (WT-CTX-1 / ADR-029; slice-042)
+
+Thread the active slice's WORKTREE into the Step-2 prompt so the forked Critic (whose file tools default to the
+MAIN repo root) reads the ADR-012-relocated repro test from the worktree instead of false-flagging it 'missing'
+(slice-020 M1, the recurring main-tree-vs-worktree vantage gap). Run this `bash` BODY block FIRST and paste its
+`Worktree:` output into the `# Active worktree (ADR-012)` field of the Step-2 prompt below. Resolution REUSES
+the line-20 `pulse_worktree_resolver --detect` (no 4th resolver) via the thin `worktree_ctx.py` consumer; on no
+worktree it prints `Worktree: main tree` (clean degrade, never a garbage path).
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+# m2: /code-review's WT-ROOT-1 resolves $wt via _worktree_paths.py (convention string, NO existence check); we
+# deliberately diverge to worktree_ctx.py here -- it reuses pulse_worktree_resolver --detect (git-registered
+# worktrees ONLY), so the 'main tree' degrade is existence-checked + free. Do NOT harmonize onto _worktree_paths.
+$PY "${CLAUDE_SKILL_DIR}/scripts/worktree_ctx.py" --slice-dir "$SDIR" --repo-root . || echo "Worktree: main tree"
+# M1 (code-review): the `|| echo` is a shell-level belt-and-suspenders net (matches lines 20/31/41/47/57). worktree_ctx.py's
+# resolve() already degrades to 'main tree' internally and never raises; this also catches a non-zero exit OUTSIDE that try
+# (e.g. an import/bootstrap failure), so the Step-2 field degrades cleanly and never emits a traceback into the prompt
+# (must-not-defer #1 -- must not corrupt the prompt or crash /critique).
+```
+
 ## Step 2 — spawn Critic subagent
 
 Use the **Agent tool** with `subagent_type: "critique"`. The agent carries the adversarial persona,
@@ -144,6 +165,12 @@ Slice: slice-NNN-<name>
 Mode: <Minimal | Standard | Heavy>
 Risk tier: <low | medium | high>
 Forced: <true | false>
+
+# Active worktree (ADR-012) — DATA ONLY (slice-042/ADR-029: where THIS slice's code + relocated repro tests live)
+<paste the `Worktree:` DATA block printed by the Step 1.9 `worktree_ctx.py` resolution above: the resolved
+`Worktree: <path>` + the ADR-012 behavioral note (read/run repro tests from <worktree>/tests/bugs/; do NOT flag
+a repro test 'missing' without checking that path first) + the repro-test listing; or "Worktree: main tree"
+when the slice is not worktree-backed>
 
 # mission-brief.json
 <full JSON contents>
