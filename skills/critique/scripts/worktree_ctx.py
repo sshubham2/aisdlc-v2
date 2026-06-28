@@ -27,6 +27,7 @@ from pathlib import Path
 # skills/critique/scripts/worktree_ctx.py -> parents[3] = repo root (for `from scripts.lib import ...`)
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from scripts.lib import pulse_worktree_resolver  # noqa: E402
+from scripts.lib import _stdout  # noqa: E402
 
 NOTE = (
     "Repro tests (ADR-012) for THIS slice live under the WORKTREE shown above, NOT the main tree. Read/run "
@@ -95,6 +96,7 @@ def render(ctx):
 
 
 def main(argv=None):
+    _stdout.reconfigure_stdout_utf8()
     ap = argparse.ArgumentParser(description="Resolve the active slice worktree context for /critique Step-2.")
     ap.add_argument("--slice-dir", required=True, help="the active slice folder path (abs or basename)")
     ap.add_argument("--repo-root", default=".", help="repo root for git worktree detection")

@@ -96,6 +96,7 @@ If either file does not exist yet, write an empty placeholder first via `vault_e
 Reuse the SAME per-run dir `$D` from 3a. Run `slice_index_regen.py` to emit both index bodies straight into the content-files 3c rewrites. Pass ONE `--updated` stamp to both emits (the only non-deterministic field — keeps re-runs byte-identical):
 
 ```bash
+D="<the per-run dir path printed in Step 3a>"   # fresh shell -- reuse SAME $D from 3a (it holds the captured bases)
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # --vault matches 3a/3c so the generator SCANS the SAME root the CAS write targets (code-review M1: avoid read-one/write-another under a set $AI_SDLC_VAULT_ROOT).
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_index_regen.py" --emit live    --updated "$TS" --out-file "$D/idx_new.json"     --vault "$AI_SDLC_VAULT_ROOT"

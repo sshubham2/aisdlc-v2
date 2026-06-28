@@ -392,6 +392,12 @@ def test_names_probe_real_graph(built_repo):
 def test_names_probe_unbuilt_graph_not_ready(tmp_path):
     # m2: GraphStore(missing-db) silently returns 0 nodes -> reachable MUST be false via the
     # total_nodes>0 health gate, NOT 'get_all_nodes did not raise'.
+    # Requires the code_review_graph package; without it the probe exits 3 (AC3 early-exit) before
+    # reaching the health-gate logic this test exercises.
+    try:
+        import code_review_graph  # noqa: F401
+    except ImportError:
+        pytest.skip("code_review_graph not installed")
     root = tmp_path / "nograph"
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "x.py").write_text("def f():\n    return 0\n", encoding="utf-8")
