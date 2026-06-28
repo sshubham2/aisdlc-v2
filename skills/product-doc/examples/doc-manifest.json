@@ -14,7 +14,10 @@
     "endpoints": []
   },
   "public_surface_unverified": [
-    { "token": "cli: aisdlc", "reason": "not-indexed" }
+    {
+      "token": "cli: aisdlc",
+      "reason": "not-indexed"
+    }
   ],
   "docs": [
     {
