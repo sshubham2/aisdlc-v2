@@ -3,7 +3,7 @@ name: user-test
 description: "Real-user validation gate — an actual person tests a mockup, prototype, or working slice. Prepares the artifact, generates behavior-focused observation questions, frames the session protocol, captures structured findings in user-tests/<name>.json, and appends new risks to risk-register.json (SVW-1). Applies to B2C and user-facing projects. Use before /design-slice when UX uncertainty is present."
 when_to_use: "Trigger phrases: /user-test, 'test with real user', 'validate UX with users', 'mockup test', 'prototype test'. Run after /discover or /reflect when /triage or /reflect flags UX uncertainty. Skip for pure backend, internal tools, ML research, or engineer-facing CLI projects."
 argument-hint: "mockup | prototype | slice"
-allowed-tools: Read, Bash, Write, AskUserQuestion
+allowed-tools: Read, Bash, Write, AskUserQuestion, Agent
 ---
 
 # /user-test — real-user validation gate
@@ -53,20 +53,84 @@ If no argument was given, ask via `AskUserQuestion`:
 - Confirm a slice is built and runnable (`build-log.json` result: shipped).
 - Help the user write a task script: 3–5 concrete tasks stated as goals, not instructions.
 
+## Step 2.5 — heuristic pre-flight (OPT-IN, declinable; slice-044 / ADR-034)
+
+A real user test has a high FIXED cost (recruit / schedule / prep / observe), so small slices get
+declined and the gate feels brutal. This OPT-IN pre-flight spawns a forked **novice-engineer** model to
+run a cheap static **screen** that FOCUSES the real session — it does **NOT** replace it. The model
+checking the model shares the builder's blind spots, so its output is a **weaker, presumptive
+"heuristic-walkthrough (model-only)" signal** that can **never** count as real-user validation (the
+firewall is the canonical predicate `scripts/lib/user_test_gate.py:is_real_user_validated()`, which is
+structurally blind to it).
+
+**Offer it (AskUserQuestion):** "Run a quick model-only heuristic pre-flight to pre-draft observation
+questions and surface obvious confusions before the real session? (It's a weaker screen, never a
+substitute for the real user test.)" — options **Run pre-flight** / **Skip to the real test**.
+
+- **Skip** → go straight to Step 3; the real-user flow is byte-for-byte unchanged.
+- **Run pre-flight** → spawn the agent, ENFORCE its guardrails in code, persist the screen, then Step 3:
+
+1. **Spawn `user-test-sim` via the Agent tool**, passing ONLY the **limited artifact** inline — the
+   artifact text + the task(s) + `artifact_ai_generated` (true here: the artifact came out of this
+   pipeline). **Do NOT pass design.json, build context, the vault, or repo paths** — the limited
+   context is load-bearing (M4); a novice that can read the design stops being a novice and re-opens
+   the echo chamber. The agent has no file tools by frontmatter; you keep it limited from the caller side.
+2. **AC4 degrade — any failure is non-blocking:** if the agent is unavailable / unregistered (NAW-1) /
+   errors / returns non-JSON, do not stop — note it and proceed to Step 3 with the real-user flow
+   unchanged. (The `ingest` step below also degrades a malformed return to a defined skip.)
+3. **Enforce in code (M5), never trust the agent to self-police.** Write the agent's raw JSON return to
+   a temp file and normalize it through the canonical enforcer — it DROPS findings lacking a verbatim
+   `evidence_quote` (A1.G1), FORCES `confidence:'low'` on interaction-predicting findings (A1.G3), sets
+   the echo-chamber caveat (A1.G5), and degrades a missing/empty/malformed return to a defined
+   skip-with-note (AC4):
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/user_test_gate.py" ingest \
+       --raw <tmp-agent-return.json> --ai-generated   # prints the normalized heuristic_walkthrough section
+   ```
+4. **Persist the screen now (must-not-defer #3 — log which sessions used the pre-flight).** Write
+   `<vault>/user-tests/<test-name>.json` with `preflight_used: true`, the normalized
+   `heuristic_walkthrough` section, and **empty real-user placeholders** so the artifact is conformant
+   even if the real session is later declined: `participants: 0`, `tasks: []`, `findings: []` (schema by
+   example: `examples/user-test.json`). Step 5 read-merges the real-user data into this file.
+5. **Render distinctly + carry into Step 3.** Show the heuristic findings under a clearly WEAKER
+   "heuristic-walkthrough (model-only)" heading, with the echo-chamber caveat and `disclaimed_scopes`
+   visible, and carry each finding's `drafts_observation_question` into Step 3 as a **candidate** (never
+   a confirmed result).
+
 ## Step 3 — generate observation questions (user-input gate)
 
-Produce 3–5 behavior-focused observation questions for the facilitator. Then halt for the user to confirm or
-modify them before the session starts.
+Produce the observation protocol in **two clearly-separated blocks**, then halt for the user to confirm or
+modify before the session starts.
 
-**Good (behavior):**
-- "Show me how you'd add a new expense from this screen."
-- "You see this notification — what would you do next?"
-- "Find the receipt for last Tuesday's coffee."
+### 3a — the flow-complete BASE protocol (ALWAYS present; INV-3 blinded confirmation)
 
-**Bad (opinion — never use):**
-- "Do you like this design?"
-- "How does this look to you?"
-- "Would you use this?"
+Write **3–5 behavior-focused questions that cover the whole task end-to-end**, independent of any
+pre-flight findings. This base MUST always include the dimensions a model screen is **blind** to and only
+a real user reveals:
+- **task-completion** — "Complete <the primary task> end to end; narrate as you go."
+- **interaction-dynamics** — "Where did you hesitate, backtrack, or feel unsure what to do next?"
+- **motivational-dropout** — "At any point did you want to give up? Why?"
+
+**This base is non-negotiable even when the pre-flight ran.** The drafted questions below are a focusing
+*screen*, never a substitute for full-flow coverage — if you let them replace the base you steer the real
+session onto only what the model already saw (incorporation bias), losing exactly what the real test is
+for. (This is the load-bearing INV-3 guard the design spike proved; see `tests/test_user_test_inv3.py`.)
+
+### 3b — candidate additions from the model screen (only if the pre-flight ran)
+
+If Step 2.5 produced a `heuristic_walkthrough`, append its `drafts_observation_question`s here as a
+**delimited, clearly-weaker block** the user can edit or drop — framed as **hypotheses to DISCONFIRM**,
+never as findings:
+
+> **Candidate additions (from the model-only screen — presumptive, unconfirmed):**
+> - "<drafted question>" — *hypothesis to check, not a known issue*
+
+If no pre-flight ran (declined or AC4 degrade), this block is simply absent and the base protocol stands
+alone — the real-user flow is unchanged.
+
+**Good (behavior):** "Show me how you'd add a new expense from this screen." · "You see this notification —
+what would you do next?" · "Find the receipt for last Tuesday's coffee."
+**Bad (opinion — never use):** "Do you like this design?" · "How does this look?" · "Would you use this?"
 
 Users are unreliable narrators of their own behavior. Watch what they DO, not what they SAY.
 
@@ -97,7 +161,17 @@ After the session, prompt the user for observations across four categories:
 Once observations are collected, write `<vault>/user-tests/<test-name>.json`
 (schema by example: `examples/user-test.json`).
 
-Write the file with the **Write** harness tool (raw-write; this is a new file per session, not an append).
+**Stamp every real-user finding `source: "real-user"` (M1).** The canonical predicate
+`is_real_user_validated()` requires this explicit tag — there is NO default — so an unstamped real
+finding will NOT count as validation, and (by design) untagged or laundered data can never validate.
+
+**READ-MERGE, do not clobber (M3).** If Step 2.5 already wrote this file (a `heuristic_walkthrough`
+section + `preflight_used: true` + empty real-user placeholders), you MUST preserve those fields and
+merge the real-user data into them — replacing the placeholder `participants`/`tasks`/`findings` with the
+real values while keeping `heuristic_walkthrough` and `preflight_used` intact (must-not-defer #3: the
+pre-flight-used log must survive). Read the existing file first; if none exists (no pre-flight ran),
+write fresh. Use the **Write** harness tool for the merged whole-file write (a per-session active
+artifact, not a shared-aggregate file — SVW-1 does not apply here).
 
 ## Step 6 — update risk register (SVW-1)
 
@@ -133,7 +207,12 @@ State the recommendation and the rationale. Then hand off.
 
 ## Critical rules
 
-- **DO NOT skip or simulate.** If a real user is not available, say so. A simulated actor is NOT a user test.
+- **DO NOT skip or simulate *as validation*.** If a real user is not available, say so — a simulated actor
+  is NOT a user test and NEVER counts as real-user validation. **Carve-out (slice-044):** the OPT-IN Step-2.5
+  heuristic pre-flight is a permitted, explicitly-*weaker* model-only SCREEN that AUGMENTS the real test
+  (lowers its fixed cost) — it is firewalled by `is_real_user_validated()`, rendered in a distinct weaker
+  color, and can never substitute for the real session. Simulation-as-validation stays prohibited;
+  simulation-as-a-screen-before-the-real-test is allowed.
 - **DO NOT lead** the participant. If they get stuck, do not rescue them — that's the finding.
 - **DO NOT count opinion as validation.** "They liked it" is not evidence. Behavior matters; opinion doesn't.
 - **DO NOT batch** user tests with feature reviews. One artifact, one user, one session.
@@ -150,4 +229,4 @@ validated truth. Real users surprise you in ways no specification predicts.
 - **Predecessor**: `/discover` (pre-loop, first B2C project) or `/reflect` (any slice introducing a new UX pattern)
 - **Successor**: `/slice`, `/design-slice`, or `/discover` — determined by findings (Step 7)
 - **Auto-advance**: no — findings determine the branch; user confirms the next action
-- **User-input gates**: Step 1 (fit confirmation), Step 2 (mode), Step 3 (observation questions approval), Step 4 (session run), Step 5 (observations capture)
+- **User-input gates**: Step 1 (fit confirmation), Step 2 (mode), Step 2.5 (heuristic pre-flight opt-in — declinable), Step 3 (observation questions approval), Step 4 (session run), Step 5 (observations capture)
