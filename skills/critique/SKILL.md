@@ -226,6 +226,21 @@ Required top-level fields: `_schema`, `slice`, `reviewed_by`, `verdict` (`clean|
 `dimensions_checked[]` (each: `dimension`, `result` — every dimension gets an entry, even `"none: <reason>"`),
 `triage` (null until Step 4.5 ratification).
 
+## Step 3.1 — lint critique.json (receiving-inspection; ADR-033 / AC2)
+
+Immediately after writing `critique.json`, lint it against its schema-by-example — receiving-inspection at the
+orchestrator write boundary. You (the main thread) are the independent inspector, so this stop is deterministic.
+On a violation, re-prompt the Critic agent to re-emit a conforming artifact (mechanical key/enum repair is OK;
+missing CONTENT must be re-sourced from the agent — R-25, never self-author). Do NOT advance to Step 3.5 with a
+malformed file.
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type critique "$SDIR/critique.json"; rc=$?
+# exit 0 = clean (proceed to Step 3.5) · 1 = schema violation (re-prompt the Critic, rewrite, re-lint) · 2 = usage/tooling error (surface, NOT a clean pass)
+[ "$rc" = 0 ] || echo "ARTIFACT-LINT: critique.json did not conform (rc=$rc) -- re-prompt the Critic to re-emit a conforming artifact; do NOT proceed to Step 3.5."
+```
+
 ## Step 3.5 — meta-Critic dual review (DR-1) — runs BEFORE triage
 
 The meta-Critic runs BEFORE the TRI-1 gate so its findings feed your triage (BB-28).

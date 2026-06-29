@@ -61,8 +61,11 @@ git -C "$wt" diff "$base" -- $paths 2>/dev/null | head -1200    # committed + un
 git -C "$wt" ls-files --others --exclude-standard -- $paths 2>/dev/null | sed 's/^/NEW-UNTRACKED: /'
 ```
 
-If the diff AND the untracked list are both empty → write `code-review.json` with `"result":"NO-CODE-CHANGES"` and
-stop. Read any `NEW-UNTRACKED:` files from `"$wt/<path>"` for review (new files aren't in `git diff`).
+If the diff AND the untracked list are both empty → write a **schema-complete** `code-review.json` and stop. It
+MUST carry every required key, so the Step-4b self-check below and `/validate-slice`'s deterministic gate (ADR-033)
+never false-fail a legitimately empty review (M2):
+`{ "_schema":"aisdlc/code-review@1", "slice":"slice-NNN", "reviewed_by":"code-review agent", "result":"NO-CODE-CHANGES", "findings":[], "dimensions_checked":[], "triage":null }`.
+Read any `NEW-UNTRACKED:` files from `"$wt/<path>"` for review (new files aren't in `git diff`).
 
 ## Task
 1. Read the slice artifacts above.
@@ -71,6 +74,24 @@ stop. Read any `NEW-UNTRACKED:` files from `"$wt/<path>"` for review (new files 
 3. Optional code-graph cross-check: use the `code-review-graph` MCP tools (impact-radius / search) for blast-radius
    and INFERRED edges the new code depends on.
 4. Write `<vault>/slices/slice-NNN-<name>/code-review.json` (schema by example: `examples/code-review.json`). Include `"triage": null` — the per-blocker dispositions are filled by the MAIN thread after you return (you are forked and cannot run the interactive disposition gate).
+4b. **Self-check the artifact you just wrote — in-fork BEST-EFFORT lint (ADR-033 / AC1).** Run the schema-by-example
+   linter on the `code-review.json` you just wrote (source inspection at the producing station). This is
+   **best-effort early feedback**: you are the same forked agent that wrote it, so a non-zero exit cannot *force* you
+   to stop — the DETERMINISTIC guarantee that a malformed artifact never advances is `/validate-slice`'s prerequisite
+   gate (ADR-033). On a violation, read the exact message, fix the offending key in `code-review.json`, and re-lint
+   (at most twice); if it still violates, **surface the violations in your Return** — do NOT report a clean verdict.
+   ```bash
+   repo_root="$(git rev-parse --show-toplevel)"
+   ARG="${ARGUMENTS[0]:-}"
+   if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+     sf="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
+   else
+     sf="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"
+   fi
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type code-review "$sf/code-review.json"; rc=$?
+   # exit 0 = clean (proceed) · 1 = schema violation (fix the key + re-lint; surface in Return if still failing) · 2 = usage/tooling error (surface as a tool error, NOT a clean pass)
+   [ "$rc" = 0 ] || echo "ARTIFACT-LINT: code-review.json did not conform (rc=$rc) -- fix + re-lint or surface the violations in your Return."
+   ```
 5. Update `<vault>/slices/slice-NNN-<name>/milestone.json`: `stage: "code-review"`.
 6. **Record the gate outcome** — one row per slice into `<vault>/gate-log.json` (measurement spine, roadmap
    Theme 8 / plan Phase 0). `code-review` is a **low** reality-contact gate (the model grading a diff);
@@ -87,7 +108,10 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
 
 ## Return
 A 2-line summary to the main thread: `Result` + blocker/major/minor counts. The full review lives in
-`code-review.json`.
+`code-review.json`. **Also carry one `artifact_lint: clean` line** (or the residual violations if the Step-4b
+self-check could not be made to pass) — so a skipped or failed self-check is VISIBLE to the resuming main thread,
+which is the andon cord made observable (ADR-033). This attestation is best-effort; `/validate-slice`'s
+prerequisite gate is the deterministic backstop regardless of what this line says.
 
 **Blocker findings are consequential (CRD-1).** If you filed ≥1 `blocker`, your return MUST instruct the main
 thread: _"N code-review blocker(s) — disposition each in `code-review.json` `triage.dispositions[]` (action

@@ -57,6 +57,27 @@ Read from the active slice folder:
   $PY -c "import json,os,sys; p=sys.argv[1]+'/code-review.json'; d=json.load(open(p,encoding='utf-8')) if os.path.exists(p) else {}; F=d.get('findings') or []; tr=d.get('triage') or {}; D={str(x.get('finding','')).strip() for x in (tr.get('dispositions') or []) if str(x.get('action','')).strip().lower() in {'fixed','overridden'} and str(x.get('rationale','')).strip()}; miss=[str(f.get('id')) for f in F if str(f.get('severity','')).lower()=='blocker' and str(f.get('id','')).strip() not in D]; print('CRD-1 un-dispositioned code-review blocker(s): '+', '.join(miss)) if miss else print('CRD-1: ok'); sys.exit(1 if miss else 0)" "$slice_folder"
   ```
   Exit 1 → STOP. (Major/minor code-review findings are advisory — not gated here.)
+- **ACL-1 — code-review.json conforms to its schema (the deterministic boundary backstop; ADR-033 / AC5).** The
+  forked `/code-review` self-lints best-effort, but a wholly-forked producer cannot deterministically stop a
+  malformed artifact it authored. This prerequisite is the independent, main-thread-enforced gate (a DIFFERENT fork
+  than the one that wrote the file) that makes "a malformed code-review.json never advances downstream" literally
+  true — it is the exact boundary the production key-variance bug slipped through. Skip only when `code-review.json`
+  is absent (no `/code-review` yet). Lint it against its schema-by-example; any violation → STOP.
+  ```bash
+  repo_root="$(git rev-parse --show-toplevel)"
+  ARG="${ARGUMENTS[0]:-}"
+  if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
+  else
+    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"
+  fi
+  if [ -f "$slice_folder/code-review.json" ]; then
+    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type code-review "$slice_folder/code-review.json"; rc=$?
+    # exit 0 = conforms (proceed) · 1 = schema violation (STOP) · 2 = usage/tooling error (STOP — surface, never a silent pass)
+    [ "$rc" = 0 ] || { echo "STOP: code-review.json does not conform to its schema-by-example (rc=$rc) -- the deterministic boundary gate refuses to validate a malformed review artifact (ADR-033). Re-run /code-review to emit a conforming artifact, then re-run /validate-slice." >&2; exit 1; }
+  fi
+  ```
+  Exit 1 → STOP. (The M-add-1 keystone: the independent, un-skippable enforcement the forked self-check cannot provide.)
 
 ## Step 1 — per-criterion real-world checks
 
