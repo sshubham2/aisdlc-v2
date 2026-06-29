@@ -113,6 +113,14 @@ KNOWN_ENUMS: dict[tuple[str, str], frozenset[str]] = {
         frozenset({"skip", "tier-gate-high-only"}),
     ("changelog", "mode"): frozenset({"merge", "push", "none"}),
     ("user-test", "mode"): frozenset({"prototype", "mockup", "working-slice"}),
+    # slice-044: the OPTIONAL heuristic_walkthrough pre-flight sibling. kind classifies the
+    # walkthrough finding; confidence is the model's self-rated strength (interaction-predicting
+    # findings are force-set 'low' by ingest_heuristic_walkthrough -- A1.G3). Real-user findings[]
+    # have no enforced kind enum; these live ONLY under the heuristic_walkthrough sibling.
+    ("user-test", "heuristic_walkthrough.findings[].kind"):
+        frozenset({"confusion", "dead-end", "ambiguous-instruction", "broken-flow"}),
+    ("user-test", "heuristic_walkthrough.findings[].confidence"):
+        frozenset({"low", "medium", "high"}),
     ("milestone", "stage"): _MILESTONE_STAGES,
     ("milestone", "progress[].step"): _MILESTONE_STEPS,
     ("validation", "reality_contact"): _REALITY_CONTACT,
@@ -143,6 +151,11 @@ OPTIONAL_KEYS: dict[str, frozenset[str]] = {
     # slice-004: structured constraints[] on a spike artifact (non-empty iff
     # verdict=conditional) — array-shaped optional; legacy spike files lack it.
     "spike": frozenset({"constraints"}),
+    # slice-044: `preflight_used` is a bare bool (can't carry a `_note` marker) present
+    # only when the heuristic pre-flight ran; a real-user-only session omits it. The
+    # `heuristic_walkthrough` sibling is made optional by its own `_note` marker in the
+    # example (so the dead-row guard still verifies its nested enum paths).
+    "user-test": frozenset({"preflight_used"}),
 }
 
 # ── slice-013 (ADR-009): documented-enum coverage ════════════════════════════════════
@@ -209,6 +222,8 @@ DOCUMENTED_ENUMS: dict[tuple[str, str], str] = {
     ("critic-calibration-log", "gate_skips[].action"): "critic-calibration-log _note (action = skip | tier-gate-high-only)",
     ("changelog", "mode"): "artifact_lint KNOWN_ENUMS comment (changelog.mode merge/push/none)",
     ("user-test", "mode"): "artifact_lint KNOWN_ENUMS comment (user-test.mode prototype/mockup/working-slice)",
+    ("user-test", "heuristic_walkthrough.findings[].kind"): "user-test example heuristic_walkthrough.findings[].kind (slice-044 pre-flight)",
+    ("user-test", "heuristic_walkthrough.findings[].confidence"): "user-test example heuristic_walkthrough.findings[].confidence (slice-044 pre-flight)",
     ("milestone", "stage"): "schemas/_conventions.md L-1 stage state-machine",
     ("milestone", "progress[].step"): "milestone example progress[].step + _conventions L-1",
     ("validation", "reality_contact"): "gate-log _note (reality_contact high|medium|low)",

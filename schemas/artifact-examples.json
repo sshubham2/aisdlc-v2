@@ -385,10 +385,17 @@
   },
   "user-test": {
     "_schema": "aisdlc/user-test@1",
-    "_note": "Real-user validation findings (mockup / prototype / working slice). Surfaced risks append to risk-register.json; surfaced work becomes candidates.",
-    "test": "checkout-flow-mockup", "mode": "prototype", "date": "<ts>", "participants": 1,
+    "_note": "Real-user validation findings (mockup / prototype / working slice). Surfaced risks append to risk-register.json; surfaced work becomes candidates. Real-user signal = participants + findings[] tagged source:'real-user' (slice-044 / ADR-034); the OPTIONAL heuristic_walkthrough sibling is a weaker model-only pre-flight screen that NEVER counts as real-user validation.",
+    "test": "checkout-flow-mockup", "mode": "prototype", "date": "<ts>", "participants": 1, "preflight_used": true,
     "tasks": [{ "task": "complete a purchase", "result": "stuck", "observation": "user could not find the pay button" }],
-    "findings": [{ "kind": "stuck", "detail": "pay button below the fold", "becomes_candidate": "SC-030", "becomes_risk": null }]
+    "findings": [{ "kind": "stuck", "detail": "pay button below the fold", "source": "real-user", "becomes_candidate": "SC-030", "becomes_risk": null }],
+    "heuristic_walkthrough": {
+      "_note": "OPTIONAL model-only pre-flight screen (slice-044). Written by /user-test Step 2.5 via scripts/lib/user_test_gate.ingest_heuristic_walkthrough(); a WEAKER 'heuristic' color, structurally separate from the real-user signal and never read by is_real_user_validated() (ADR-034). Absent on a real-user-only session; a status:'skipped' shape appears when the sim agent was unavailable/failed (AC4).",
+      "source": "sim-agent", "color": "heuristic", "status": "ok",
+      "echo_chamber_caveat": "This artifact was itself AI-generated, so a model reviewing it shares its blind spots (echo chamber). Treat these heuristic findings as especially weak and confirm everything with the real-user session.",
+      "disclaimed_scopes": ["cross-screen-state", "efficiency", "motivational-dropout"],
+      "findings": [{ "id": "H1", "kind": "ambiguous-instruction", "heuristic": "Match between system and the real world", "observation": "the primary button label is jargon a first-time user is unlikely to recognize", "evidence_quote": "Reconcile selected entries", "confidence": "medium", "predicts_interaction": false, "drafts_observation_question": "Show me what you'd expect to happen when you press this button." }]
+    }
   },
   "story-sections": {
     "_schema": "aisdlc/story-sections@1",
