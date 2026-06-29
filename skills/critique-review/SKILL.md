@@ -115,6 +115,21 @@ The audit validates: required sections present, verdict in `{accept, adjust, ext
 Write `<vault>/slices/slice-NNN-<name>/critique-review.json`
 (schema: `examples/critique-review.json`).
 
+### Step 4.1 — lint critique-review.json (receiving-inspection; ADR-033 / AC2)
+
+After writing it, lint `critique-review.json` against its schema-by-example — run this ALONGSIDE the Step-3
+structural audit (`critique_review_audit.py`), not instead of it: the example-driven lint adds the `_schema` tag +
+`first_critic_verdict` / `summary` / `notes` key-presence + enum enforcement the hand-maintained audit omits, and
+auto-tracks future schema changes (drift-proof; TRI-1 m3). On a violation, re-prompt the meta-Critic to re-emit a
+conforming artifact (R-25 — never self-author). Do NOT hand off to TRI-1 with a malformed file.
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type critique-review "$SDIR/critique-review.json"; rc=$?
+# exit 0 = clean · 1 = schema violation (re-prompt + rewrite + re-lint) · 2 = usage/tooling error (surface, NOT a clean pass)
+[ "$rc" = 0 ] || echo "ARTIFACT-LINT: critique-review.json did not conform (rc=$rc) -- re-prompt the meta-Critic; do NOT hand off to TRI-1."
+```
+
 ### Step 5 — Update milestone.json
 
 Update `<vault>/slices/slice-NNN-<name>/milestone.json`: `stage: "critique-review"`,
