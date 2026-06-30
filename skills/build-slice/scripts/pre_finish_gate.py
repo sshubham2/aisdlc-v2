@@ -94,6 +94,23 @@ def _run(name: str, argv: list[str], cwd: Path) -> CheckResult:
     )
 
 
+def _split_ack_critical(raw: str | None) -> list[str]:
+    """Split a comma/whitespace-separated --ack-critical value into rule-id tokens.
+
+    The attested Critical-rule acks arrive as the documented "comma/space list"
+    (e.g. "BC-PROJ-1,BC-PROJ-3"). build_checks_audit declares --ack-critical
+    nargs='*' and does set(ack_critical), so it expects ONE token per id. This
+    forwards each id as its own token instead of one joined element matching no
+    rule id (SC-082 / ADR-036).
+
+    TOTAL by construction: ``(raw or "").replace(",", " ").split()`` returns []
+    for None / "" / whitespace-only / comma-only input (str.split() with no args
+    splits on runs of whitespace and drops empties), so the empty/None case needs
+    no separate guard and the helper never raises — satisfying must-not-defer #1.
+    """
+    return (raw or "").replace(",", " ").split()
+
+
 def run_gate(args: argparse.Namespace) -> tuple[str, list[CheckResult]]:
     slice_folder = str(Path(args.slice).resolve())
     worktree = str(Path(args.worktree).resolve())
@@ -138,8 +155,9 @@ def run_gate(args: argparse.Namespace) -> tuple[str, list[CheckResult]]:
           "--slice", slice_folder, "--strict"]
     if args.changed_files:
         bc += ["--changed-files", *args.changed_files]
-    if args.ack_critical:
-        bc += ["--ack-critical", args.ack_critical]
+    ack_ids = _split_ack_critical(args.ack_critical)
+    if ack_ids:
+        bc += ["--ack-critical", *ack_ids]
     results.append(_run("BC-1", bc, cwd))
 
     # TF-1 (only when the slice is test-first)
