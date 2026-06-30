@@ -62,7 +62,7 @@ catalog stays repo-root-relative `tests/bugs/test_<slug>.py` either way (Step 5)
 
 Write the test under `$ROOT/tests/bugs/` (or the project's bug-test convention). The test MUST:
 
-- Be runnable from project root with a single command (`pytest tests/bugs/test_<slug>.py -v`)
+- Be runnable from project root with a single command (`$PY -m pytest tests/bugs/test_<slug>.py -v` — interpreter-anchored so it runs regardless of PATH; ADR-035)
 - Target the specific bug trigger, not adjacent surface
 - Complete in <10 seconds (shippability catalog runtime budget — SCMD-1)
 - Have a clear assertion that passes when the bug is fixed
@@ -93,7 +93,7 @@ Run the test and verify it fails with the expected signature — from `$ROOT` (t
 bash block (a bare `cd` does NOT persist across SKILL.md bash blocks, and the test lives under `$ROOT/tests/bugs/`):
 
 ```bash
-( cd "${ROOT:-.}" && pytest tests/bugs/test_<slug>.py -v )
+( cd "${ROOT:-.}" && "$PY" -m pytest tests/bugs/test_<slug>.py -v )
 ```
 
 If the test **passes**: STOP. Do NOT proceed. Either:
@@ -114,7 +114,7 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file shippabi
   "slice": "<placeholder-fix-slice-name>",
   "kind": "test",
   "description": "<one-line bug description>",
-  "machine_cmd": "pytest tests/bugs/test_<slug>.py -q",
+  "machine_cmd": "python -m pytest tests/bugs/test_<slug>.py -q",
   "critical_path": true,
   "added": "<ts>"
 }'
@@ -141,7 +141,7 @@ Shippability: SHIP-<N> appended to <vault>/shippability.json
 
 Run /slice "fix <short issue name>" next.
 The fix slice's mission-brief must include:
-  AC: pytest tests/bugs/test_<slug>.py passes
+  AC: $PY -m pytest tests/bugs/test_<slug>.py passes
   Out of scope: unrelated refactors
 ```
 

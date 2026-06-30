@@ -17,7 +17,7 @@ v2 shape (`<vault>/shippability.json`; schema by example
         {
           "id": "SHIP-007", "slice": "slice-019", "kind": "test",
           "description": "...",
-          "machine_cmd": "pytest tests/bugs/test_webhook_sig.py -q",
+          "machine_cmd": "python -m pytest tests/bugs/test_webhook_sig.py -q",
           "critical_path": true, "added": "<ts>"
         }
       ]

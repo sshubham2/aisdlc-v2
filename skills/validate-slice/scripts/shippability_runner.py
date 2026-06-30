@@ -32,10 +32,11 @@ on correct per-segment execution.
 
 **v2 change from v1.** Catalog is JSON (`rows[].machine_cmd`), not a markdown
 table. The interpreter-normalization, per-segment execution, exit-code +
-PASS/FAIL semantics are preserved verbatim. v2 machine_cmd may be a bare
-`pytest tests/... -q` (the example form); `_normalize_interp` only rewrites a
-leading interpreter token, so a bare-`pytest` segment runs pytest directly via
-the resolved console entry point on PATH.
+PASS/FAIL semantics are preserved verbatim. The canonical machine_cmd is now
+interpreter-anchored (`<interp> -m pytest tests/...`); a bare `pytest`
+console-script is rejected by SCMD-1 (ADR-035, slice-046) before it can reach
+this runner, so `_normalize_interp` only ever rewrites a leading interpreter
+token to the resolved interpreter (`sys.executable`).
 
 Usage:
     python shippability_runner.py <vault>/shippability.json
