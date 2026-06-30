@@ -52,8 +52,6 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-import shlex
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,40 +65,13 @@ if str(_SCRIPTS) not in sys.path:
 
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
-from shippability_decoupling_audit import (  # canonical, NOT re-derived
-    _catalog_rows,
-    _machine_cmd_cell,
-    _segments,
-)
-from shippability_path_audit import _extract_test_tokens, _find_repo_root
-
-# Tokens that introduce the canonical interpreter placeholder. SCMD-1 permits
-# `<interp>` (the SKILL.md-prose convention), a bare `python`, or an absolute
-# `.../python.exe`. The runner normalizes them to the live interpreter so the
-# catalog never embeds a machine-specific path.
-_INTERP_TOKENS = frozenset({"<interp>", "python", "python.exe", "python3"})
-
-
-def _normalize_interp(tokens: list[str]) -> list[str]:
-    """Replace a leading interpreter token with the live interpreter.
-
-    `<interp> -m pytest ...` / `python -m pytest ...` /
-    `C:/.../python.exe -m pytest ...` all become
-    `<sys.executable> -m pytest ...`. A bare `pytest ...` segment (no leading
-    interpreter token — the v2 example form) is left as-is and runs via the
-    `pytest` console entry point on PATH."""
-    if not tokens:
-        return tokens
-    head = tokens[0]
-    is_interp = (
-        head in _INTERP_TOKENS
-        or head.endswith("python")
-        or head.endswith("python.exe")
-        or head.endswith("python3")
-    )
-    if is_interp:
-        return [sys.executable, *tokens[1:]]
-    return tokens
+from shippability_decoupling_audit import _catalog_rows, _machine_cmd_cell  # canonical, NOT re-derived
+from shippability_path_audit import _find_repo_root
+# slice-047/ADR-038: the SHARED fail-closed execution core. run_verification owns
+# what run_catalog used to inline (interp-normalization B1, the ABSENT pre-check
+# m2/ADR-021, canonical _segments M3.2, every error path slice-011) and returns a
+# three-valued ExecVerdict; run_catalog now just maps that verdict to a RowResult.
+from scripts.lib.verification_core import run_verification
 
 
 @dataclass(frozen=True)
@@ -157,7 +128,8 @@ def run_catalog(catalog_path: Path, repo_root: Path | None = None,
         cell = _machine_cmd_cell(row)
         if not cell:
             # SCMD-1 pre-catalog gate should have STOPped before us; defensively
-            # record rather than crash.
+            # record rather than crash. (Guarded HERE, before the shared core, so
+            # an empty cell is a FAIL — never silently PASS through run_verification.)
             result.failed += 1
             result.rows.append(RowResult(
                 row_id, "FAIL", index,
@@ -165,67 +137,23 @@ def run_catalog(catalog_path: Path, repo_root: Path | None = None,
                 "caught this — did Step 6 run shippability_decoupling_audit?)"))
             continue
 
-        # SC-021: pre-flight ABSENT classification (decided by FILE EXISTENCE,
-        # never the pytest exit code — exit 4 is ambiguous; ADR-021). If the row
-        # cites >=1 tests/...py token AND every cited token is absent on this
-        # checkout, record ABSENT (distinct, counted, not run, not a regression).
-        # A row with a present token, or with NO extractable test token (e.g. a
-        # `python -c` row), falls through to normal execution so a real failure
-        # still FAILs.
-        test_tokens = [tok for tok, _sel in _extract_test_tokens(cell)]
-        if test_tokens and all(not (repo_root / tok).exists() for tok in test_tokens):
+        # slice-047/ADR-038: delegate the per-segment execution to the SHARED core.
+        # It owns the SC-021/ADR-021 ABSENT pre-check (cited tokens all-absent on
+        # repo_root -> ABSENT, by FILE existence, never the pytest exit code), the
+        # interp-normalization, the canonical _segments split, and every error
+        # path (shlex ValueError / OSError / TimeoutExpired / not-runnable / non-
+        # zero exit -> FAIL, never bubbling as an exit-2 catalog abort). run_catalog
+        # maps the three-valued verdict to a RowResult + counts, UNCHANGED.
+        verdict = run_verification(cell, repo_root, timeout=timeout)
+        if verdict.status == "ABSENT":
             result.absent += 1
-            result.rows.append(RowResult(
-                row_id, "ABSENT", index,
-                "test file(s) not on this checkout — not a regression "
-                "(a sibling slice's not-yet-merged repro): "
-                + ", ".join(test_tokens)))
-            continue
-
-        row_ok = True
-        fail_detail = ""
-        for seg in _segments(cell):  # CANONICAL per-;-segment strip
-            try:
-                argv = _normalize_interp(shlex.split(seg, posix=True))
-            except ValueError as exc:
-                # A genuinely malformed segment (e.g. an unterminated quote).
-                # Fail THIS row (a regression -> exit 1) and keep the run going;
-                # NEVER let the ValueError bubble to main()'s handler, which
-                # would misreport it as an exit-2 catalog usage-error and abort
-                # the whole run (slice-011: the catalog-abort bug). exit 2 stays
-                # reserved for a missing/invalid catalog FILE.
-                row_ok = False
-                fail_detail = f"segment is not a parseable command ({exc}): {seg!r}"
-                break
-            if not argv:
-                continue
-            try:
-                proc = subprocess.run(
-                    argv, cwd=str(repo_root),
-                    capture_output=True, text=True, encoding="utf-8", errors="replace",  # BB-25: avoid cp1252 reader-thread UnicodeDecodeError
-                    timeout=timeout,
-                )
-            except subprocess.TimeoutExpired:
-                row_ok = False
-                fail_detail = f"segment timed out after {timeout}s: {seg!r}"
-                break
-            except OSError as exc:
-                row_ok = False
-                fail_detail = f"segment could not be executed ({exc}): {seg!r}"
-                break
-            if proc.returncode != 0:
-                row_ok = False
-                tail = (proc.stdout or "")[-500:] + (proc.stderr or "")[-500:]
-                fail_detail = (f"segment exited {proc.returncode}: {seg!r}\n"
-                               f"{tail.strip()}")
-                break  # row already failed; no need to run later segments
-
-        if row_ok:
+            result.rows.append(RowResult(row_id, "ABSENT", index, verdict.reason))
+        elif verdict.status == "PASS":
             result.passed += 1
             result.rows.append(RowResult(row_id, "PASS", index))
-        else:
+        else:  # FAIL (any subkind)
             result.failed += 1
-            result.rows.append(RowResult(row_id, "FAIL", index, fail_detail))
+            result.rows.append(RowResult(row_id, "FAIL", index, verdict.reason))
 
     return result
 

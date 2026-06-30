@@ -41,8 +41,6 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-import shlex
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +51,10 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from scripts.lib import _pyfn, _stdout  # noqa: E402
+# slice-047/ADR-038: the WS-1 checker now shares the mature execution core instead
+# of re-implementing the loop inline, and gains a STATIC portability gate.
+from scripts.lib.runnable_command import NON_PORTABLE_CONSOLE_SCRIPT, classify  # noqa: E402
+from scripts.lib.verification_core import _segments, run_verification  # noqa: E402
 
 _EMPTY_SENTINELS = frozenset({"", "—", "-", "n/a", "none", "(none)"})
 
@@ -280,6 +282,12 @@ def audit(
 
     # ── variant hook: WS-1 --execute reality run (3.1) ──
     if execute and spec.name == "walking_skeleton" and result.rows:
+        # slice-047/ADR-038 (M3): the STATIC portability gate fires WITHIN the
+        # --execute path, BEFORE the runtime run, so the repro's direct
+        # audit(execute=True) triggers it. It does NOT fire on a non-execute
+        # --strict-pre-finish call (a non-portable verification is caught at
+        # /validate-slice, not earlier).
+        _hook_ws_portability(result, str(brief_path))
         _execute_verifications(result, (root or Path(".")).resolve(), str(brief_path), timeout)
 
     return result
@@ -338,60 +346,112 @@ def _hook_test_first_disk(result: AuditResult, brief_path: Path, root: Path) -> 
                 f"'{fn}' in '{resolved}'.")
 
 
-def _execute_verifications(result: AuditResult, repo_root: Path, brief_path_str: str,
-                           timeout: float | None) -> None:
-    """WS-1 3.1: RUN each layer's `verification` (split on `;`, shlex, subprocess). A layer
-    is reality-verified iff every segment exits 0. Non-zero -> `verification-failed` VIOLATION;
-    not-runnable (empty / shlex error / command not found) -> non-gating ADVISORY (demote)."""
+def _hook_ws_portability(result: AuditResult, brief_path_str: str) -> None:
+    """STATIC WS-1 portability gate (slice-047/ADR-038, B1+m1). Classify EACH
+    `;`-segment of every layer's `verification` via runnable_command.classify and
+    flag the layer when a segment is NON_PORTABLE_CONSOLE_SCRIPT -- a bare
+    `pytest tests/...` that depends on the ambient PATH and should be interpreter-
+    anchored. Decided BEFORE/independent of execution.
+
+    Scoped DELIBERATELY to non_portable_console_script ONLY (B1): architectural_
+    layers verifications are an OPEN domain (curl/node/docker/`python --version`
+    all classify as not_a_command), so gating not_a_command would cry-wolf on
+    every legit non-pytest smoke command. The open not_a_command class is governed
+    at RUNTIME instead (decidable-wrong -> STOP, undecidable not-runnable -> loud
+    advisory). NOT a general 'is this command portable?' gate."""
     for row in result.rows:
         layer = str(row.entry.get("layer", ""))
         verification = str(row.entry.get("verification", "")).strip()
-        segments = [s.strip().strip("`").strip() for s in verification.split(";")]
-        segments = [s for s in segments if s]
-        if not segments:
+        exercised = row.status == "exercised"  # CR1: symmetric with the runtime pending policy
+        for seg in _segments(verification):  # m1: per top-level segment
+            if classify(seg).klass != NON_PORTABLE_CONSOLE_SCRIPT:
+                continue
+            if exercised:
+                result.violations.append(Violation(
+                    brief_path_str, row.index, "non-portable-verification", "Important",
+                    f"layer '{layer}': non-portable verification {seg!r} depends on the ambient "
+                    f"PATH (bare `pytest`); use the interpreter-anchored `<interp> -m pytest ...` "
+                    f"form so the WS-1 check runs regardless of PATH."))
+            else:
+                # CR1: a pending layer makes no reality claim -> a non-gating advisory,
+                # never a hard STOP (the static gate now agrees with the runtime policy).
+                result.advisories.append(
+                    f"layer '{layer}' (pending): non-portable verification {seg!r} depends on the "
+                    f"ambient PATH (bare `pytest`) — anchor it (`<interp> -m pytest ...`) before "
+                    f"marking the layer 'exercised'.")
+
+
+def _execute_verifications(result: AuditResult, repo_root: Path, brief_path_str: str,
+                           timeout: float | None) -> None:
+    """WS-1 3.1 (slice-047/ADR-038): RUN each layer's `verification` through the
+    SHARED fail-closed core (verification_core.run_verification) and apply the
+    M-add-1 option-(a) gating policy on an EXERCISED layer:
+      * PASS                       -> verified=True
+      * ABSENT (cited test absent) -> STOP (a layer claiming reality contact whose
+                                      cited test is not on this checkout did not
+                                      exercise anything -- decidable)
+      * FAIL, decidable-wrong      -> STOP (exited-nonzero / unparseable / timeout
+                                      / exec-error)
+      * FAIL, subkind not-runnable -> LOUD, LOGGED advisory, NOT a hard STOP. A
+                                      command-not-found is genuinely UNDECIDABLE (a
+                                      prose phantom and a missing foreign tool look
+                                      identical), so blocking it would false-fail a
+                                      legit env-dependent skeleton.
+    A `pending` layer makes no reality claim -> nothing is gating (informational).
+    The blanket advisory-demote the old immature loop applied to EVERY not-runnable
+    case (the M2 wrong-side failure) is gone -- decidable failures now STOP."""
+    for row in result.rows:
+        layer = str(row.entry.get("layer", ""))
+        verification = str(row.entry.get("verification", "")).strip()
+        exercised = row.status == "exercised"
+        if not verification:
             result.advisories.append(
-                f"layer '{layer}': verification is empty after parsing — cannot reality-check; "
+                f"layer '{layer}': verification is empty — cannot reality-check; "
                 f"falling back to the status marker ({row.status}).")
             result.executions.append({"layer": layer, "verified": None, "reason": "empty-verification"})
             continue
 
-        ok, runnable, detail = True, True, ""
-        for seg in segments:
-            try:
-                argv = shlex.split(seg, posix=True)
-            except ValueError as exc:
-                runnable = False
-                detail = f"verification not parseable as a command ({exc}): {seg!r}"
-                break
-            if not argv:
-                continue
-            try:
-                proc = subprocess.run(argv, cwd=str(repo_root), capture_output=True, text=True,
-                                      encoding="utf-8", errors="replace", timeout=timeout)
-            except FileNotFoundError:
-                runnable = False
-                detail = (f"verification command not found (looks like prose, not a runnable "
-                          f"command): {seg!r}")
-                break
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                ok, detail = False, f"verification could not complete ({exc}): {seg!r}"
-                break
-            if proc.returncode != 0:
-                tail = ((proc.stdout or "")[-300:] + (proc.stderr or "")[-300:]).strip()
-                ok, detail = False, f"verification exited {proc.returncode}: {seg!r}\n{tail}"
-                break
+        verdict = run_verification(verification, repo_root, timeout=timeout)
 
-        if not runnable:
-            result.advisories.append(f"layer '{layer}': {detail}")
-            result.executions.append(
-                {"layer": layer, "verified": None, "reason": "not-runnable", "detail": detail})
-        elif ok:
+        if verdict.status == "PASS":
             result.executions.append({"layer": layer, "verified": True})
-        else:
-            result.violations.append(Violation(brief_path_str, row.index, "verification-failed",
-                "Important", f"layer '{layer}': REALITY check failed — {detail}. WS-1 --execute ran "
+            continue
+
+        if verdict.status == "ABSENT":
+            if exercised:
+                result.violations.append(Violation(
+                    brief_path_str, row.index, "verification-absent", "Important",
+                    f"layer '{layer}': marked 'exercised' but its verification cites a test absent "
+                    f"on this checkout — {verdict.reason}. It cannot have exercised the layer."))
+                result.executions.append(
+                    {"layer": layer, "verified": False, "reason": "absent-tests", "detail": verdict.reason})
+            else:
+                result.advisories.append(f"layer '{layer}' (pending): {verdict.reason}")
+                result.executions.append(
+                    {"layer": layer, "verified": None, "reason": "absent-tests", "detail": verdict.reason})
+            continue
+
+        # verdict.status == "FAIL"
+        if verdict.subkind == "not-runnable":
+            # UNDECIDABLE (M-add-1 a): a LOUD advisory, never a hard STOP.
+            result.advisories.append(
+                f"layer '{layer}': NOT-RUNNABLE (loud advisory, NOT a STOP — a prose phantom and a "
+                f"missing tool are indistinguishable from the command string) — {verdict.reason}")
+            result.executions.append(
+                {"layer": layer, "verified": None, "reason": "not-runnable", "detail": verdict.reason})
+            continue
+
+        # decidable-wrong FAIL (exited-nonzero / unparseable / timeout / exec-error)
+        if exercised:
+            result.violations.append(Violation(
+                brief_path_str, row.index, "verification-failed", "Important",
+                f"layer '{layer}': REALITY check failed — {verdict.reason}. WS-1 --execute ran "
                 f"the verification and it did not pass."))
-            result.executions.append({"layer": layer, "verified": False, "detail": detail})
+            result.executions.append({"layer": layer, "verified": False, "detail": verdict.reason})
+        else:
+            result.advisories.append(f"layer '{layer}' (pending): {verdict.reason}")
+            result.executions.append(
+                {"layer": layer, "verified": None, "reason": verdict.subkind, "detail": verdict.reason})
 
 
 def _format_human(result: AuditResult, spec: VariantSpec) -> str:

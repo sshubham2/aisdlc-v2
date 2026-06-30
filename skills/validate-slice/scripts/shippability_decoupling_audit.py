@@ -62,6 +62,10 @@ from scripts.lib.runnable_command import (  # slice-046/ADR-035: the single sour
     classify,
 )
 from shippability_path_audit import _find_repo_root  # noqa: F401 (re-exported for the runner)
+from scripts.lib.verification_core import (  # noqa: F401  slice-047/ADR-038: relocated to the shared core
+    _segments,        # re-exported here for the runner + _check_machine_cmd (single source of truth)
+    _split_top_level,
+)
 
 # --- (a) machine-stable command grammar -------------------------------------
 # slice-046 / ADR-035: the machine_cmd grammar (the `_INTERP` anchor + the
@@ -73,7 +77,9 @@ from shippability_path_audit import _find_repo_root  # noqa: F401 (re-exported f
 # console-script is off PATH). `_check_machine_cmd` below delegates per-segment to
 # `runnable_command.classify`, which SUBSUMES the old prose-rejection grammar
 # (interpreter-led prose stays rejected — critique M1). The segmentation helpers
-# (`_segments`/`_split_top_level`) stay here: the SRSC-1 runner imports them.
+# (`_segments`/`_split_top_level`) were relocated to scripts.lib.verification_core
+# (slice-047/ADR-038) + re-exported above -- the runner AND the lib-resident
+# brief_variants_audit now share ONE canonical splitter.
 
 
 @dataclass(frozen=True)
@@ -133,61 +139,10 @@ def _machine_cmd_cell(row: dict) -> str | None:
     return s or None
 
 
-def _split_top_level(machine_cmd: str) -> list[str]:
-    """Split on `;` ONLY at quote-depth 0, honoring single-quote, double-quote,
-    and POSIX backslash-escape rules so the boundaries match
-    `shlex.split(posix=True)` (the SRSC-1 runner's tokenizer). A `;` inside a
-    quoted span — or a backslash-escaped `\\;` outside quotes — is part of the
-    command, NOT a separator. This is the slice-011 fix for the naive
-    `machine_cmd.split(";")` that shredded a `python -c "...;...;..."` row."""
-    out: list[str] = []
-    buf: list[str] = []
-    quote: str | None = None       # None | "'" | '"'
-    escaped = False                # previous char was an unescaped backslash
-    for ch in machine_cmd:
-        if escaped:
-            buf.append(ch)
-            escaped = False
-        elif quote is None:
-            if ch == "\\":
-                buf.append(ch)
-                escaped = True
-            elif ch in ("'", '"'):
-                quote = ch
-                buf.append(ch)
-            elif ch == ";":
-                out.append("".join(buf))
-                buf = []
-            else:
-                buf.append(ch)
-        elif quote == "'":          # single quotes: literal, no escapes (POSIX)
-            buf.append(ch)
-            if ch == "'":
-                quote = None
-        else:                       # double quotes: backslash escapes the next char
-            if ch == "\\":
-                buf.append(ch)
-                escaped = True
-            else:
-                buf.append(ch)
-                if ch == '"':
-                    quote = None
-    out.append("".join(buf))
-    return out
-
-
-def _segments(machine_cmd: str) -> list[str]:
-    """Split a machine_cmd into its TOP-LEVEL `;`-separated segments (quote- and
-    escape-aware — see `_split_top_level`), then strip a surrounding markdown
-    backtick fence + ws from EACH segment (JSON values rarely fence, but a
-    hand-authored row might). A `;` inside quotes is NEVER a separator, so a
-    single `python -c "import sys; a=1; b=2"` is ONE segment, not shredded."""
-    out: list[str] = []
-    for raw in _split_top_level(machine_cmd):
-        seg = raw.strip().strip("`").strip()
-        if seg:
-            out.append(seg)
-    return out
+# `_split_top_level` + `_segments` were RELOCATED to scripts.lib.verification_core
+# (slice-047 / ADR-038) so the lib-resident brief_variants_audit can share the SAME
+# canonical splitter the runner uses; they are re-exported via the import above so
+# `_check_machine_cmd` (and every existing importer) keeps resolving them unchanged.
 
 
 def _check_machine_cmd(result: AuditResult, index: int, row_id: str,

@@ -178,6 +178,17 @@ re-derives `$wt` and `cd "$wt"` first (fresh shell each block). The main tree is
 `test_first_plan[]` row `PENDING -> WRITTEN-FAILING -> PASSING` with its on-disk `test_path` + `test_function`
 (the plan was drafted at Step 1).
 
+**`walking_skeleton` marker-flip discipline (WS-1; slice-047/ADR-038).** On a `walking_skeleton` slice, flip an
+`architectural_layers[]` row's `status` from `pending` to `exercised` **ONLY after that layer's `verification`
+command has actually been run and observed to pass** — never set `exercised` up front as an intention. The
+`exercised` marker is a positive claim of reality contact, and `/validate-slice` enforces it for real: WS-1
+`--execute` runs each `exercised` layer's `verification` through the shared `verification_core`, and a decidable
+failure (a non-portable bare-`pytest` form, a cited test absent on this checkout, a non-zero exit, or an
+unparseable command) is a hard **STOP**, not a silent pass. A genuinely not-runnable command (program not on this
+host's PATH) yields a **loud advisory** rather than a STOP, so a legitimate env-dependent skeleton is not
+false-blocked — but that advisory is your signal to anchor the command (`<interp> -m pytest …`) or provide the
+runtime, NOT to hand-mark the layer `exercised` to dodge the check.
+
 For each task:
 1. Implement the task.
 2. Run the relevant AC check (or smoke test if AC is not yet testable).
