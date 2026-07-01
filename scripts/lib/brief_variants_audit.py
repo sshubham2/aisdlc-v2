@@ -293,21 +293,101 @@ def audit(
     return result
 
 
-def _hook_ac_coverage(result: AuditResult, data: dict, brief_path: Path) -> None:
+def _declared_acs(data: dict) -> list[str]:
+    """The RAW declared acceptance-criterion ids (`id`, else the `ac` fallback), in brief
+    order, non-empty only. The single shared extractor for 'what ACs did the brief declare' --
+    used by BOTH `_hook_ac_coverage` (the gate) and `scaffold_pending_plan` (the producer), so
+    the two can never disagree about the AC set (slice-051 / ADR-042: producer/gate SSOT)."""
     acs = data.get("acceptance_criteria")
-    declared: list[str] = []
+    out: list[str] = []
     if isinstance(acs, list):
         for e in acs:
             raw = (e.get("id") or e.get("ac") or "") if isinstance(e, dict) else e
-            norm = _normalize_ac_label(str(raw))
-            if norm:
-                declared.append(norm)
+            if str(raw).strip():
+                out.append(str(raw))
+    return out
+
+
+def _hook_ac_coverage(result: AuditResult, data: dict, brief_path: Path) -> None:
+    declared = [n for n in (_normalize_ac_label(a) for a in _declared_acs(data)) if n]
     covered = {_normalize_ac_label(str(r.entry.get("ac", ""))) for r in result.rows}
     for ac in declared:
         if ac not in covered:
             result.violations.append(Violation(str(brief_path), "", "ac-without-row", "Important",
                 f"AC#{ac} is declared in the brief but has no test-first row. Per TF-1, every "
                 f"AC must map to at least one test."))
+
+
+def scaffold_pending_plan(data: dict) -> tuple[dict, list[str]]:
+    """Per-AC MERGE the test_first PENDING stub into ``data['test_first_plan']`` (in place),
+    returning ``(data, notes)``. The deterministic PRODUCER counterpart to the TF-1 gate
+    (slice-051 / ADR-042): a ``test_first`` slice arrives at ``/build-slice`` already carrying
+    one PENDING row per declared AC, instead of the builder hand-authoring the plan mid-build.
+
+    Idempotent + builder-safe:
+      * ``test_first`` not enabled -> unchanged, note.
+      * APPEND one ``{ac:<raw id>, status:'PENDING', test_path:'', test_function:''}`` for every
+        declared AC not already covered (keyed by the gate's OWN ``_normalize_ac_label``, so the
+        appended row satisfies ``_hook_ac_coverage`` by construction). Existing rows are NEVER
+        touched -- never clobbers a builder-authored row (must_not_defer).
+      * PRUNE only SCAFFOLDER-CREATED PENDING orphans -- a PENDING row with empty ``test_path``
+        AND empty ``test_function`` whose ``ac`` matches no declared AC (an AC removed/re-id'd
+        mid-build). A builder row (WRITTEN-FAILING/PASSING, or any row carrying a real
+        test_path/test_function) is NEVER pruned (M-add-1: the row-vs-AC symmetric gap).
+      * empty/malformed ``acceptance_criteria`` -> empty plan + a loud note; the gate's
+        ``empty-table`` / ``ac-without-row`` then fires fail-visibly (never a silent pass).
+    """
+    spec = SPECS["test_first"]
+    notes: list[str] = []
+    if not _flag_enabled(data, spec):
+        return data, ["test_first not enabled -- no scaffold"]
+
+    declared_raw = _declared_acs(data)
+    declared_norm = {n for n in (_normalize_ac_label(a) for a in declared_raw) if n}
+
+    plan = data.get(spec.array_key)
+    if not isinstance(plan, list):
+        if plan is not None:
+            # CR1: a present-but-malformed (non-list) plan is replaced with a fresh one --
+            # emit a note so this mutation is observable too (must_not_defer). A non-list plan
+            # has no recoverable rows and the strict gate rejects it regardless.
+            notes.append(f"replaced a malformed non-list `{spec.array_key}` with a fresh plan")
+        plan = []
+
+    covered = {_normalize_ac_label(str(r.get("ac", ""))) for r in plan if isinstance(r, dict)}
+    appended: list[str] = []
+    for raw in declared_raw:
+        norm = _normalize_ac_label(raw)
+        if norm and norm not in covered:
+            plan.append({"ac": raw, "status": "PENDING", "test_path": "", "test_function": ""})
+            covered.add(norm)
+            appended.append(raw)
+
+    def _is_scaffolder_orphan(r: object) -> bool:
+        if not isinstance(r, dict):
+            return False
+        norm = _normalize_ac_label(str(r.get("ac", "")))
+        return (
+            str(r.get("status", "")).strip().upper() == "PENDING"
+            and _empty(r.get("test_path", ""))
+            and _empty(r.get("test_function", ""))
+            and norm not in declared_norm
+        )
+
+    kept = [r for r in plan if not _is_scaffolder_orphan(r)]
+    pruned = len(plan) - len(kept)
+    data[spec.array_key] = kept
+
+    if appended:
+        notes.append(f"appended PENDING row(s) for: {', '.join(appended)}")
+    if pruned:
+        notes.append(f"pruned {pruned} scaffolder-created PENDING orphan row(s) (AC removed/re-id'd)")
+    if not declared_raw:
+        notes.append("WARNING: no acceptance_criteria declared -- empty plan; the "
+                     "empty-table / ac-without-row gate will fire fail-visibly")
+    elif not appended and not pruned:
+        notes.append("no change -- plan already covers all declared ACs")
+    return data, notes
 
 
 def _hook_test_first_disk(result: AuditResult, brief_path: Path, root: Path) -> None:

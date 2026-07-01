@@ -1,6 +1,13 @@
-"""Guard the test_first handoff: the test_first slice-discipline's required build-time
-``test_first_plan[]`` must be named and explained at every place a builder reads about it,
-so it can never again surface only as a surprise pre-finish FAIL (slice-011 / SC-023).
+"""Guard the test_first handoff: the test_first slice-discipline's ``test_first_plan[]`` must be
+named and explained at every place a builder reads about it, so it can never again surface only
+as a surprise pre-finish FAIL (slice-011 / SC-023).
+
+Updated for slice-051 / SC-062 / ADR-042: the plan is now PRODUCER-SCAFFOLDED. ``/slice`` (Step
+5.3) lays down a PENDING ``test_first_plan[]`` stub (one row per AC) the moment test_first is
+chosen; the builder then AUTHORS each row's ``test_path``/``test_function`` and walks it to
+PASSING at build time. So the /slice Step 3b prose must (a) still name ``test_first_plan[]``,
+(b) state the producer SCAFFOLDS the PENDING stub at /slice (NOT the stale 'no field written
+here'), and (c) keep an accepted build-authoring phrase for the row bodies.
 
 This is a doc-content guard over model-followed prose. The single AUTHORITATIVE source for
 what the gate requires is ``SPECS['test_first']`` in ``scripts/lib/brief_variants_audit.py``
@@ -57,7 +64,20 @@ def test_ac1_slice_step3b_handoff_explicit(plugin_root):
         "exact phrasing that hid the requirement"
     )
 
-    # M-add-2: the 'Shapes' block must document test_first_plan[] alongside the other two
+    # slice-051 (SC-062 / M-add-2): the producer now SCAFFOLDS the PENDING stub at /slice.
+    # The prose must SAY so, and the stale 'no field is written here' contradiction must be
+    # gone -- a build that reverted to 'the plan is written later' would silently re-open the
+    # producer/gate gap this slice closed.
+    assert "scaffold" in low, (
+        "/slice Step 3b must state the producer SCAFFOLDS the PENDING test_first_plan stub at "
+        "/slice (slice-051) -- not that the plan is authored only later"
+    )
+    assert "no field is written" not in low, (
+        "the stale 'no field is written *here*' claim must be gone -- the producer now writes "
+        "the PENDING stub at /slice (slice-051 / M-add-2)"
+    )
+
+    # M-add-2 (slice-038): the 'Shapes' block must document test_first_plan[] alongside the other two
     # variants (it documented architectural_layers/exploratory_charters but omitted this one).
     shapes_idx = region.find("Shapes")
     assert shapes_idx != -1, "Step 3b 'Shapes' block not found"
