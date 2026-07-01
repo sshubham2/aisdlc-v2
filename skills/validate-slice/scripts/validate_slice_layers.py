@@ -124,6 +124,10 @@ class LayersResult:
     suppressed_secrets: int = 0
     declared_deps: list[str] = field(default_factory=list)
     carry_over_exempt: bool = False
+    # SC-084 / m1: audit ledger of imports resolved as the project's OWN modules
+    # (one {path,line,import_name,via} row per internal resolution) so future
+    # over-suppression stays detectable. NEVER feeds total_findings.
+    resolved_internal: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -132,6 +136,7 @@ class LayersResult:
             "suppressed_secrets": self.suppressed_secrets,
             "declared_deps": list(self.declared_deps),
             "carry_over_exempt": self.carry_over_exempt,
+            "resolved_internal": list(self.resolved_internal),
             "summary": {
                 "critical_count": sum(
                     1 for f in self.secret_findings if f.severity == "Critical"
@@ -280,11 +285,115 @@ def parse_declared_deps(
     return deps
 
 
+# --- Layer B: internal-import resolution (slice-049 / ADR-044) ---
+# Resolve the PROJECT-under-validation's OWN modules -- anchored at project_root
+# (CWD by default: the same root the declared-deps arm resolves pyproject/
+# requirements from, NOT this file's install location) -- by SOURCE-TREE
+# EXISTENCE, never importlib.find_spec (which would resolve any installed package
+# and swallow a genuinely-undeclared external import -- the AC4 false negative).
+# Fail-closed: every probe is wrapped and _resolve_internal is TOTAL -- any error
+# yields "not internal" so the import is still flagged; it never crashes the gate
+# nor silently suppresses (must_not_defer #1).
+_DEV_DEPS_CACHE: dict[str, frozenset[str]] = {}
+_SCRIPT_ROOTS_CACHE: dict[str, tuple[Path, ...]] = {}
+
+
+def _read_dev_deps(project_root: Path) -> frozenset[str]:
+    """Normalized dev-dependency names declared in the project's requirements-dev.txt.
+
+    Read INSIDE the resolver (not merged into the caller-supplied `declared`) so
+    dev-dep resolution is caller-INDEPENDENT: scan_imports(files, set()) still
+    resolves e.g. pytest (SC-084 / M-add-2). Missing file / any error -> empty.
+    """
+    key = str(project_root)
+    cached = _DEV_DEPS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    deps: set[str] = set()
+    try:
+        for fname in (
+            "requirements-dev.txt", "requirements_dev.txt", "dev-requirements.txt",
+        ):
+            f = project_root / fname
+            if not f.exists():
+                continue
+            for raw in f.read_text(encoding="utf-8").splitlines():
+                line = raw.split("#", 1)[0].strip()
+                if not line or line.startswith("-"):
+                    continue
+                name = _extract_pkg_name(line)
+                if name:
+                    deps.add(_normalize_pkg(name))
+    except Exception:
+        deps = set()  # fail toward flagging: an unreadable dev-dep file trusts nothing
+    frozen = frozenset(deps)
+    _DEV_DEPS_CACHE[key] = frozen
+    return frozen
+
+
+def _internal_script_roots(project_root: Path) -> tuple[Path, ...]:
+    """The project's bootstrap script roots -- dirs whose single-file modules are
+    importable bare via the project's sys.path bootstrap. Discovered from the
+    PROJECT root, so a non-plugin project (no scripts/ or skills/*/scripts) simply
+    has none -> nothing extra is trusted. Any glob/stat error -> empty tuple
+    (internal resolution then falls through to flagging -- noisy, never blind).
+    """
+    key = str(project_root)
+    cached = _SCRIPT_ROOTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    result: tuple[Path, ...] = ()
+    try:
+        roots: list[Path] = [
+            project_root / "scripts", project_root / "scripts" / "lib",
+        ]
+        roots.extend(sorted(project_root.glob("skills/*/scripts")))
+        result = tuple(r for r in roots if r.is_dir())
+    except Exception:
+        result = ()
+    _SCRIPT_ROOTS_CACHE[key] = result
+    return result
+
+
+def _resolve_internal(import_top: str, project_root: Path) -> str | None:
+    """Return the internal-resolution ZONE for import_top, or None if not internal.
+
+    TOTAL: any unexpected error -> None (fail toward flagging -- must_not_defer #1).
+    Zones (source-tree existence only, never find_spec):
+      - "dev-dep"             declared in the project's requirements-dev.txt
+      - "first-party-package" a top-level package/module under project_root
+      - "sibling-script"      a single-file module under a project script root
+    """
+    try:
+        if not import_top:
+            return None
+        if _normalize_pkg(import_top) in _read_dev_deps(project_root):
+            return "dev-dep"
+        if (project_root / import_top / "__init__.py").exists() or \
+                (project_root / f"{import_top}.py").exists():
+            return "first-party-package"
+        for root in _internal_script_roots(project_root):
+            if (root / f"{import_top}.py").exists() or \
+                    (root / import_top / "__init__.py").exists():
+                return "sibling-script"
+        return None
+    except Exception:
+        # A resolution error must NOT crash the gate nor silently suppress the
+        # whole layer (must_not_defer #1). Fall through to flagging.
+        return None
+
+
 def _check_import_resolves(
     import_top: str,
     declared: set[str],
 ) -> bool:
-    """True if the import resolves to stdlib, declared dep, or known alias."""
+    """True if the import resolves to stdlib, declared dep, or known alias.
+
+    EXTERNAL-only (SC-084 / M3): internal resolution is a SEPARATE arm applied by
+    scan_imports AFTER this one, so the audit ledger's `via` is always the first
+    resolution reason and a stdlib/declared name matching a sibling basename is
+    never mislabeled internal.
+    """
     if not import_top:
         return True
     if import_top in _STDLIB:
@@ -300,10 +409,35 @@ def _check_import_resolves(
 def scan_imports(
     file_paths: list[Path],
     declared_deps: set[str],
+    project_root: Path | None = None,
+    audit_sink: list[dict] | None = None,
 ) -> list[ImportFinding]:
-    """ast-parse Python files; flag imports not in stdlib/declared/aliases."""
+    """ast-parse Python files; flag imports not in stdlib/declared/aliases/internal.
+
+    Per import the resolution ORDER is (SC-084 / M3): EXTERNAL arm first
+    (_check_import_resolves: stdlib / declared / known-alias) -> then the INTERNAL
+    arm (_resolve_internal: the project's own modules, anchored at `project_root`,
+    defaulting to CWD -- the project under validation, the same anchor the
+    declared-deps arm uses). An import resolved as internal is recorded in
+    `audit_sink` (the resolved_internal ledger) and NOT flagged; only a genuinely-
+    undeclared EXTERNAL import becomes a hallucinated-import finding.
+    """
+    root = project_root if project_root is not None else Path(".")
     findings: list[ImportFinding] = []
     seen: set[tuple[str, int, str]] = set()
+    seen_internal: set[tuple[str, int, str]] = set()
+
+    def _record_internal(path: Path, lineno: int, top: str, via: str) -> None:
+        if audit_sink is None:
+            return
+        key = (str(path), lineno, top)
+        if key in seen_internal:
+            return
+        seen_internal.add(key)
+        audit_sink.append({
+            "path": str(path), "line": lineno, "import_name": top, "via": via,
+        })
+
     for path in file_paths:
         if path.suffix != ".py" or not path.exists() or path.is_dir():
             continue
@@ -320,6 +454,10 @@ def scan_imports(
                 for alias in node.names:
                     top = alias.name.split(".", 1)[0]
                     if _check_import_resolves(top, declared_deps):
+                        continue
+                    via = _resolve_internal(top, root)
+                    if via is not None:
+                        _record_internal(path, node.lineno, top, via)
                         continue
                     key = (str(path), node.lineno, top)
                     if key in seen:
@@ -342,6 +480,10 @@ def scan_imports(
                     continue  # relative or `from . import x`
                 top = node.module.split(".", 1)[0]
                 if _check_import_resolves(top, declared_deps):
+                    continue
+                via = _resolve_internal(top, root)
+                if via is not None:
+                    _record_internal(path, node.lineno, top, via)
                     continue
                 key = (str(path), node.lineno, top)
                 if key in seen:
@@ -372,14 +514,18 @@ def run_layers(
     skip_deps: bool = False,
     skip_if_carry_over: bool = True,
     imports_allowlist: list[str] | None = None,
+    project_root: Path | None = None,
 ) -> LayersResult:
     """Run both VAL-1 layers against the changed files.
 
     `imports_allowlist`: optional list of additional package names to treat as
     resolved by Layer B. Lenient: entries that name-normalize to empty are
     silently skipped (the CLI is the strict boundary that rejects empties).
+    `project_root`: the project under validation (defaults to CWD) -- Layer B's
+    internal-resolution arm resolves that project's OWN modules relative to it.
     """
     result = LayersResult()
+    root = project_root if project_root is not None else Path(".")
 
     if not skip_secrets:
         allowlist = _read_allowlist(secrets_allowlist)
@@ -394,7 +540,9 @@ def run_layers(
             if normalized:
                 declared.add(normalized)
         result.declared_deps = sorted(declared)
-        result.import_findings = scan_imports(changed_files, declared)
+        sink: list[dict] = []
+        result.import_findings = scan_imports(changed_files, declared, root, sink)
+        result.resolved_internal = sink
 
     return result
 
@@ -433,6 +581,19 @@ def _format_human(result: LayersResult) -> str:
                 f"    {f.message}\n"
             )
         out.append("\n")
+
+    if result.resolved_internal:
+        # m1/m2: keep the internal-resolution widening VISIBLE so over-suppression
+        # stays auditable. Count by zone; full rows are in --json (resolved_internal).
+        by_zone: dict[str, int] = {}
+        for row in result.resolved_internal:
+            by_zone[row.get("via", "?")] = by_zone.get(row.get("via", "?"), 0) + 1
+        zones = ", ".join(f"{v} {k}" for k, v in sorted(by_zone.items()))
+        out.append(
+            f"Layer B: {len(result.resolved_internal)} import(s) resolved as the "
+            f"project's own internal modules — not flagged ({zones}). "
+            f"(audit: resolved_internal in --json)\n\n"
+        )
 
     if not result.secret_findings and not result.import_findings:
         out.append("Clean — both layers passed.\n")
@@ -534,6 +695,8 @@ def main(argv: list[str] | None = None) -> int:
         skip_deps=args.skip_deps,
         skip_if_carry_over=not args.no_carry_over,
         imports_allowlist=args.imports_allowlist,
+        project_root=Path("."),  # the project under validation (CWD-relative,
+        # the same anchor as the pyproject/requirements resolution above)
     )
 
     if args.json:
