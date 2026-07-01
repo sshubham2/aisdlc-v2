@@ -52,6 +52,26 @@ class StaleVaultBaseError(Exception):
     usage-error exit (2)."""
 
 
+class DuplicateAppendSuppressed(Exception):
+    """Raised by a ``vault_edit append`` mutate when a BOUNDED, ``--stdin``-scoped
+    duplicate is detected (SC-041 / slice-050; ADR-040 + ADR-043): the identical
+    element was appended within the recent last-K window, so the append is
+    suppressed as idempotent SUCCESS and the target is left UNTOUCHED.
+
+    A DIRECT ``Exception`` subclass ON PURPOSE — NOT ``ValueError``/``OSError`` — so
+    ``vault_edit._run_mutate``'s generic error handlers (which map ValueError /
+    TimeoutError / OSError to exit 2) do NOT swallow it into a non-zero exit. A
+    non-zero exit would re-trigger the harness retry this guard exists to absorb, so
+    ``_cmd_append`` catches this in its OWN dedicated handler and maps it to exit 0 +
+    a machine-readable stdout signal. Carries the target ``array`` name and the
+    post-op ``count`` (unchanged — the append did not land) for that signal."""
+
+    def __init__(self, *, array: str, count: int):
+        super().__init__(f"duplicate append suppressed on array {array!r}")
+        self.array = array
+        self.count = count
+
+
 def _normalize_eol(data: bytes) -> bytes:
     """CRLF→LF ONLY. Trailing newlines and every other byte are preserved verbatim
     (critique-review M-add-1 / [[ADR-088]]): a content change that differs only in
