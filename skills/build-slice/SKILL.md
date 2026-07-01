@@ -41,7 +41,7 @@ if [ -n "$SDIR" ]; then cat "$SDIR/critique.json" 2>/dev/null || true; else echo
 1. Find the active slice folder. Read `mission-brief.json`, `design.json`, `critique.json`, `critique-review.json` (if present — incorporate any MUST-FIX items as hard build constraints), and any ADRs created this slice.
 2. If `critique.json` is absent: this is OK **iff** the Critic was deliberately skipped. Read `milestone.json` `progress[]` and look for `{ "step": "critique", "done": "skipped" }` (the `/critique` skip path writes this on a low-tier slice with no mandatory triggers — `done` is the string `"skipped"`, not the boolean `true`). Skip recorded → proceed (Builder self-review applies). No such marker → STOP: run `/critique` first.
 3. If `critique.json` shows `"verdict": "blocked"`: STOP — address blockers before build.
-4. **TPHD-1 pre-flight**: on a `test_first` slice the `test_first_plan[]` is **build-authored** (Step 1 drafts it from the ACs — by design it is NOT in `mission-brief.json` at `/slice`, because the test functions do not exist yet). So this pre-flight verifies the **planned** Test paths/functions the builder is about to author cover every AC, NOT a pre-existing mission-brief table. Flag any drift for user fix BEFORE entering plan mode.
+4. **TPHD-1 pre-flight**: on a `test_first` slice the `test_first_plan[]` PENDING stub is **producer-scaffolded** — one row per AC, written by `/slice` (Step 5.3) or by the Step-1 idempotent backstop below (slice-051/ADR-042). The builder then authors each row's `test_path`/`test_function` and walks it to PASSING at build. So this pre-flight verifies the planned test paths/functions the builder is about to author cover every AC. Flag any drift for user fix BEFORE entering plan mode.
 5. **CRP-1** (critique-review prerequisite):
    ```bash
    $PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_prerequisite_audit.py" <vault>/slices/slice-NNN-<name>
@@ -132,11 +132,16 @@ Create `<vault>/slices/slice-NNN-<name>/build-log.json` now (empty `events[]`, s
 if it does not exist — Step 4 appends events to it *before* risky tool calls, so it must exist before execution
 starts, not be created at Step 8.
 
-**`test_first` slice — draft the `test_first_plan[]` NOW (TF-1 / SC-023):** if `mission-brief.json` has
-`variants.test_first == true`, draft the `test_first_plan[]` at build start — one row per AC, drafted from the ACs,
-each `{ac, status, test_path, test_function}`. Rows may start at `status: "PENDING"` (the non-strict audit accepts
-an ac-only row; the test functions do not exist yet); you walk each `PENDING -> WRITTEN-FAILING -> PASSING` in
-Step 4 as the tests are written. Authoring it HERE — not at the Step-6 gate — is what prevents the surprise
+**`test_first` slice — ensure the `test_first_plan[]` exists NOW (TF-1 / SC-023; slice-051/ADR-042 backstop):** if
+`mission-brief.json` has `variants.test_first == true`, run the shared scaffolder as an idempotent BACKSTOP at build start,
+so the `test_first_plan[]` is present even for a slice opened before the `/slice`-time producer existed:
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/scaffold_test_first_plan.py" "<vault>/slices/slice-NNN-<name>/mission-brief.json"
+```
+It appends one `{ac, status: "PENDING", test_path, test_function}` row per AC (idempotent — a no-op when `/slice` already
+scaffolded the plan; it never clobbers a builder-authored row). **Surface/halt on a non-zero exit.** Then, still at build
+start, the builder fills each row's `test_path`/`test_function` and walks it `PENDING -> WRITTEN-FAILING -> PASSING` in
+Step 4 as the tests are written. Ensuring the plan HERE — not at the Step-6 gate — is what prevents the surprise
 pre-finish FAIL: the Step-6 `brief_variants_audit --variant test_first --strict-pre-finish` gate requires every
 row `PASSING` (at least one per AC). The canonical shape is `SPECS['test_first']` in `scripts/lib/brief_variants_audit.py`.
 

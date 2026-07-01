@@ -120,9 +120,11 @@ its cost. **Pre-suggest** by slice shape: a bug-fix → suggest `test_first`; a 
 `walking_skeleton`; an unknown-shaped area → `exploratory_charter`; otherwise none.
 
 - **`test_first`** (TDD) — write the failing tests BEFORE the implementation. Activates TF-1 (the `/build-slice` pre-finish
-  gate) and TPHD-1 (test-plan harmonization). TF-1 requires a builder-authored **`test_first_plan[]`** (one
-  terminal/PASSING row per AC, each `{ac, status, test_path, test_function}` pointing at a real on-disk test) --
-  authored at BUILD time, NOT here, because the test functions do not exist yet at `/slice`.
+  gate) and TPHD-1 (test-plan harmonization). The producer **scaffolds a PENDING `test_first_plan[]` stub at `/slice`**
+  (Step 5.3 runs `scaffold_test_first_plan.py`), one `{ac, status: "PENDING", test_path, test_function}` row per AC. The
+  builder then fills each row's `test_path`/`test_function` and walks it to PASSING — the test bodies are **authored by the
+  builder at build** time, because the test functions do not exist yet at `/slice`. TF-1 requires **one PASSING row per AC**,
+  each pointing at a real on-disk test (the PENDING stub is a head start, never a gate bypass).
 - **`walking_skeleton`** (Cockburn) — the thinnest end-to-end cut that exercises EVERY architectural layer.
   Activates WS-1, which at `/validate-slice` **actually runs** each layer's verification command (`--execute`,
   reality contact — 3.1).
@@ -137,7 +139,7 @@ Write the result into `mission-brief.json` (Step 5.3):
   fills the exact commands.
 - **exploratory_charter chosen** → also write `exploratory_charters[]`: one row per mission (`mission`, `timebox`,
   `status: "pending"`, `findings: ""`).
-- **test_first chosen** → no field is written *here*. The `test_first_plan[]` it activates is **authored by the builder at BUILD time** (the test functions do not exist yet), one PASSING row per AC; `/build-slice` drafts it from these ACs at build start and the TF-1 pre-finish gate verifies it. See the Shapes block below for its shape.
+- **test_first chosen** → the producer scaffolds a PENDING `test_first_plan[]` stub *here* at `/slice` (Step 5.3 runs `scaffold_test_first_plan.py`), one `{ac, status: "PENDING", test_path, test_function}` row per AC. The row bodies (`test_path`/`test_function` + the walk to PASSING) are **authored by the builder at build** time, because the test functions do not exist yet; the TF-1 pre-finish gate then requires one PASSING row per AC. (`/build-slice` re-runs the same scaffolder as an idempotent backstop for slices opened before this existed.) See the Shapes block below for its shape.
 
 Shapes (omitted from the standard mission-brief example — present only when opted in): `test_first_plan[]` = `{ac, status: "PENDING"|"WRITTEN-FAILING"|"PASSING",
 test_path, test_function}` -- its canonical shape is `SPECS['test_first']` in
@@ -182,6 +184,16 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
 5. **Write the scaffold** to the **external vault store**:
    - `<vault>/slices/<folder>/mission-brief.json` (schema: `examples/mission-brief.json`)
    - `<vault>/slices/<folder>/milestone.json` (schema: `examples/milestone.json`; `stage: "spike"`, `next_action: "/risk-spike"`)
+   - **If `variants.test_first` is true — scaffold the PENDING `test_first_plan[]` NOW (PRIMARY producer; slice-051/ADR-042).**
+     Immediately after writing mission-brief.json, run the shared scaffolder against it so the brief arrives at
+     `/build-slice` already carrying one PENDING row per AC (never hand-authored mid-build):
+     ```bash
+     $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/scaffold_test_first_plan.py" "<vault>/slices/<folder>/mission-brief.json"
+     ```
+     It appends one `{ac, status: "PENDING", test_path: "", test_function: ""}` row per declared AC (idempotent; a
+     cross-volume-safe same-directory atomic write). **Surface/halt on a non-zero exit** — the scaffold action is
+     observable, never fire-and-forget (must-not-defer). The builder fills each row's `test_path`/`test_function` and
+     walks it to PASSING at build.
    Failure → `--release` the claim (step 3) + `git -C <main> worktree remove <wt_path>`, then STOP.
 6. **Standalone repro relocation (Step 2 "Row present" path)** — a `/repro` ran *before* `/slice` and left the
    failing test untracked on the MAIN tree. Relocate the ONE test named by its shippability row into `$wt` —
