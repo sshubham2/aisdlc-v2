@@ -25,10 +25,17 @@ accepted iff it lands under the root, a ``..``-escape is a usage error):
       Filter array ``A``'s elements (all ``--where`` equalities must match) →
       stdout as a pretty JSON list.
 
-  append  --file F [--array A] (--json S | --content-file C | --stdin)
+  append  --file F [--array A] (--json S | --content-file C | --stdin) [--allow-duplicate]
       SVW-1 LOCKED read-modify-write: append the element to array ``A`` (auto-
       detected when the doc has exactly one list field). A list element EXTENDS;
       an object/scalar APPENDS. Creates the file/array when absent.
+      DUPLICATE-SAFE (SC-041 / ADR-040 + ADR-043): on the ``--stdin`` path ONLY, an
+      element byte-identical (canonically) to one of the last ``_DEDUP_WINDOW``
+      entries (id-stripped for managed kinds) is SUPPRESSED as idempotent success —
+      exit 0, the array UNCHANGED (count +0), a machine-readable ``{"suppressed":true,
+      "array":…,"count":…}`` line on stdout (a normal append prints nothing to stdout)
+      + a ``DUPLICATE_SUPPRESSED`` note on stderr. ``--json``/``--content-file`` are
+      never deduped; ``--allow-duplicate`` forces a genuine immediate duplicate through.
 
   update  --file F --array A --id ID [--id-key K] [--assumption AID]
           (--set k=v ...) [--append FIELD JSON ...]
@@ -86,6 +93,7 @@ if str(_PLUGIN_ROOT) not in sys.path:
 from scripts.lib import _stdout, id_allocator
 from scripts.lib._vault_paths import VAULT_ROOT
 from scripts.lib._vault_write import (
+    DuplicateAppendSuppressed,
     StaleVaultBaseError,
     safe_append_text,
     safe_mutate_text,
@@ -101,6 +109,44 @@ _MANAGED_KIND = {
     ("candidates.json", "candidates"): "sc",
     ("shippability.json", "rows"): "ship",
 }
+
+# slice-050 / SC-041 (ADR-040 + ADR-043): the bounded, --stdin-scoped duplicate-append guard.
+# K = how many trailing elements an identical re-submission is checked against. Small on purpose:
+# the bug is an IMMEDIATE re-submission (a lock-timeout retry / heredoc re-run), so a short window
+# catches it while a legitimately-identical entry appended much later -- or via a non-stdin path --
+# is NEVER suppressed (the over-dedup that critique B1 corrected the earlier whole-array design to avoid).
+_DEDUP_WINDOW = 5
+
+
+def _canon(elem: Any) -> str:
+    """Canonical JSON string for duplicate comparison (sort_keys, compact, unicode preserved).
+    A DIRECT string compare -- no hash: nothing is persisted/indexed here, so a fingerprint would
+    only add a collision surface (slice-050 m2)."""
+    return json.dumps(elem, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def _dedup_key(existing: Any, kind: str | None) -> str:
+    """Canonical key of an ALREADY-STORED element with the managed-kind minted id stripped, so it
+    compares equal to the PRE-mint supplied element (managed ids are minted AFTER the element is
+    read, so an unstripped compare would never match a retry)."""
+    if kind is not None and isinstance(existing, dict):
+        idk = id_allocator.id_key(kind)
+        if idk in existing:
+            existing = {k: v for k, v in existing.items() if k != idk}
+    return _canon(existing)
+
+
+def _is_bounded_duplicate(element: Any, arr: list, kind: str | None) -> bool:
+    """True iff `element` (pre-mint, supplied on --stdin) duplicates a RECENT existing entry within
+    the last-K window. A LIST payload (--extend) is compared as a UNIT against the immediately-
+    preceding block of the same length (M2); a dict/scalar against the last K elements."""
+    if isinstance(element, list):
+        n = len(element)
+        if n == 0 or len(arr) < n:
+            return False
+        return [_dedup_key(e, kind) for e in arr[-n:]] == [_canon(x) for x in element]
+    target = _canon(element)
+    return any(_dedup_key(e, kind) == target for e in arr[-_DEDUP_WINDOW:])
 
 
 # ── path + JSON helpers ────────────────────────────────────────────────────────
@@ -341,6 +387,12 @@ def _cmd_append(args: argparse.Namespace) -> int:
         # IN-LOCK and REJECTS any caller-supplied id (the no-explicit-PK guard). The seed floor is
         # computed once from live ∪ archive; the persisted counter is authoritative thereafter.
         kind = _managed_kind_for(_root(args), target, key)
+        # slice-050 / SC-041 (ADR-040 + ADR-043): bounded, --stdin-scoped duplicate guard. Runs
+        # BEFORE the id-mint so the PRE-mint element compares against the id-stripped existing
+        # records. On a hit, raise DuplicateAppendSuppressed — safe_mutate_text leaves the target
+        # UNTOUCHED on a raise (no temp, no replace), and _cmd_append maps the raise to exit 0.
+        if args.stdin and not args.allow_duplicate and _is_bounded_duplicate(element, arr, kind):
+            raise DuplicateAppendSuppressed(array=key, count=len(arr))
         if kind is not None:
             id_allocator.reject_supplied_id(kind, element)
             seed = id_allocator.seed_max_for(_root(args), kind, data)
@@ -357,7 +409,21 @@ def _cmd_append(args: argparse.Namespace) -> int:
                 data["_plugin_version"] = ver  # skew detection (4.5); readers WARN on a newer stamp
         return _dump(data)
 
-    return _run_mutate(target, mutate)
+    try:
+        return _run_mutate(target, mutate)
+    except DuplicateAppendSuppressed as dup:
+        # slice-050 / SC-041 (M-add-1): idempotent SUCCESS. The identical --stdin element is
+        # already present within the recent window, so the desired end state (one record) holds.
+        # Exit 0 — a non-zero would re-trigger the harness retry that CAUSED the bug. The
+        # suppression is surfaced on BOTH a machine-readable STDOUT signal (callers that discard
+        # stderr can still branch on it; a normal append prints nothing to stdout) AND a greppable
+        # stderr note. The array count is +0 (the documented count-observable contract, m1).
+        print(json.dumps({"suppressed": True, "array": dup.array, "count": dup.count},
+                         ensure_ascii=False))
+        _err(f"DUPLICATE_SUPPRESSED array={dup.array} count={dup.count} — identical --stdin "
+             f"element already present in the last {_DEDUP_WINDOW}; append skipped "
+             f"(array unchanged; use --allow-duplicate to force)")
+        return 0
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
@@ -596,6 +662,9 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--json", default=None, help="the element as a JSON string")
     g.add_argument("--content-file", default=None, help="read the element JSON from this file")
     g.add_argument("--stdin", action="store_true", help="read the element JSON from stdin")
+    ap.add_argument("--allow-duplicate", action="store_true",
+                    help="bypass the bounded --stdin duplicate guard (force a genuine "
+                         "immediate duplicate through; SC-041 / ADR-043)")
 
     up = sub.add_parser("update", parents=[common], help="SVW-1 locked record update")
     up.add_argument("--file", required=True)
