@@ -68,11 +68,17 @@ For each prior accepted proposal in the log: count miss instances in that catego
 
 Calibration runs in BOTH directions: **ADD** the checks the Critic was missing (1a–1d above), and **LIGHTEN** the
 model-on-model gates/checks that have added no value. Hand the agent the recent gate-log rows for the
-**model-on-model gates ONLY** — it computes precision and quiet-rate and proposes any lightening:
+**model-on-model gates ONLY**, PLUS the per-gate precision/recall from the SHIPPED helper
+(`triage_precision.gate_precision_recall` — the SAME computation `/pulse` uses; deterministic, not
+model-eyeballed), and it proposes any lightening. **`critique-review` precision is now computable** here: once its
+rows carry `findings_real` (slice-052/ADR-045), the helper includes it, so DR-1 is measured on gate-log data, not
+mined from reflection prose:
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
 $PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; M={'critique','critique-review','code-review'}; print(json.dumps([e for e in rows if e.get('gate') in M and e.get('kind') != 'miss'],indent=2))" "$VAULT"
+# per-gate precision/recall via the shipped, tested computation (absent findings_real -> UNKNOWN, never 0):
+for g in critique critique-review code-review; do $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/triage_precision.py" --gate-precision --gate "$g" --gate-log "$VAULT/gate-log.json"; done
 ```
 
 **HARD RULE — the reality spine never lightens.** The filter passes ONLY `critique` / `critique-review` /

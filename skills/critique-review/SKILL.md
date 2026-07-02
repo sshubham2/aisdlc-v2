@@ -135,19 +135,15 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type critique-rev
 Update `<vault>/slices/slice-NNN-<name>/milestone.json`: `stage: "critique-review"`,
 `next_action: "/critique Step 4.5 TRI-1"`.
 
-### Step 5b — record gate outcome (measurement spine)
+### Step 5b — the gate outcome is recorded at /critique Step 4.5 (ADR-045), NOT here
 
-One row per slice into `<vault>/gate-log.json` (roadmap Theme 8 / plan Phase 0). The meta-Critic is a
-**low** reality-contact gate (the model grading the model); `gate_log.py` stamps that:
-
-```bash
-# verdict = accept|adjust|extend; findings-count = number of missed[] findings (issues the meta-Critic surfaced)
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
-    --gate critique-review --slice <slice-NNN-name> \
-    --verdict <accept|adjust|extend> --findings-count <len(missed[])> \
-  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
-```
+The critique-review (DR-1) gate-log row is **no longer emitted here.** It was previously written at this point —
+BEFORE TRI-1 — so it could only carry `--findings-count` and never the `findings_real`/`findings_noise` split (the
+ratified dispositions do not exist yet at Step 5b, which blinded `/critic-calibrate` 1e precision + `/pulse`). Per
+**ADR-045 (slice-052)** the row is now emitted at **`/critique` Step 4.5**, post-TRI-1, where `triage_precision.py`
+classifies the ratified `^M-add-` dispositions — exactly ONCE, and ONLY when the meta-Critic ran (a DR-1-skipped
+slice emits ZERO rows; no phantom `count=0` row). The meta-Critic is still a **low** reality-contact gate. Do NOT
+re-add a gate-log append here — `/critique` Step 4.5 is the single writer; a second writer would double-emit.
 
 ## Return
 

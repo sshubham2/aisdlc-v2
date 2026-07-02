@@ -25,6 +25,18 @@
     {
       "at": "<ts>",
       "slice": "slice-021",
+      "gate": "critique-review",
+      "verdict": "extend",
+      "findings_count": 2,
+      "reality_contact": "low",
+      "findings_real": 2,
+      "findings_noise": 0,
+      "mode": "standard",
+      "tier": "medium"
+    },
+    {
+      "at": "<ts>",
+      "slice": "slice-021",
       "gate": "validate-slice",
       "verdict": "pass",
       "findings_count": 0,

@@ -52,8 +52,10 @@ or for a post-ship escape attributed to the introducing slice:
 
 `findings_real` + `findings_noise` (plan Phase 0.2) make per-gate PRECISION
 computable. They are known at append time for the gates that triage their own
-findings (today: `critique`, from the TRI-1 dispositions — accepted-* = real,
-overridden = noise); other gates omit them.
+findings (today: `critique` + `critique-review`, from the TRI-1 dispositions —
+accepted-* = real, overridden = noise; the `critique-review` row classifies ONLY
+the meta-Critic's `^M-add-` dispositions via `triage_precision.py`, slice-052/ADR-045);
+other gates omit them.
 
 Two output modes (mirrors drift-check/build_entry.py):
   - default: print the row JSON to STDOUT -> pipe into `vault_edit append --stdin`.
