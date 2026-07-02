@@ -20,7 +20,7 @@ Modes:
                                entry, run once at gate-adoption; never re-seals an already-
                                baselined id, so it cannot launder a tamper).
 
-Exit codes (precedence 2 > 1 > 3 > 0):
+Exit codes (precedence 2 > 4 > 1 > 3 > 0):
   0  clean (all sealed ADRs match) OR NO-OP PASS (no decisions/ dir) OR a successful seal/backfill
   1  tamper: a SEALED ADR's immutable field changed in place (names the ADR id + field)
   2  usage/degrade: decisions/ unreadable, an ADR is non-JSON / missing immutable fields,
@@ -28,10 +28,17 @@ Exit codes (precedence 2 > 1 > 3 > 0):
   3  unsealed: an ADR is present on disk with no baseline entry ('run --backfill') -- a
      DISTINCT code from tamper, so a gate that aggregates exit codes can tell 'needs one-time
      backfill' from 'someone edited an ADR' (critique B1)
+  4  deleted: a SEALED baseline id has NO on-disk ADR file (names the id) -- an immutable record
+     was removed out-of-band. Ranked ABOVE tamper because removing a locked record is at least as
+     severe as editing one; a co-occurring tamper still surfaces in result['tampered'] / --json
+     even when the scalar exit is 4 (ADR-049 / SC-068).
 
-Out of scope (code-review m1): the threat model is in-place EDITS, not deletion -- a sealed ADR
-REMOVED from disk is NOT flagged (verify iterates on-disk ADRs, not baseline keys). A conscious
-exclusion, not a silent gap; a future slice can fold in a missing-from-disk signal if warranted.
+Deletion detection rests on the baseline being trusted (the vault is NOT git-tracked): a
+co-removal of BOTH an ADR file AND its well-formed baseline entry stays undetected (exit 0). That
+covers the accidental / tooling-deletion threat this closes; it does NOT defend against an adversary
+with baseline write access (the dropped hash-chain-over-baseline would -- deliberately out of scope,
+SC-068 m2). Editing a sealed ADR in place is still exit 1; a legitimately superseded ADR stays on
+disk (supersession is append-a-new-ADR, never remove) so it never enters the deleted set.
 
 Mirrors the release_advance_audit.py idiom. VERIFY is read-only and NEVER seals (else an
 edit+reseal would launder a tamper). Reads/writes utf-8.
@@ -151,7 +158,7 @@ def _write_baseline(baseline_path: Path, data: dict) -> None:
 
 def verify(decisions: Path) -> dict:
     result: dict = {"mode": "verify", "decisions": str(decisions),
-                    "tampered": [], "unsealed": [], "clean": False, "exit_code": 0}
+                    "tampered": [], "unsealed": [], "deleted": [], "clean": False, "exit_code": 0}
     try:
         adrs = _load_adrs(decisions)
         baseline = _load_baseline(decisions / BASELINE_NAME)
@@ -159,6 +166,13 @@ def verify(decisions: Path) -> dict:
         result.update(exit_code=2, degrade=d.message)
         return result
     sealed = baseline.get("adrs", {})
+    # The third set-reconciliation arm (ADR-049): a SEALED baseline id with no on-disk
+    # ADR file was DELETED out-of-band. verify() otherwise only checks on-disk ADRs, so a
+    # removed sealed record was invisible (exit 0 clean). Iterate the baseline's sealed ids
+    # (the trusted commitment) and diff against the on-disk set. Computed AFTER the _Degrade
+    # early-return above, so exit 2 (unreadable/corrupt) keeps top precedence by construction.
+    on_disk_ids = {adr_id for adr_id, _ in adrs}
+    result["deleted"] = [sid for sid in sorted(sealed) if sid not in on_disk_ids]
     for adr_id, adr in adrs:
         if adr_id not in sealed:
             result["unsealed"].append(adr_id)
@@ -169,7 +183,13 @@ def verify(decisions: Path) -> dict:
             old = entry.get("fields", {})
             diverged = [f for f in IMMUTABLE_FIELDS if cur.get(f) != old.get(f)] or ["(immutable field)"]
             result["tampered"].append({"id": adr_id, "fields": diverged})
-    if result["tampered"]:
+    # Precedence 2 > 4 > 1 > 3 > 0 (degrade already returned at exit 2 above). Deletion (4)
+    # ranks ABOVE tamper (1) -- removing an immutable record is at least as severe as editing
+    # one. Each class list is populated independently, so a co-occurring tamper still surfaces
+    # in result["tampered"] (and --json) even when the scalar headline is 4.
+    if result["deleted"]:
+        result["exit_code"] = 4
+    elif result["tampered"]:
         result["exit_code"] = 1
     elif result["unsealed"]:
         result["exit_code"] = 3
@@ -244,6 +264,10 @@ def _print_human(r: dict) -> None:
     if r.get("clean"):
         print("adr_append_only_audit: clean -- all ADRs match the append-only baseline.")
         return
+    if r.get("deleted"):
+        print(f"[adr-deleted] {', '.join(r['deleted'])} sealed but missing from disk -- an "
+              f"immutable record was removed; append-only forbids deletion: restore it from "
+              f"history, or supersede with a NEW ADR (never delete).", file=sys.stderr)
     for t in r.get("tampered", []):
         print(f"[adr-tamper] {t['id']}: immutable field(s) {', '.join(t['fields'])} changed in "
               f"place -- append-only: supersede with a NEW ADR, never edit.", file=sys.stderr)

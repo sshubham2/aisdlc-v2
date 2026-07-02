@@ -186,9 +186,12 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$A
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$AI_SDLC_VAULT_ROOT"
 ```
 `--seal "$ADR"` is SCOPED to the just-minted id ONLY -- never blanket (a blanket re-seal on every mint would
-re-open the trust window and launder an unrelated unsealed edit). A VERIFY **exit 1** here means a PRIOR ADR was
-edited in place out-of-band -- STOP and surface it, do NOT seal over it. (A project that already had ADRs *before*
-adopting this gate runs `adr_append_only_audit.py --vault "$AI_SDLC_VAULT_ROOT" --backfill` ONCE to baseline them.)
+re-open the trust window and launder an unrelated unsealed edit). **Treat ANY non-zero VERIFY here as STOP** and
+surface it, do NOT seal over it: **exit 1** = a PRIOR ADR was edited in place out-of-band; **exit 4** = a prior
+sealed ADR was DELETED from disk out-of-band (ADR-049). With precedence 2>4>1>3>0 a co-occurring deletion+edit
+returns the scalar 4, so inspect `--json result['tampered']` too before acting -- a masked tamper is still listed
+there. (A project that already had ADRs *before* adopting this gate runs `adr_append_only_audit.py --vault
+"$AI_SDLC_VAULT_ROOT" --backfill` ONCE to baseline them.)
 
 Reversibility tags:
 - **cheap** — 1-hour change: UI tokens, log format, library swap

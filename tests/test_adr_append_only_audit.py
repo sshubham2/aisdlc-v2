@@ -4,9 +4,10 @@ a content-hash baseline sidecar, proven over fixture decision sets.
 The vault is NOT git-tracked, so immutability is baselined by a SHA-256 over each ADR's
 NFC-normalized IMMUTABLE field subset, kept in a sidecar decisions/.adr-baseline.json.
 VERIFY (default, read-only): exit 0 clean / 1 tamper (sealed ADR's immutable field changed)
-/ 2 usage-or-degrade / 3 unsealed (present-but-unbaselined). --seal <id> is scoped; --backfill
-is the sole blanket seal. status + superseded_by are EXCLUDED from the hash so a legitimate
-supersession is hash-invariant.
+/ 2 usage-or-degrade / 3 unsealed (present-but-unbaselined) / 4 deleted (sealed baseline id
+missing from disk -- ADR-049 / SC-068). Precedence 2 > 4 > 1 > 3 > 0. --seal <id> is scoped;
+--backfill is the sole blanket seal. status + superseded_by are EXCLUDED from the hash so a
+legitimate supersession is hash-invariant.
 
 TF-1: written FAILING before the impl (the audit module does not exist yet).
 """
@@ -251,3 +252,79 @@ def test_pre_finish_gate_adr_append_behavioral(tmp_path):
     assert by["ADR-APPEND-1"].status == "FAIL", (
         "the gate must actually RUN the audit (decisions present + unbaselined -> exit 3 -> FAIL), "
         "not no-op/skip: " + by["ADR-APPEND-1"].summary)
+
+
+# ═══ slice-055 / SC-068 / ADR-049: a SEALED ADR deleted from disk is a DISTINCT exit 4 ═══
+
+# ── AC2: a sealed baseline id with no on-disk file is exit 4, named in result['deleted'] ──
+def test_deleted_sealed_adr_exit4(tmp_path):
+    d = _decisions(tmp_path)
+    _write_adr(d, "ADR-001")
+    _write_adr(d, "ADR-002")
+    _run("--decisions", str(d), "--backfill")          # seal both
+    (d / "ADR-002.json").unlink()                      # delete a SEALED ADR
+    r = _run("--decisions", str(d), "--json")
+    assert r.returncode == 4, "a deleted sealed ADR must be exit 4: " + r.stdout + r.stderr
+    parsed = json.loads(r.stdout)
+    assert parsed["deleted"] == ["ADR-002"], parsed
+    assert parsed.get("clean") is not True
+
+
+# ── AC4: BOTH the human ([adr-deleted] stderr) AND the --json output surface the deletion ──
+def test_deleted_surfaces_human_and_json(tmp_path):
+    d = _decisions(tmp_path)
+    _write_adr(d, "ADR-001")
+    _write_adr(d, "ADR-002")
+    _run("--decisions", str(d), "--backfill")
+    (d / "ADR-001.json").unlink()
+    # human mode: the [adr-deleted] signal goes to STDERR (fail-visible), naming the id
+    human = _run("--decisions", str(d))
+    assert human.returncode == 4
+    assert "[adr-deleted]" in human.stderr and "ADR-001" in human.stderr, human.stdout + human.stderr
+    assert "clean --" not in human.stdout
+    # json mode: the machine-readable output carries the deleted list
+    j = json.loads(_run("--decisions", str(d), "--json").stdout)
+    assert j["deleted"] == ["ADR-001"]
+
+
+# ── M2 / must_not_defer #1: degrade (exit 2) DOMINATES a co-occurring deletion ──
+def test_degrade_dominates_deletion_exit2(tmp_path):
+    d = _decisions(tmp_path)
+    _write_adr(d, "ADR-001")
+    _write_adr(d, "ADR-002")
+    _run("--decisions", str(d), "--backfill")
+    (d / "ADR-002.json").unlink()                      # a deletion (would be exit 4 alone)...
+    (d / "ADR-099.json").write_text("{ not json", encoding="utf-8")  # ...AND an unreadable ADR
+    r = _run("--decisions", str(d))
+    assert r.returncode == 2, ("an unreadable/corrupt decisions set must dominate the deletion "
+                               "signal (can't judge completeness of a set you can't read): "
+                               + r.stdout + r.stderr)
+
+
+# ── M2: deletion(4) dominates the scalar over tamper(1), but the tamper is NOT lost from --json ──
+def test_deletion_dominates_tamper_but_tamper_still_listed(tmp_path):
+    d = _decisions(tmp_path)
+    _write_adr(d, "ADR-001")
+    _write_adr(d, "ADR-002")
+    _run("--decisions", str(d), "--backfill")
+    (d / "ADR-001.json").unlink()                                  # deletion
+    _write_adr(d, "ADR-002", decision="## Decision\nTAMPERED")     # in-place edit of a SEALED ADR
+    r = _run("--decisions", str(d), "--json")
+    assert r.returncode == 4, "deletion must win the scalar exit over tamper: " + r.stdout + r.stderr
+    parsed = json.loads(r.stdout)
+    assert parsed["deleted"] == ["ADR-001"], parsed
+    assert [t["id"] for t in parsed["tampered"]] == ["ADR-002"], (
+        "the co-occurring tamper must still be reported in result['tampered'] even though the "
+        "scalar exit is 4 (no signal lost): " + str(parsed))
+
+
+# ── m1 + AC5: the exit-code TABLE names code 4 + new precedence, and the stale 'not flagged'
+#    Out-of-scope claim is GONE (deletion is now detected, not a conscious exclusion) ──
+def test_exit_code_table_docstring_names_deletion():
+    src = AUDIT.read_text(encoding="utf-8")
+    assert "2 > 4 > 1 > 3 > 0" in src, "the exit-code precedence string must be updated to 2 > 4 > 1 > 3 > 0"
+    assert "4  deleted:" in src, "the exit-code table must enumerate code 4 (deleted)"
+    # AC5: the old conscious-exclusion claim must be removed
+    assert "REMOVED from disk is NOT flagged" not in src, (
+        "the 'Out of scope' note must no longer claim a removed sealed ADR is NOT flagged -- "
+        "deletion is now detected (exit 4)")
