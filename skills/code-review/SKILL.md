@@ -55,10 +55,10 @@ else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
-paths='src/** skills/** agents/** scripts/** tests/**'
+paths=('src/**' 'skills/**' 'agents/**' 'scripts/**' 'tests/**')   # slice-056/ADR-050: a QUOTED bash array (elements quoted at assignment) expanded as "${paths[@]}" so git receives LITERAL pathspecs. The old unquoted `$paths` string was pathname-expanded by bash against the MAIN-tree cwd before git ran, silently dropping branch-only top-level files (e.g. tests/foo.py). NOT set -f (global noglob leaks on an early-abort path); NOT bare-dir (would change the pathspec strings).
 base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"   # SC-043: fork point vs the LOCAL integration branch (never origin/HEAD); always non-empty (HEAD fallback when no remote -- WT-ROOT-1)
-git -C "$wt" diff "$base" -- $paths 2>/dev/null | head -1200    # committed + uncommitted since fork (base is a ref or the HEAD fallback)
-git -C "$wt" ls-files --others --exclude-standard -- $paths 2>/dev/null | sed 's/^/NEW-UNTRACKED: /'
+git -C "$wt" diff "$base" -- "${paths[@]}" 2>/dev/null | head -1200    # committed + uncommitted since fork (base is a ref or the HEAD fallback)
+git -C "$wt" ls-files --others --exclude-standard -- "${paths[@]}" 2>/dev/null | sed 's/^/NEW-UNTRACKED: /'
 ```
 
 If the diff AND the untracked list are both empty → write a **schema-complete** `code-review.json` and stop. It
