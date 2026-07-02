@@ -87,6 +87,49 @@ def _probe(repo_root: str, args: list[str]) -> dict | None:
         return None
 
 
+def _batch_probe(repo_root: str, requests: list) -> dict | None:
+    """slice-053: run _crg_grounding_probe.py --batch ONCE for all deferred crg tokens. The request
+    array travels on stdin (dodges argv-length limits on a many-token run). Returns the parsed
+    {reachable, results:{token:{...}}} map, or None on any failure (non-zero exit / empty / bad JSON)
+    -- the caller maps every deferred token to source-unavailable (fail-closed OCSP contract, AC4)."""
+    try:
+        p = subprocess.run([sys.executable, str(_PROBE), "--repo-root", repo_root, "--batch"],
+                           input=json.dumps(requests), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", env=dict(os.environ))  # UTF-8 both ways
+    except Exception:
+        return None
+    if p.returncode != 0 or not p.stdout.strip():
+        return None
+    try:
+        return json.loads(p.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+class _Defer:
+    """A crg token that passed local validation (well-formed, in-tree, graph reachable) and is
+    deferred to the ONE batch probe. Carries the normalized path + optional symbol; the caller keys
+    it by the FULL token string (M1)."""
+    __slots__ = ("path", "symbol")
+
+    def __init__(self, path: str, symbol: str | None):
+        self.path = path
+        self.symbol = symbol
+
+
+def _classify_deferred(entry: dict, symbol: str | None) -> str | None:
+    """Phase C: map ONE deferred crg token's reachable-batch result entry to a verdict, with the SAME
+    field->reason mapping as the pre-batch crg arm. The caller has already handled batch-unreachable
+    (M-add-1) and absent-key (M2) as source-unavailable, so `entry` is a present, reachable result."""
+    if entry.get("ambiguous"):
+        return "ambiguous-match"
+    if not entry.get("file_resolved"):
+        return "not-indexed"  # healthy graph, path absent -> not hallucination-vs-unreachable ambiguous
+    if symbol is not None and not entry.get("symbol_present"):
+        return "symbol-absent"
+    return None
+
+
 def _head_iso(repo_root: str) -> str | None:
     try:
         p = subprocess.run(["git", "-C", repo_root, "log", "-1", "--format=%cI"],
@@ -115,8 +158,11 @@ def _wall(ts: str | None) -> _dt.datetime | None:
 
 
 def _classify(token, repo_root: pathlib.Path, vault_root: pathlib.Path | None,
-              crg_reachable: bool) -> str | None:
-    """Return None if verified, else an unverified reason."""
+              crg_reachable: bool):
+    """Phase A: classify one token LOCALLY. Returns None (verified), a str reason (terminal), or a
+    _Defer (a well-formed, in-tree, reachable crg token whose resolution is deferred to the ONE batch
+    probe -- slice-053). malformed / path-traversal / !crg_reachable crg tokens stay terminal here and
+    NEVER reach the batch (pre-probe short-circuit preserved)."""
     if not isinstance(token, str) or ":" not in token:
         return "malformed"
     scheme, _, rest = token.partition(":")
@@ -159,17 +205,8 @@ def _classify(token, repo_root: pathlib.Path, vault_root: pathlib.Path | None,
             return "malformed"  # path-traversal
         if not crg_reachable:
             return "source-unavailable"
-        pargs = ["--path", path] + (["--symbol", symbol] if symbol is not None else [])
-        res = _probe(str(repo_root), pargs)
-        if res is None or not res.get("reachable"):
-            return "source-unavailable"
-        if res.get("ambiguous"):
-            return "ambiguous-match"
-        if not res.get("file_resolved"):
-            return "not-indexed"  # healthy graph, path absent -> not hallucination-vs-unreachable ambiguous
-        if symbol is not None and not res.get("symbol_present"):
-            return "symbol-absent"
-        return None
+        # slice-053: defer resolution to the ONE batch probe (Phase B); the per-token _probe is gone.
+        return _Defer(path, symbol)
 
     return "malformed"
 
@@ -229,35 +266,67 @@ def verify(payload: dict) -> dict:
                        "public_surface_verified": False}
 
     docs: dict[str, dict] = {}
+    # slice-053: two-phase resolution. Phase A classifies every token locally into an ordered slot
+    # list per doc -- each slot is ("final", reason|None) or ("defer", token, symbol). crg tokens that
+    # survive local validation defer to ONE batch probe (Phase B); Phase C fills the deferred slots.
+    doc_slots: dict[str, list] = {}
+    deferred: dict[str, tuple] = {}  # token-string -> (path, symbol); de-dup key = FULL token (M1)
 
-    def _do_doc(name, tokens):
-        verified, unverified = [], []
+    def _slot_doc(name, tokens):
+        slots: list = []
         if not isinstance(tokens, list):
-            unverified.append({"token": json.dumps(tokens)[:120], "reason": "malformed"})
+            slots.append((json.dumps(tokens)[:120], ("final", "malformed")))
             log.append(f"{name}: grounding value is not a list -> malformed")
         else:
             for tok in tokens:
-                reason = _classify(tok, repo_root, vault_root, crg_reachable)
-                if reason is None:
-                    verified.append(tok)
+                res = _classify(tok, repo_root, vault_root, crg_reachable)
+                if isinstance(res, _Defer):
+                    deferred[tok] = (res.path, res.symbol)  # tok is a str for any _Defer (crg scheme)
+                    slots.append((tok, ("defer", tok, res.symbol)))
                 else:
-                    unverified.append({"token": tok if isinstance(tok, str) else json.dumps(tok)[:120],
-                                       "reason": reason})
-        docs[name] = {"verified": verified, "grounding_unverified": unverified}
+                    slots.append((tok, ("final", res)))
+        doc_slots[name] = slots
 
     if isinstance(grounding, dict):
         for name, tokens in grounding.items():
-            _do_doc(str(name), tokens)
+            _slot_doc(str(name), tokens)
     elif isinstance(grounding, list):
-        _do_doc("_malformed", grounding)  # not a per-doc map -> every entry malformed
-        for u in docs["_malformed"]["grounding_unverified"]:
-            u["reason"] = "malformed"
+        # not a per-doc map -> every entry malformed (never classified, so nothing defers to the batch)
+        doc_slots["_malformed"] = [
+            (tok if isinstance(tok, str) else json.dumps(tok)[:120], ("final", "malformed"))
+            for tok in grounding]
         log.append("grounding is a list, not a {doc: [tokens]} map -> all-unverified (malformed)")
     else:
-        docs["_malformed"] = {"verified": [],
-                              "grounding_unverified": [{"token": json.dumps(grounding)[:120],
-                                                        "reason": "malformed"}]}
+        doc_slots["_malformed"] = [(json.dumps(grounding)[:120], ("final", "malformed"))]
         log.append("grounding is neither a map nor a list -> malformed")
+
+    # Phase B: ONE batch probe for all deferred crg tokens (m1: skipped entirely when none deferred).
+    batch = _batch_probe(str(repo_root), [{"token": t, "path": p, "symbol": s}
+                                          for t, (p, s) in deferred.items()]) if deferred else None
+    batch_reachable = bool(batch and batch.get("reachable"))
+    batch_results = batch.get("results") if isinstance(batch, dict) else None
+
+    def _defer_reason(token, symbol):
+        # M-add-1: check batch-unreachable FIRST -> every deferred token source-unavailable before any
+        # per-token lookup (never per-token not-indexed on a globally-unreachable batch).
+        if not batch_reachable:
+            return "source-unavailable"
+        entry = batch_results.get(token) if isinstance(batch_results, dict) else None
+        if not isinstance(entry, dict):
+            return "source-unavailable"  # M2: absent key (a bug / genuinely absent) -> fail-closed
+        return _classify_deferred(entry, symbol)
+
+    # Phase C: assemble each doc in original token order.
+    for name, slots in doc_slots.items():
+        verified, unverified = [], []
+        for token, slot in slots:
+            reason = _defer_reason(slot[1], slot[2]) if slot[0] == "defer" else slot[1]
+            if reason is None:
+                verified.append(token)
+            else:
+                unverified.append({"token": token if isinstance(token, str) else json.dumps(token)[:120],
+                                   "reason": reason})
+        docs[name] = {"verified": verified, "grounding_unverified": unverified}
 
     # slice-040: public_surface verification leg. public_surface_verified is a ONE-WAY fail-closed
     # gate (parse-don't-validate): false by construction, set true at exactly ONE point below, only

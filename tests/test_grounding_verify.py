@@ -436,3 +436,192 @@ def test_public_surface_endpoints_not_verified(built_repo):
     assert "GET /widgets" not in block["verified"]
     assert "make_widget" in block["verified"]
     assert out["grounding_check"]["public_surface_verified"] is True
+
+
+# ============================================================================
+# slice-053: batch grounding probe (ONE CRG import + one stats call for N crg tokens)
+#   AC1  : _crg_grounding_probe.py --batch resolves N>1 tokens in ONE process -> a per-token map.
+#   AC2/AC5: verify() issues exactly ONE --batch subprocess for N>=2 crg tokens (0 when none).
+#   AC3  : behavior-preserving -- the whole existing golden suite above stays green; malformed /
+#          path-traversal tokens are classified BEFORE any batch probe (never reach it).
+#   AC4  : fail-closed -- batch unreachable / None -> every crg token source-unavailable.
+#   M1   : the batch map key is the FULL token; two tokens sharing a path but differing symbol each
+#          get their own verdict.
+#   M2   : a per-request exception -> present key (not-indexed under a reachable batch); an ABSENT
+#          key -> source-unavailable (a bug, fail-closed).
+#   M-add-1: Phase C checks batch.reachable FIRST -> all deferred source-unavailable before any lookup.
+#   m1   : no crg tokens -> the batch probe is skipped entirely (zero spawns).
+#   m2   : the batch queries query_graph ONCE per DISTINCT path (same-path/2-symbol collapse).
+#   M-add-2: --path stdout byte-shape is locked (no 'results' key; the batch-of-one wrapper).
+# ============================================================================
+
+# in-process import of both scripts (their own bootstrap adds the plugin root to sys.path for
+# scripts.lib._stdout; inserting the scripts dir lets us import the modules by bare name).
+_SCRIPTS = REPO / "skills" / "product-doc" / "scripts"
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+import grounding_verify as gv          # noqa: E402
+import _crg_grounding_probe as probe   # noqa: E402
+
+
+class _FakeProc:
+    def __init__(self, stdout, rc=0):
+        self.stdout = stdout
+        self.returncode = rc
+        self.stderr = ""
+
+
+def _make_fake_run(counter, batch_results=None):
+    """A subprocess.run stand-in for grounding_verify: a healthy --health, a counted --batch that
+    (by default) verifies every requested token, an unreachable --names, and an empty git proc."""
+    def fake_run(cmd, **kw):
+        args = list(cmd)
+        if "--health" in args:
+            return _FakeProc(json.dumps({"reachable": True, "total_nodes": 10, "last_updated": None}))
+        if "--batch" in args:
+            counter["batch"] += 1
+            reqs = json.loads(kw.get("input") or "[]")
+            if batch_results is not None:
+                return _FakeProc(json.dumps(batch_results))
+            results = {r["token"]: {"file_resolved": True, "symbol_present": True, "ambiguous": False}
+                       for r in reqs}
+            return _FakeProc(json.dumps({"reachable": True, "results": results}))
+        if "--names" in args:
+            return _FakeProc(json.dumps({"reachable": False, "names": [], "stems": [],
+                                         "ambiguous_names": [], "total_nodes": 10}))
+        return _FakeProc("", rc=0)  # git / anything else
+    return fake_run
+
+
+# ---- AC2 / AC5 / M3: exactly ONE --batch subprocess for N>=2 crg tokens across docs ----
+
+def test_one_batch_for_n_tokens(monkeypatch):
+    counter = {"batch": 0}
+    monkeypatch.setattr(gv.subprocess, "run", _make_fake_run(counter))
+    grounding = {"readme": ["crg:pkg/a.py::x", "crg:pkg/b.py::y"], "guide": ["crg:pkg/c.py::z"]}
+    out = gv.verify({"grounding": grounding, "repo_root": ".", "vault_root": "."})
+    assert counter["batch"] == 1  # M3: one --batch for 3 crg tokens over 2 docs
+    assert "crg:pkg/a.py::x" in out["docs"]["readme"]["verified"]
+    assert "crg:pkg/c.py::z" in out["docs"]["guide"]["verified"]
+
+
+# ---- m1: no crg tokens -> the batch probe is skipped entirely ----
+
+def test_zero_batch_when_no_crg_tokens(monkeypatch):
+    counter = {"batch": 0}
+    monkeypatch.setattr(gv.subprocess, "run", _make_fake_run(counter))
+    gv.verify({"grounding": {"readme": ["vault:concept.json", "file:pkg/a.py"]},
+               "repo_root": ".", "vault_root": "."})
+    assert counter["batch"] == 0
+
+
+# ---- AC3: malformed / path-traversal tokens are classified BEFORE any batch probe ----
+
+def test_malformed_and_traversal_never_batch(monkeypatch):
+    counter = {"batch": 0}
+    monkeypatch.setattr(gv.subprocess, "run", _make_fake_run(counter))
+    grounding = {"readme": ["crg:../../etc/passwd::x", "crg:*.py", "notoken"]}
+    out = gv.verify({"grounding": grounding, "repo_root": ".", "vault_root": "."})
+    assert counter["batch"] == 0  # every token short-circuits to malformed pre-probe
+    assert {u["reason"] for u in out["docs"]["readme"]["grounding_unverified"]} == {"malformed"}
+
+
+# ---- AC4 / M-add-1: batch unreachable -> EVERY deferred crg token source-unavailable ----
+
+def test_batch_unreachable_all_source_unavailable(monkeypatch):
+    monkeypatch.setattr(gv, "_probe",
+                        lambda root, args: {"reachable": True, "total_nodes": 5, "last_updated": None}
+                        if "--health" in args else None)
+    monkeypatch.setattr(gv, "_batch_probe", lambda root, reqs: {"reachable": False, "results": {}})
+    out = gv.verify({"grounding": {"d": ["crg:pkg/a.py::x", "crg:pkg/b.py::y"]},
+                     "repo_root": ".", "vault_root": "."})
+    reasons = [u["reason"] for u in out["docs"]["d"]["grounding_unverified"]]
+    assert reasons == ["source-unavailable", "source-unavailable"]
+    assert not out["docs"]["d"]["verified"]
+
+
+def test_batch_probe_none_all_source_unavailable(monkeypatch):
+    # AC4: the batch probe itself failing (None -> non-zero exit / empty stdout) is also fail-closed.
+    monkeypatch.setattr(gv, "_probe",
+                        lambda root, args: {"reachable": True, "total_nodes": 5, "last_updated": None}
+                        if "--health" in args else None)
+    monkeypatch.setattr(gv, "_batch_probe", lambda root, reqs: None)
+    out = gv.verify({"grounding": {"d": ["crg:pkg/a.py::x"]}, "repo_root": ".", "vault_root": "."})
+    assert out["docs"]["d"]["grounding_unverified"][0]["reason"] == "source-unavailable"
+    assert not out["docs"]["d"]["verified"]
+
+
+# ---- M2: per-request exception -> not-indexed (present key); absent key -> source-unavailable ----
+
+def test_batch_per_request_exception_not_indexed(monkeypatch):
+    monkeypatch.setattr(gv, "_probe",
+                        lambda root, args: {"reachable": True, "total_nodes": 5, "last_updated": None}
+                        if "--health" in args else None)
+    monkeypatch.setattr(gv, "_batch_probe", lambda root, reqs: {"reachable": True, "results": {
+        "crg:pkg/a.py::x": {"file_resolved": False, "symbol_present": None, "ambiguous": False},
+        "crg:pkg/b.py::y": {"file_resolved": True, "symbol_present": True, "ambiguous": False},
+    }})
+    out = gv.verify({"grounding": {"d": ["crg:pkg/a.py::x", "crg:pkg/b.py::y"]},
+                     "repo_root": ".", "vault_root": "."})
+    doc = out["docs"]["d"]
+    assert "crg:pkg/b.py::y" in doc["verified"]
+    assert {"token": "crg:pkg/a.py::x", "reason": "not-indexed"} in doc["grounding_unverified"]
+
+
+def test_batch_absent_key_source_unavailable(monkeypatch):
+    monkeypatch.setattr(gv, "_probe",
+                        lambda root, args: {"reachable": True, "total_nodes": 5, "last_updated": None}
+                        if "--health" in args else None)
+    monkeypatch.setattr(gv, "_batch_probe", lambda root, reqs: {"reachable": True, "results": {}})
+    out = gv.verify({"grounding": {"d": ["crg:pkg/a.py::x"]}, "repo_root": ".", "vault_root": "."})
+    assert out["docs"]["d"]["grounding_unverified"][0]["reason"] == "source-unavailable"
+
+
+# ---- AC1 / M1: real db, N>1, same path + two symbols -> a per-token map, each own verdict ----
+
+def test_batch_probe_same_path_two_symbols(built_repo):
+    reqs = [{"token": "T1", "path": "pkg/widget.py", "symbol": "make_widget"},
+            {"token": "T2", "path": "pkg/widget.py", "symbol": "ghostFlag"}]
+    p = subprocess.run([PY, str(PROBE), "--repo-root", str(built_repo), "--batch"],
+                       input=json.dumps(reqs), capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    out = json.loads(p.stdout)
+    assert out["reachable"] is True
+    assert set(out["results"].keys()) == {"T1", "T2"}       # keyed by the caller-minted token
+    assert out["results"]["T1"]["symbol_present"] is True   # make_widget present
+    assert out["results"]["T2"]["symbol_present"] is False  # ghostFlag absent, SAME file
+    assert out["results"]["T1"]["file_resolved"] is True
+    assert out["results"]["T2"]["file_resolved"] is True
+
+
+# ---- m2: the batch queries query_graph ONCE per DISTINCT path ----
+
+def test_batch_queries_once_per_distinct_path(monkeypatch):
+    calls = []
+    monkeypatch.setattr(probe, "_query_path", lambda q, root, target: calls.append(target) or [])
+    reqs = [{"token": "T1", "path": "pkg/widget.py", "symbol": "a"},
+            {"token": "T2", "path": "pkg/widget.py", "symbol": "b"},
+            {"token": "T3", "path": "pkg/other.py", "symbol": "c"}]
+    out = probe.resolve_batch(object(), "/repo", reqs, reachable=True)
+    assert calls.count("pkg/widget.py") == 1  # same path -> queried once despite two requests
+    assert calls.count("pkg/other.py") == 1
+    assert set(out["results"].keys()) == {"T1", "T2", "T3"}
+
+
+def test_batch_unreachable_empty_results():
+    out = probe.resolve_batch(object(), "/repo",
+                              [{"token": "T1", "path": "pkg/a.py", "symbol": "x"}], reachable=False)
+    assert out == {"reachable": False, "results": {}}
+
+
+# ---- M-add-2: --path stdout byte-shape is locked (no 'results' key) ----
+
+def test_path_probe_byte_shape(built_repo):
+    p = subprocess.run([PY, str(PROBE), "--repo-root", str(built_repo),
+                        "--path", "pkg/widget.py", "--symbol", "make_widget"],
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    out = json.loads(p.stdout)
+    assert set(out.keys()) == {"reachable", "file_resolved", "symbol_present",
+                               "ambiguous", "total_nodes", "last_updated"}
+    assert "results" not in out

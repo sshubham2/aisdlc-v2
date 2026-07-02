@@ -17,12 +17,23 @@ Contract:
   Usage:
     <py> _crg_grounding_probe.py --repo-root <dir> --health
     <py> _crg_grounding_probe.py --repo-root <dir> --path <repo-rel-path> [--symbol <name>]
+    <py> _crg_grounding_probe.py --repo-root <dir> --batch   (request array on stdin)
   stdout: ONE JSON line.
     --health        -> {"reachable": bool, "total_nodes": int, "last_updated": str|null,
                         "public_nodes": int, "embeddings_count": int}
                         (public_nodes = total - File - Test; slice-029 / ADR-019)
     --path          -> {"reachable": bool, "file_resolved": bool, "symbol_present": bool|null,
                         "ambiguous": bool, "total_nodes": int, "last_updated": str|null}
+    --batch         -> {"reachable": bool, "results": {<token>: {"file_resolved": bool,
+                        "symbol_present": bool|null, "ambiguous": bool}}}   (slice-053 / ADR-046)
+                       Imports CRG + runs list_graph_stats ONCE, then resolves every request via the
+                       SAME resolution body as --path (AC3 verdict-equivalence by construction). stdin
+                       is a JSON array of {"token": <caller-key>, "path": <repo-rel>, "symbol": <name>|null}
+                       (dodges argv-length limits on a many-token run). The result MAP is keyed by the
+                       caller-minted token (M1); a per-request exception still emits a PRESENT key with
+                       {file_resolved:false, symbol_present:null, ambiguous:false} (M2), so the caller
+                       re-classifies not-indexed under a reachable batch and reserves source-unavailable
+                       for reachable:false / a genuinely absent key. reachable:false -> results:{}.
   CRG not importable -> exit 3, empty stdout (caller maps to unreachable / AC3).
 """
 from __future__ import annotations
@@ -117,6 +128,62 @@ def _stats(q, repo_root: str):
     return (total > 0), total, s.get("last_updated"), public_nodes, embeddings_count
 
 
+def _query_path(q, repo_root: str, target: str) -> list:
+    """Run the deterministic file_summary lookup for ONE normalized repo-rel target. Returns the raw
+    results list ([] on any failure). Extracted from the --path body so --path and --batch share ONE
+    resolution query (slice-053; AC3 verdict-equivalence). Callers pass an ALREADY-normalized target."""
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            r = q.query_graph(pattern="file_summary", target=target,
+                              repo_root=repo_root, detail_level="standard")
+    except Exception:
+        r = None
+    return (r.get("results") or []) if isinstance(r, dict) else []
+
+
+def _verdict(results: list, symbol: str | None):
+    """Derive (file_resolved, symbol_present, ambiguous) from a file_summary results list. This is the
+    verbatim --path classification (slice-015 m1: the File node's absolute name is NOT a symbol member),
+    factored out so --path and --batch produce byte-identical per-token verdicts."""
+    file_nodes = [n for n in results if isinstance(n, dict) and n.get("kind") == "File"]
+    distinct_files = {n.get("name") for n in file_nodes}
+    ambiguous = len(distinct_files) > 1
+    file_resolved = len(file_nodes) >= 1 and not ambiguous
+    symbol_present = None
+    if symbol is not None:
+        symbols = {n.get("name") for n in results if isinstance(n, dict) and n.get("kind") != "File"}
+        symbol_present = symbol in symbols
+    return file_resolved, symbol_present, ambiguous
+
+
+def resolve_batch(q, repo_root: str, requests, reachable: bool) -> dict:
+    """slice-053 / ADR-046: resolve a vector of {token, path, symbol?} requests against an already-warmed
+    graph, returning {"reachable": bool, "results": {<token>: {file_resolved, symbol_present, ambiguous}}}.
+    reachable:false -> results:{} (caller maps every token to source-unavailable). m2: query_graph runs
+    ONCE per DISTINCT normalized path, fanning out the per-token symbol verdict. M2: a per-request
+    exception still emits a PRESENT key (fail-closed default) so the caller never loses a token."""
+    out: dict = {"reachable": bool(reachable), "results": {}}
+    if not reachable:
+        return out
+    by_target: dict[str, list] = {}  # m2: normalized target -> results list (query_graph once per path)
+    for item in requests if isinstance(requests, list) else []:
+        if not isinstance(item, dict):
+            continue
+        token = item.get("token")
+        if not isinstance(token, str):
+            continue
+        try:
+            target = _norm_repo_rel(str(item.get("path") or ""), repo_root)
+            if target not in by_target:
+                by_target[target] = _query_path(q, repo_root, target)
+            fr, sp, amb = _verdict(by_target[target], item.get("symbol"))
+            out["results"][token] = {"file_resolved": fr, "symbol_present": sp, "ambiguous": amb}
+        except Exception:
+            # M2: never drop a requested token -> present key, fail-closed verdict (-> not-indexed caller-side)
+            out["results"][token] = {"file_resolved": False, "symbol_present": None, "ambiguous": False}
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     ap = argparse.ArgumentParser()
@@ -125,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--symbol")
     ap.add_argument("--health", action="store_true")
     ap.add_argument("--names", action="store_true")  # slice-040: emit the public_surface reality set
+    ap.add_argument("--batch", action="store_true")  # slice-053: resolve many tokens in ONE process
     args = ap.parse_args(argv)
 
     try:
@@ -133,6 +201,18 @@ def main(argv: list[str] | None = None) -> int:
         return 3  # CRG not installed/importable in this interpreter -> caller degrades (AC3)
 
     reachable, total, last_updated, public_nodes, embeddings_count = _stats(q, args.repo_root)
+
+    if args.batch:
+        # slice-053: import CRG + list_graph_stats ONCE (above), then resolve every request in-process.
+        _stdout.reconfigure_stdin_utf8()  # UTF-8 request transport on stdin (must-not-defer)
+        raw = sys.stdin.read()
+        try:
+            requests = json.loads(raw) if raw.strip() else []
+        except json.JSONDecodeError:
+            requests = []
+        json.dump(resolve_batch(q, args.repo_root, requests, reachable),
+                  sys.stdout, ensure_ascii=False)
+        return 0
 
     if args.names:
         # slice-040: the public_surface reality set. set_ready (reachable) is the total_nodes>0
@@ -165,22 +245,10 @@ def main(argv: list[str] | None = None) -> int:
     symbol_present = None
     ambiguous = False
     if reachable:
-        target = _norm_repo_rel(args.path, args.repo_root)
-        try:
-            with contextlib.redirect_stdout(sys.stderr):
-                r = q.query_graph(pattern="file_summary", target=target,
-                                  repo_root=args.repo_root, detail_level="standard")
-        except Exception:
-            r = None
-        results = (r.get("results") or []) if isinstance(r, dict) else []
-        file_nodes = [n for n in results if isinstance(n, dict) and n.get("kind") == "File"]
-        distinct_files = {n.get("name") for n in file_nodes}
-        ambiguous = len(distinct_files) > 1
-        file_resolved = len(file_nodes) >= 1 and not ambiguous
-        if args.symbol is not None:
-            # m1: the File node's (absolute) name must NOT satisfy symbol membership
-            symbols = {n.get("name") for n in results if isinstance(n, dict) and n.get("kind") != "File"}
-            symbol_present = args.symbol in symbols
+        # slice-053: --path is now a batch-of-one over the SHARED resolution body (M-add-2/m4 byte-shape:
+        # this dict + json.dump are unchanged, so the golden suite proves per-token verdict equivalence).
+        results = _query_path(q, args.repo_root, _norm_repo_rel(args.path, args.repo_root))
+        file_resolved, symbol_present, ambiguous = _verdict(results, args.symbol)
 
     json.dump({"reachable": reachable, "file_resolved": file_resolved,
                "symbol_present": symbol_present, "ambiguous": ambiguous,
