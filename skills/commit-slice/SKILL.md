@@ -319,37 +319,47 @@ target slice itself, so the owner need not `cd` into the slice worktree.
 2. Origin remote present.
 
 **Cleanup flow:**
-1. **Resolve the target slice** (runs from anywhere):
+1. **Resolve the integration branch** (slice-022 M-add-1): `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root .)`. A slice merges to `uat`, so the classifier below (`git cherry origin/<default>` / `git merge-base origin/<default>`) and the post-merge `git checkout <default>` + `git pull --ff-only origin <default>` target `origin/uat` / `uat`, NOT the released trunk. STOP exit 2 if it does not resolve.
+2. `git fetch --prune origin <default>` (fresh refs so the classifier's `git cherry` / `git merge-base` against `origin/<default>` are accurate; explicit refspec required).
+3. **Resolve the target slice + its classification** — resolve-only; the merge-state classifier AND the single-sourced `authorize_remote_delete` (gh PR merged-state primary) run HERE, in Python. **§5d NEVER recomputes Signal A/B in bash** (M1/ADR-052 — the classification has exactly one home):
    ```bash
    $PY "${CLAUDE_SKILL_DIR}/scripts/resolve_sync_target.py" --repo-root . --vault "$AI_SDLC_VAULT_ROOT" --json
    ```
-   (Add `--slice slice-NNN` to target a specific slice.) `resolve_sync_target.py` is resolve-only (never deletes):
-   explicit `--slice` → archive-aware by-id; on a `slice/*` branch → resolves self (back-compat); else auto-detects
-   from local `slice/*` refs, **EXCLUDING worktree-backed in-flight slices** [M4], and two-signal-merged over the
-   survivors. Read the plan's `status`:
-   - `resolved` → use its `slice` / `branch` / `worktree_path` as `<branch>` below.
+   (Add `--slice slice-NNN` to target a specific slice.) Explicit `--slice` → archive-aware by-id; on a `slice/*`
+   branch → resolves self (back-compat); else auto-detects from local `slice/*` refs, **EXCLUDING worktree-backed
+   in-flight slices** [M4], merged over the survivors. Read the plan's `status`:
+   - `resolved` → use its `slice` / `branch` / `worktree_path` / `state` / `remote_delete_authorized` / `evidence`.
    - `ambiguous` → AskUserQuestion among `candidates` (or re-run with `--slice`); NEVER auto-pick.
    - `none` → STOP with the plan's `reason` (nothing merged-and-not-in-flight to clean). Pass `--slice` to clean a
      worktree-backed merged slice explicitly.
-2. `git fetch --prune origin <default> <branch>` (explicit refspec required for Signal B).
-3. **Resolve the integration branch** (slice-022 M-add-1): `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root .)`. A slice merges to `uat`, so the two-signal merged-detection below (`git cherry origin/<default>` / `git merge-base origin/<default>`) and the post-merge `git checkout <default>` + `git pull --ff-only origin <default>` target `origin/uat` / `uat`, NOT the released trunk. STOP exit 2 if it does not resolve.
-4. **Two-signal merged-state detection** on the RESOLVED `<branch>` (unchanged):
-   - **Signal A**: `git ls-remote --exit-code origin <branch>` returns non-zero (remote absent).
-   - **Signal B** (two-pass):
-     - Pass 1: `git cherry origin/<default> <branch>` → no `+` lines → YES.
-     - Pass 2 (fallback when Pass 1 has `+` lines): compute `BASE=$(git merge-base origin/<default> <branch>)` + `FILES=$(git diff --name-only BASE..<branch>)`.
-       - Empty-FILES guard: if FILES empty → Signal B = NO; STOP with diagnostic.
-       - Perf bound: if `BASE..origin/<default>` > 500 commits → STOP with diagnostic.
-       - Predicate: any commit C on `BASE..origin/<default>` whose touched-file set ⊇ FILES AND tree-state at FILES paths equals `<branch>^{tree}` → Signal B = YES (squash-merge detected).
-   - Both signals must be YES to proceed. (This assumes head-branch auto-delete is ON — Signal A = remote gone;
-     hardening the auto-delete-OFF case is **SC-018**, deferred at slice-008 TRI-1.)
-   - Signal A=NO: STOP — "Remote slice branch still exists. PR may be unmerged."
-   - Signal B=NO: STOP — "Slice commits not on `origin/<default>`. Re-run after PR merges."
-5. Confirm: "PR appears merged + remote-deleted. Confirm cleanup (checkout `<default>` + pull --ff-only + safe-delete `<branch>`)? (yes/no)"
-6. On yes (order load-bearing): `git checkout <default>` → `git pull --ff-only origin <default>` (NEVER a bare `git pull`) → idempotent worktree-remove guard (identical to 5b sub-step 5, using the plan's `worktree_path` when set) → `git branch -d <branch>` (safe-delete). From the main tree, no `cd` into the slice worktree is needed.
-7. Show `git log -1` + `git log --graph --oneline -5`.
+4. **Branch PURELY on the plan's `state`** (the sole selector — do NOT recompute the signals in bash, M1):
+   - `unmerged` → STOP — "Slice commits not on `origin/<default>`. Re-run after the PR merges."
+   - `in-flight-excluded` → STOP — "Target is worktree-backed (in-flight in this clone). Finish the slice first, or pass `--slice` to force."
+   - `merged-remote-absent` → **4a (auto-delete-ON local cleanup)** below.
+   - `merged-remote-lingering` → **4b (auto-delete-OFF remote cleanup)** below.
 
-**Critical rules — `--sync-after-pr`**: NEVER force-delete a branch (safe-delete only), NEVER omit `--ff-only`, NEVER omit the explicit fetch refspec, NEVER skip the both-signal AND, NEVER skip git hooks.
+   **4a — `merged-remote-absent` (auto-delete ON): LOCAL cleanup, NO remote push.**
+   <!-- SYNC-5D-ONPATH:BEGIN (M2 byte-stable region: local-only safe-delete, zero remote push) -->
+   Confirm: "PR merged + remote branch already deleted. Confirm local cleanup (checkout `<default>` + pull --ff-only + safe-delete `<branch>`)? (yes/no)"
+   On yes (order load-bearing): `git checkout <default>` → `git pull --ff-only origin <default>` (NEVER a bare `git pull`) → idempotent worktree-remove guard (identical to 5b sub-step 5, using the plan's `worktree_path` when set) → `git branch -d <branch>` (safe-delete). **NO `git push --delete` is issued on this path.** From the main tree, no `cd` into the slice worktree is needed.
+   <!-- SYNC-5D-ONPATH:END -->
+
+   **4b — `merged-remote-lingering` (auto-delete OFF): REMOTE cleanup, evidence-gated, irreversible-last.**
+   The remote head branch still exists but the PR is MERGED. If the plan's `remote_delete_authorized` is NOT `true`, **STOP with the plan `evidence` reason** (fail-closed — gh absent / non-GitHub origin / PR not MERGED ⇒ zero `push --delete`; M-add-2 — an OPEN PR protects a slice in-flight in another clone). Otherwise:
+   <!-- SYNC-5D-LINGERING:BEGIN (M-add-1 / AC3 evidence-rendering confirmation region) -->
+   i. **Evidence-rendering confirmation** (M-add-1 — an evidence check, NOT a rubber-stamp): render the authoritative evidence straight from the plan `evidence` — "PR #`<evidence.pr_number>` is MERGED (mergedAt `<evidence.merged_at>`) but its remote branch `<branch>` still **lingers** (head-branch auto-delete OFF). Confirm cleanup: checkout `<default>` + pull --ff-only + local safe-delete, then `git push origin --delete <branch>` (irreversible remote delete)? (yes/no)". On **no** → NO delete of any kind; STOP.
+   <!-- SYNC-5D-LINGERING:END -->
+   <!-- SYNC-5D-4BORDER:BEGIN (CR1/CR2 / ADR-053: actuator before local delete; safe-delete only, STOP on squash refusal) -->
+   ii. On yes (order load-bearing — **ADR-053 corrects ADR-052's ordering**): reversible steps FIRST → the remote-delete actuator runs **WHILE THE LOCAL BRANCH REF IS STILL LIVE** (its independent Signal-B re-verify reads the local `<branch>` — code-review CR1) → the local branch is deleted LAST. Concretely: `git checkout <default>` → `git pull --ff-only origin <default>` → idempotent worktree-remove guard (as 5b sub-step 5) → **THEN the named actuator, the ONLY remote-delete path** (before any local branch delete):
+      ```bash
+      $PY "${CLAUDE_SKILL_DIR}/scripts/remote_branch_delete.py" --branch <branch> --repo-root . --json
+      ```
+      It RE-CALLS `authorize_remote_delete` at point-of-use (independent gh re-check + Signal-B on the live local ref, B2) before issuing exactly `git push origin --delete <branch>`. Read the result JSON: `deleted` / `noop-already-absent` (exit 0) → continue to the local delete; `refused` (exit 3) → STOP with `reason` (authorization failed at point-of-use — fail-closed; the local branch is untouched, so a re-run can re-target — M4); `push-failed` (exit 4) → STOP, surface the `reason` + the literal `recovery_command` (`git push origin --delete <branch>`, re-runnable — M4). NEVER swallow a partial.
+   iii. **Local branch delete LAST** (after the actuator succeeded): `git branch -d <branch>` (safe-delete ONLY). On refusal because the branch was **squash-merged** (aisdlc-v2's own model, so safe-delete legitimately sees it as "not fully merged" — code-review CR2), STOP with the 5b-style hint: "Safe-delete refused (likely squash-merge). The remote branch is already deleted; inspect `git log <default>..<branch>` and remove the local branch manually once satisfied. Do NOT force-delete without understanding what's discarded." The remote is already gone, so this residual is cosmetic — a leftover local slice branch whose commits are authoritatively merged; a future `--sync-after-pr` classifies it as `merged-remote-absent` (4a, local-only). (An automatic gh-MERGED-gated informed force-delete is a broader change to the slice-008 "never force-delete" floor — filed as a follow-up candidate, out of scope here.)
+   <!-- SYNC-5D-4BORDER:END -->
+5. Show `git log -1` + `git log --graph --oneline -5`.
+
+**Critical rules — `--sync-after-pr`**: NEVER force-delete a branch (safe-delete only — STOP on a safe-delete refusal, never force it), NEVER omit `--ff-only`, NEVER omit the explicit fetch refspec, NEVER recompute the merge signals in bash (branch on the plan `state` — M1); the remote-delete actuator runs BEFORE the local branch delete (CR1 — its Signal-B re-verify needs the live local ref); issue the remote `git push origin --delete` ONLY via `remote_branch_delete.py`, ONLY on `merged-remote-lingering` with `remote_delete_authorized: true`, ONLY after the evidence-rendering yes (fail-closed on gh absent / non-GitHub — M-add-2), NEVER skip git hooks.
 
 ## Step 6 — mark the candidate shipped + archive it (CAND-1)
 
