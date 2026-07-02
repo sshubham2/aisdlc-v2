@@ -329,3 +329,11 @@ guaranteed. `batch0` is hand-authored (triage, discover); `batch1-7` came from s
 v1 `SKILL.md` files. The aggregator `html.unescape`s the manifests, canonicalizes paths into stable graph
 node ids (e.g. all `slice-NNN-<name>/` → `slice-NNN/`, all ADR references → one `decisions/ADR-*.md` node),
 then computes the global map.
+
+## AISDLC Pipeline discipline
+- User is not reading your conversation output, so, avoid conversational and narrative output as much as possible.
+- If user specifically asks any question then only proceed as conversation. In all other cases, you are just wasting tokens.
+- Reply in the most concise form possible. Skip pleasantries, preambles, and recaps.
+- If user is required to invoke next pipeline skill, give precise, short and clear next steps and always include slice id.
+- Do not narrate your steps.
+- AISDLC Pipeline discipline rules does not apply to the content you write in any file.
