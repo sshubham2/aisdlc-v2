@@ -383,7 +383,38 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
         --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
 ```
 
-(The `/critique-review` meta-Critic logs its OWN row when it runs at Step 3.5 — this row is the first Critic's.)
+(This row is the **first Critic's** — it counts ONLY first-Critic findings, never the meta-Critic's `M-add-*`.)
+
+**Then emit the `/critique-review` (DR-1) meta-Critic's OWN row — HERE, post-TRI-1 (ADR-045), NOT at
+critique-review Step 5b.** The meta row's `findings_real`/`findings_noise` are only knowable once TRI-1 has
+ratified the `M-add-*` dispositions, so it is emitted at this settlement point, exactly ONCE, and **only when a
+meta-Critic actually ran this slice** — `triage_precision.py` returns the flags when `critique-review.json`
+exists (and no `critique-review-skip` marker), or **nothing** when DR-1 was skipped, so a DR-1-skipped slice
+emits ZERO rows (no phantom `count=0` row that would inflate `/pulse` runs — M-add-1). It classifies ONLY the
+`^M-add-` dispositions via the shared SSOT rule (same real/noise sets as the first-Critic row above), degrading
+to count-only (never hard-raising to block the append) on a stray disposition:
+
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+cr_args="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/triage_precision.py" --critique-review-args --slice-dir "$SDIR")"; cr_rc=$?
+if [ "$cr_rc" != 0 ]; then
+  # CR1: a NON-ZERO exit (usage error / unreadable critique-review.json) must NOT masquerade as "DR-1 skipped".
+  echo "STOP: triage_precision --critique-review-args failed (rc=$cr_rc) -- cannot compute the DR-1 gate row; surface, never silently skip (must-not-defer: emission is fail-visible)." >&2
+elif [ -n "$cr_args" ]; then
+  # slice-026 portable per-run temp dir: $PY's gettempdir() so the git-bash write + the two
+  # Windows-Python tools (gate_log --out, vault_edit --content-file) resolve the SAME real path.
+  TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+  T="$(mktemp -d "$TMPD/aisdlc-dr1row.XXXXXX")"
+  # $cr_args word-splits into gate_log flags (--verdict V --findings-count N [--findings-real R --findings-noise K]); ASCII-only, safe unquoted
+  "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" --gate critique-review --slice <slice-NNN-name> $cr_args --mode <minimal|standard|heavy> --tier <low|medium|high> --out "$T/row.json" \
+    && "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$VAULT" --file gate-log.json --array entries --content-file "$T/row.json"; rc=$?
+  [ "$rc" = 0 ] || echo "STOP: critique-review gate-row append failed (rc=$rc) -- surface, never fire-and-forget (must-not-defer)" >&2
+  rm -rf "$T"
+else
+  echo "critique-review gate row: SKIPPED -- the meta-Critic (DR-1) did not run this slice (ADR-045/M-add-1: no phantom row)."
+fi
+```
 
 ## Step 5 — gate decision + milestone update
 

@@ -146,12 +146,15 @@ rows feed runs/raised/precision** — a miss row carries no `findings_count` and
 deflate `raised_rate`. Group by `gate` and compute per gate:
 - `runs` = number of **verdict** rows.
 - `raised` = verdict rows with `findings_count > 0`; `raised_rate` = `raised / runs`.
-- `precision` = `Σ findings_real / (Σ findings_real + Σ findings_noise)` over verdict rows — ONLY when those
-  fields are present (today: `critique`). Omit `precision` entirely when no row carries them (do NOT show 0%).
-- `misses` = number of **recall** (`kind == "miss"`) rows for this gate; `recall` = `Σ findings_real /
-  (Σ findings_real + misses)` — i.e. catches / (catches + misses) — ONLY when `findings_real` is present AND
-  `(catches + misses) > 0`. Omit `recall` when uncomputable; still show `missed <misses>` whenever `misses > 0`
-  (a miss is real signal even before recall is computable for that gate).
+- `precision` + `recall` + `misses` = computed by the SHIPPED helper
+  `triage_precision.gate_precision_recall(entries, gate)` (the SAME computation `/critic-calibrate` 1e uses — ONE
+  tested source, not eyeballed): precision = `Σ findings_real / (Σ findings_real + Σ findings_noise)` over verdict
+  rows; recall = `catches / (catches + misses)` where catches = `Σ findings_real`. A verdict row lacking
+  `findings_real` is UNKNOWN (excluded), NEVER 0; the helper returns `precision`/`recall` = null when uncomputable —
+  omit them then (do NOT show 0%), but still show `missed <misses>` whenever `misses > 0` (a miss is real signal
+  even before recall is computable). These fields are present today for `critique` + `critique-review`
+  (slice-052/ADR-045 populated the DR-1 row). Invoke:
+  `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/triage_precision.py" --gate-precision --gate <g> --gate-log "$VAULT/gate-log.json"`.
 - `reality_contact` = the rows' `reality_contact` (constant per gate): `high` / `medium` / `low`.
 - `last` = the most-recent **verdict** row's `verdict` (+ `slice`).
 Order the gates by `reality_contact` **high → medium → low** (reality-touching gates read first — Theme 2
