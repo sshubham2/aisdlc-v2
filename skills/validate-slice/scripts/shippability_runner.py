@@ -195,6 +195,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="Path to shippability.json (default: <vault>/shippability.json)")
     parser.add_argument("--timeout", type=float, default=None,
                         help="Per-segment timeout in seconds (default: none)")
+    parser.add_argument("--repo-root", type=Path, default=None,
+                        help="Checkout the catalog rows run against (default: resolved from the "
+                             "invocation cwd via _find_repo_root). slice-059: an EXPLICIT target so a "
+                             "caller (e.g. the /commit-slice integration-health gate) can point the "
+                             "run at a specific worktree instead of ambient cwd. Default None preserves "
+                             "the /validate-slice Step-6 behavior exactly.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -204,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        result = run_catalog(catalog_path, timeout=args.timeout)
+        result = run_catalog(catalog_path, repo_root=args.repo_root, timeout=args.timeout)
     except OSError as exc:
         sys.stderr.write(f"usage error: cannot read catalog: {exc}\n")
         return 2

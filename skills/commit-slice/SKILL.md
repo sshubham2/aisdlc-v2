@@ -246,6 +246,37 @@ No git operations are executed.
    fallback) → proceed to sub-step 3. On a blocked / aborted rebase (PCR-2b STOP, SOAD-1 abort/cancel) the shared
    section has already halted — do NOT proceed.
 
+2.7. **Integration-health gate** (slice-059 / SC-093 / ADR-056 — `--merge` ONLY): the 2.5 rebase produced the
+   exact about-to-merge state (the slice branch replayed onto the current `uat` tip). BEFORE advancing to the
+   step-3 merge, re-run the full shippability catalog against THAT post-rebase state and **REFUSE the merge on
+   red** — so per-slice green can never merge into a `uat` made red by an already-landed sibling break. This runs
+   from the slice **worktree** (still the cwd here, BEFORE step-3's `cd "$main_tree"`), so it tests the post-rebase
+   tip; because the merge is strictly downstream, a refusal here means the merge simply never runs and `uat` is
+   left untouched **by placement** (no rollback). It reuses `shippability_runner.run_catalog` → `verification_core`
+   (the SAME check `/validate-slice` Step 6 runs) via `integration_health_gate.py`; it never re-implements the
+   suite. (Not wired into 5c `--push` — that path does not advance `uat` locally; its integration-health
+   enforcement is the CI required-check, out of scope. M-add-1.)
+   ```bash
+   wt="$(git rev-parse --show-toplevel | tr -d '\r')"   # cwd is the post-rebase worktree here (pre-step-3 cd)
+   VAULT="${AI_SDLC_VAULT_ROOT:-$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+   # Pass --skip-integration-health "<reason>" ONLY if the user invoked /commit-slice --merge with that explicit
+   # modifier (a NON-EMPTY reason is required; a blank reason is rejected as a usage error — deny-by-default).
+   gate_out="$($PY "${CLAUDE_SKILL_DIR}/scripts/integration_health_gate.py" --repo-root "$wt" --catalog "$VAULT/shippability.json" --json)"; gate_rc=$?
+   gate_action="$(printf '%s' "$gate_out" | $PY -c "import json,sys; print(json.load(sys.stdin).get('action','?'))" 2>/dev/null)"
+   ```
+   - **`gate_rc` is any non-zero** (`action` `refuse` = red rows named, or `refuse-unrunnable` = fail-closed: the
+     suite could not be evaluated) → **STOP — do NOT proceed to step 3.** Print the gate's report (the failing
+     rows / cause), append a `<ts> FINDING: integration-health gate REFUSED (<action>) — <reason>` line to
+     `build-log.json` **Events** (fail-visible), and leave `uat` + the worktree untouched. To merge anyway, the
+     user re-runs `/commit-slice --merge --skip-integration-health "<reason>"` (the override is explicit + logged,
+     never silent).
+   - **`gate_rc` is 0 and `gate_action` is `overridden`** → the user pulled the andon cord: append a
+     `<ts> DEVIATION: integration-health gate OVERRIDDEN — reason: <reason>` line to `build-log.json` **Events**,
+     surface a LOUD warning to the user, then proceed to step 3. (Exit 0 alone cannot distinguish this from a clean
+     pass — that is why the wiring reads the JSON `action`, never the exit code alone. M-add-2.)
+   - **`gate_rc` is 0 and `gate_action` is `proceed`** → full suite green against the post-rebase tip; append a
+     `<ts> TEST: integration-health gate PASSED` line to `build-log.json` **Events** and proceed to step 3.
+
 3. **Switch to main tree + merge** (BRANCH-2 worktree collision fix): resolve main tree path:
    ```bash
    main_tree=$(git worktree list --porcelain | awk '/^worktree / {print $2; exit}')
