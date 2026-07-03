@@ -208,3 +208,20 @@ def test_skill_27_logs_override_and_names_the_flag():
     assert "--skip-integration-health" in region          # the reason-required override flag
     assert "build-log.json" in region and "Events" in region  # the override/outcome is logged
     assert "action" in region                              # M-add-2: parse the JSON action (not exit-code-only)
+
+
+def test_skill_27_invocation_flags_are_all_accepted_by_the_gate():
+    """The M2 doc-guard checks the wiring TEXT; this checks the invocation RUNS. Extract EVERY long-flag the
+    SKILL 2.7 block passes to the gate and assert each is a recognized gate option -- otherwise argparse exits
+    2 on the real invocation and the SKILL treats that non-zero as REFUSE, so the gate would block EVERY merge
+    with its own usage error. (slice-059 merge-time dogfood catch: the SKILL passed --json but the gate's CLI
+    did not accept it.)"""
+    import re
+    region = _SKILL[_idx(_SKILL, "integration_health_gate.py"):_idx(_SKILL, "git merge --no-ff slice/NNN")]
+    inv = next(l for l in region.splitlines() if "integration_health_gate.py" in l and "--repo-root" in l)
+    passed = set(re.findall(r"--[a-z][a-z-]+", inv))
+    known = {opt for a in GATE._build_arg_parser()._actions for opt in a.option_strings}
+    unknown = passed - known
+    assert not unknown, f"SKILL 2.7 passes gate flags the CLI does not accept: {sorted(unknown)}"
+    # and the invocation the SKILL issues must actually parse (no SystemExit from argparse)
+    GATE._build_arg_parser().parse_args(["--repo-root", "/wt", "--catalog", "c.json", "--json"])

@@ -265,6 +265,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--skip-integration-health", dest="skip_reason", default=None,
                    help="EXPLICIT, reason-required override: bypass the gate. An empty/whitespace reason "
                         "is rejected (usage error). The reason is logged by the SKILL.")
+    # The gate ALWAYS emits a JSON result (it is a machine tool the SKILL parses). --json is accepted as a
+    # harmless no-op for caller-convention parity with shippability_runner (and because the SKILL 2.7 wiring
+    # passes it) -- without it, argparse would exit 2 on the SKILL invocation and the gate would REFUSE every
+    # merge with its own usage error (the slice-059 merge-time dogfood catch).
+    p.add_argument("--json", action="store_true",
+                   help="accepted no-op: the gate always emits JSON (machine contract).")
     return p
 
 
