@@ -1,7 +1,7 @@
-"""tests for skills/product-doc/scripts/bump_plugin_version.py (slice-009).
+"""tests for skills/release/scripts/bump_plugin_version.py (slice-009).
 
 The version bump is RELOCATED out of the per-commit convention and into
-/product-doc: a single validated helper that sets .claude-plugin/plugin.json's
+/release: a single validated helper that sets .claude-plugin/plugin.json's
 ``version`` field to a chosen target, refusing a non-increasing or
 undeterminable bump and never guessing on a malformed manifest.
 
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = "skills/product-doc/scripts/bump_plugin_version.py"
+SCRIPT = "skills/release/scripts/bump_plugin_version.py"
 
 
 def _write_plugin(path: Path, version: str, *, name: str = "ai-sdlc") -> None:

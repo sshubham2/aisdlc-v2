@@ -1,4 +1,4 @@
-"""grounding_verify.py — independently verify /product-doc's self-attested grounding
+"""grounding_verify.py — independently verify /release's self-attested grounding
 tokens against reality BEFORE doc-manifest.json records them (slice-015).
 
 The forked product-doc agent returns a `grounding` map {doc -> [token, ...]} claiming

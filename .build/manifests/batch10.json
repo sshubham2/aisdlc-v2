@@ -1,6 +1,6 @@
 [
   {
-    "name": "product-doc",
+    "name": "release",
     "user_invokable": true,
     "requires_full_context": true,
     "runs_in": "main-agent",
@@ -33,7 +33,7 @@
       { "name": "Edit", "purpose": "Refresh an existing hand-written doc in place when the user chooses merge over overwrite" },
       { "name": "Bash", "purpose": "Resolve repo + vault roots, query code-review-graph for the public surface, and run assemble_changelog.py" },
       { "name": "Agent", "purpose": "Spawn the named product-doc author subagent (subagent_type: product-doc) for the forked narrative drafting" },
-      { "name": "AskUserQuestion", "purpose": "The overwrite gate — confirm before clobbering a hand-written doc not previously produced by /product-doc" }
+      { "name": "AskUserQuestion", "purpose": "The overwrite gate — confirm before clobbering a hand-written doc not previously produced by /release" }
     ],
     "file_access": [
       {
@@ -92,6 +92,6 @@
       }
     ],
     "hands_off_to": [],
-    "source": "skills/product-doc/SKILL.md (new in v2 — grounded product-documentation authoring; spawns the product-doc agent for README/API-ref/user-guide, assembles CHANGELOG from changelog.json deterministically, writes docs to the repo + a doc-manifest.json drift anchor to the vault; out-of-loop, user-invokable)"
+    "source": "skills/release/SKILL.md (new in v2 — grounded product-documentation authoring; spawns the product-doc agent for README/API-ref/user-guide, assembles CHANGELOG from changelog.json deterministically, writes docs to the repo + a doc-manifest.json drift anchor to the vault; out-of-loop, user-invokable)"
   }
 ]

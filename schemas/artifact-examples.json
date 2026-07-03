@@ -244,7 +244,7 @@
   },
   "drift-log": {
     "_schema": "aisdlc/drift-log@1",
-    "_note": "Append-only audit (R-32). Categories: drift | unspecified-code | stale-claim | stale-doc (stale-doc = a /product-doc-generated doc drifted from code, via doc-manifest.json).",
+    "_note": "Append-only audit (R-32). Categories: drift | unspecified-code | stale-claim | stale-doc (stale-doc = a /release-generated doc drifted from code, via doc-manifest.json).",
     "entries": [{ "at": "<ts>", "trigger": "slice-021", "category": "stale-claim", "finding": "ADR-008 claims WebSocket; code uses SSE.", "resolution": "superseded by ADR-014" }]
   },
   "gate-log": {
@@ -298,7 +298,7 @@
   },
   "doc-manifest": {
     "_schema": "aisdlc/doc-manifest@1",
-    "_note": "Provenance anchor written by /product-doc into <vault>/doc-manifest.json (single-shot raw-write). Records which product docs were generated, the CRG public-surface snapshot each was grounded in, and the source commit — so /drift-check can flag a doc as 'stale-doc' when the code surface it documented no longer matches reality (Phase 4 / Theme 6). The docs themselves are markdown DELIVERABLES in the CODE repo (README.md, CHANGELOG.md, docs/*), NOT vault JSON; only this manifest lives in the vault.",
+    "_note": "Provenance anchor written by /release into <vault>/doc-manifest.json (single-shot raw-write). Records which product docs were generated, the CRG public-surface snapshot each was grounded in, and the source commit — so /drift-check can flag a doc as 'stale-doc' when the code surface it documented no longer matches reality (Phase 4 / Theme 6). The docs themselves are markdown DELIVERABLES in the CODE repo (README.md, CHANGELOG.md, docs/*), NOT vault JSON; only this manifest lives in the vault.",
     "at": "<ts>",
     "source_commit": "08f217c",
     "public_surface": { "entry_points": ["cli: aisdlc"], "exports": ["build_backlog", "vault_edit"], "endpoints": [] },

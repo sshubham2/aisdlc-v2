@@ -258,7 +258,7 @@ triage / adopt  →  discover  →  (user-test)
   backlog); `bug-hunt` (whole-codebase correctness + security defect sweep).
 - **Orientation:** `pulse`, `query-design`.
 - **Maintenance:** `drift-check`, `reduce`, `archive`, `sync`, `supersede-slice`, `critic-calibrate`,
-  `product-doc` (grounded README / CHANGELOG / API-ref / user-guide).
+  `release` (grounded README / CHANGELOG / API-ref / user-guide).
 - **Heavy-mode only:** `heavy-architect`, `sync`.
 
 Backlog of work lives in `<vault>/candidates.json` (live) and `<vault>/archive/candidates.json` (shipped); the

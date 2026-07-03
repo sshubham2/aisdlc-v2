@@ -389,7 +389,7 @@ a concrete actionable finding, offers (but never forces) a handoff to `/slice`.
 ```
 
 Audits vault claims against code reality. Four finding categories: DRIFT (blocker), UNSPECIFIED CODE
-(major), STALE CLAIM (major), STALE DOC (major — a `/product-doc`-generated doc that no longer matches
+(major), STALE CLAIM (major), STALE DOC (major — a `/release`-generated doc that no longer matches
 the code surface it documented).
 
 - `--fast` — scope to changed files since last commit; target <2s (used by `/build-slice` pre-finish gate)
@@ -448,11 +448,11 @@ every review. Never edits the plugin's shipped agent prompt — a project overla
 preserving upgradability. Run every 10–20 slices, after repeated Critic misses, or after a serious
 post-ship bug.
 
-### `/product-doc` — grounded documentation
+### `/release` — grounded documentation
 
 ```
-/product-doc
-/product-doc --docs readme,changelog,api,guide
+/release
+/release --docs readme,changelog,api,guide
 ```
 
 Generates and maintains README / CHANGELOG / API-reference / user-guide grounded in code reality

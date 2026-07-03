@@ -2,7 +2,7 @@
 validated target (slice-009).
 
 The plugin version bump is RELOCATED out of the per-commit convention into
-/product-doc: instead of every pushed slice commit staging its own bump (which
+/release: instead of every pushed slice commit staging its own bump (which
 made parallel slices conflict on the plugin.json version line and mis-grouped
 the CHANGELOG), the version is cut ONCE — here — after merge, at the release.
 
@@ -17,7 +17,7 @@ It REFUSES (non-zero exit, file left untouched) to:
   * touch a missing or malformed plugin.json (don't guess).
 
 It is a NO-OP (exit 0, no write) when the current version already equals the
-requested --new-version, so a second /product-doc run is idempotent (M4).
+requested --new-version, so a second /release run is idempotent (M4).
 
 NO conventional-commit inference, NO tags, NO store — that is intentionally out
 of scope (YAGNI). On success it prints the resolved new version to stdout.
@@ -61,7 +61,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="bump_plugin_version",
         description="Set .claude-plugin/plugin.json's version to a validated target "
-                    "(the relocated, post-merge /product-doc version cut).",
+                    "(the relocated, post-merge /release version cut).",
     )
     p.add_argument("--plugin", default=None,
                    help=f"path to plugin.json (default: <cwd>/{DEFAULT_PLUGIN_REL})")

@@ -1,5 +1,5 @@
 """_crg_grounding_probe.py — deterministic CRG node/symbol resolution for the
-/product-doc grounding verifier (slice-015).
+/release grounding verifier (slice-015).
 
 Invoked as a SUBPROCESS by grounding_verify.py (NEVER imported): code-review-graph
 pulls heavy deps and logs to stdout/stderr, while grounding_verify's stdout is a

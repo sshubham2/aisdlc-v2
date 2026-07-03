@@ -1,12 +1,12 @@
 ---
-name: product-doc
-description: "Generate + maintain product documentation grounded in code reality. CHANGELOG.md is assembled deterministically by merging git history (the plugin.json version cut post-merge by /product-doc; no tags) with the per-slice changelog.json records /commit-slice writes, version-grouped; README / API-reference / user-guide are drafted by a forked product-doc agent from the code-review-graph public surface + the vault (concept, slices), with every interface fact grounded in a real CRG node (unverifiable claims are omitted, never invented). Docs are markdown DELIVERABLES written to the code repo; a doc-manifest.json provenance record is written to the vault so /drift-check can flag docs that drift from code. NEVER modifies source code; gates before overwriting a hand-written doc."
-when_to_use: "Trigger phrases: /product-doc, 'generate docs', 'update the README', 'write API reference', 'regenerate CHANGELOG', 'document this project'. Out-of-loop maintenance — user-invokable any time (after shipping slices, before a release, when onboarding docs go stale). NOT auto-wired into the slice loop."
+name: release
+description: "Cut a release (merge uat->master + version bump + CHANGELOG regen, atomically) AND generate + maintain product documentation grounded in code reality. CHANGELOG.md is assembled deterministically by merging git history (the plugin.json version cut post-merge by /release; no tags) with the per-slice changelog.json records /commit-slice writes, version-grouped; README / API-reference / user-guide are drafted by a forked product-doc agent from the code-review-graph public surface + the vault (concept, slices), with every interface fact grounded in a real CRG node (unverifiable claims are omitted, never invented). Docs are markdown DELIVERABLES written to the code repo; a doc-manifest.json provenance record is written to the vault so /drift-check can flag docs that drift from code. NEVER modifies source code; gates before overwriting a hand-written doc."
+when_to_use: "Trigger phrases: /release, 'cut a release', 'merge uat to master', 'bump version', 'publish', 'ship to master', 'release the plugin', 'generate docs', 'update the README', 'write API reference', 'regenerate CHANGELOG', 'document this project'. Out-of-loop maintenance — user-invokable any time (after shipping slices, before a release, when onboarding docs go stale). NOT auto-wired into the slice loop."
 argument-hint: "[--docs readme,changelog,api,guide]  (default: all four)"
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, AskUserQuestion
 ---
 
-# /product-doc — grounded product documentation
+# /release — release cut + grounded product documentation
 
 Turn **code reality** (code-review-graph) + the **vault** into accurate README / CHANGELOG / API-reference /
 user-guide. Docs are user-facing **deliverables written to the code repo** (a deliberate exception to the
@@ -62,7 +62,7 @@ they cover.
 
 **The plugin version is cut HERE — AS the deliberate `uat->master` merge — not in the slice commit.** Slice commits
 integrate onto `uat` WITHOUT a version bump (so parallel slices never conflict on the plugin.json `version` line);
-`/product-doc`'s release cut (`release_cut.py`) bumps the version once as it merges `uat` into the released `master`,
+`/release`'s release cut (`release_cut.py`) bumps the version once as it merges `uat` into the released `master`,
 and rolls every unreleased commit (the *open period* — everything merged into uat since the last version-change)
 forward onto it.
 
@@ -84,7 +84,7 @@ runs `bump_plugin_version.py` (refuses a non-increasing bump / malformed manifes
 `assemble_changelog.py` (open-period grouping) into the worktree, then lands the merge + bump + changelog as **ONE
 commit** (the atomic boundary), and finally syncs `uat` back to the new release. On ANY pre-commit failure it does
 `git reset --hard <captured-SHA>` so `master` is byte-identical (the `merge --abort`-alone gap, proven by
-spike-release-cut-atomicity, is why the cleanup is an explicit reset). **`/product-doc` fails visibly if the target
+spike-release-cut-atomicity, is why the cleanup is an explicit reset). **`/release` fails visibly if the target
 version cannot be determined (no silent skip).** Read the verdict JSON's `action` — `released` (cut landed), `no-op`
 (nothing to release), or a `refuse-*` / `*-failed` reason (master untouched). After a `released` action, verify the
 integrity invariant with `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/release_advance_audit.py" --root "$repo_root"`
@@ -185,13 +185,13 @@ intact (Step 4) — the verified/unverified split only ANNOTATES it, so `/drift-
 Write each requested agent-doc to the repo: `README.md`, `docs/api-reference.md`, `docs/user-guide.md`.
 
 **Overwrite gate (never clobber hand-written docs):** if the target file already exists AND was not produced by a
-prior `/product-doc` run (check `doc-manifest.json` — if the path isn't listed there, treat it as hand-written),
+prior `/release` run (check `doc-manifest.json` — if the path isn't listed there, treat it as hand-written),
 show the user a diff and `AskUserQuestion`: **overwrite / skip / let me merge**. A file absent from the manifest +
 present on disk = hand-authored; default to NOT overwriting without confirmation. New files: write directly.
 
 **Degraded-harvest branch (slice-029 / ADR-019):** if Step 0's harvest-degrade gate returned `degraded: true`, the
 prose draft is interface-light (the code map could not ground interface facts). For a **populated** target —
-**REGARDLESS of manifest membership** (so a prior-`/product-doc`-generated doc, normally written directly, is now
+**REGARDLESS of manifest membership** (so a prior-`/release`-generated doc, normally written directly, is now
 gated) — `AskUserQuestion`: **overwrite-with-degraded-draft / skip / keep-existing / proceed-anyway**, showing the
 degrade `cause` + remedy. The degraded branch takes PRECEDENCE over the manifest-membership check; never silently
 overwrite a populated doc with an interface-stripped one. A genuinely-new/absent target may be written with a
@@ -244,7 +244,7 @@ Report what was written (repo doc paths + the vault manifest), the `ungrounded_c
 
 - predecessor: none — out-of-loop, user-invokable any time, all modes.
 - successor: none (`hands_off_to: []`). Not auto-wired into the auto-advancing slice loop — but `/commit-slice`
-  Step 4.6 now **offers** a `/product-doc --docs changelog` refresh on ship when a `doc-manifest.json` exists
+  Step 4.6 now **offers** a `/release --docs changelog` refresh on ship when a `doc-manifest.json` exists
   (roadmap Theme 6 [P3], landed as a non-blocking reminder, not an auto-run). `/drift-check` `stale-doc` consumes the manifest this writes.
 - auto-advance: false.
 - user-input gates: Step 3 overwrite confirmation for any existing hand-written doc.

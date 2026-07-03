@@ -1,5 +1,5 @@
 """harvest_degrade.py -- deterministic prose-doc harvest-degrade classifier
-(slice-029 / SC-013). Decides whether /product-doc's prose-doc half (README /
+(slice-029 / SC-013). Decides whether /release's prose-doc half (README /
 API-reference / user-guide) can ground interface facts on the CRG public surface,
 from code_review_graph.tools.query.list_graph_stats COUNTS -- no MCP, no embedding
 provider, no model-eyeballed harvest count (ADR-019, after critique v1 BLOCKED the
@@ -40,7 +40,7 @@ _PROBE = pathlib.Path(__file__).resolve().parent / "_crg_grounding_probe.py"
 # Messages are GENERIC (cause + remedy only) -- NO machine-local paths / counts (m3 banner hygiene).
 # The CLI JSON carries the counts separately for the console signal.
 _MESSAGES = {
-    "graph-unavailable": "Code map unavailable -- /product-doc cannot ground interface facts. "
+    "graph-unavailable": "Code map unavailable -- /release cannot ground interface facts. "
                          "Build the code map: code-review-graph build.",
     "embeddings-absent": "Code map has public symbols but no embeddings -- the semantic harvest "
                          "cannot retrieve them, so prose docs would omit interface facts. "
