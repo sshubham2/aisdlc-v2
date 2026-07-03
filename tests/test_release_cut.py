@@ -30,7 +30,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.lib._git_default_branch import run_git  # noqa: E402
 
-RC = ROOT / "skills" / "product-doc" / "scripts" / "release_cut.py"
+RC = ROOT / "skills" / "release" / "scripts" / "release_cut.py"
 gitok = pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
 
 

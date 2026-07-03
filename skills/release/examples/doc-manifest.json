@@ -1,6 +1,6 @@
 {
   "_schema": "aisdlc/doc-manifest@1",
-  "_note": "Provenance anchor written by /product-doc into <vault>/doc-manifest.json (single-shot raw-write). Records which product docs were generated, the CRG public-surface snapshot each was grounded in, and the source commit — so /drift-check can flag a doc as 'stale-doc' when the code surface it documented no longer matches reality (Phase 4 / Theme 6). The docs themselves are markdown DELIVERABLES in the CODE repo (README.md, CHANGELOG.md, docs/*), NOT vault JSON; only this manifest lives in the vault.",
+  "_note": "Provenance anchor written by /release into <vault>/doc-manifest.json (single-shot raw-write). Records which product docs were generated, the CRG public-surface snapshot each was grounded in, and the source commit — so /drift-check can flag a doc as 'stale-doc' when the code surface it documented no longer matches reality (Phase 4 / Theme 6). The docs themselves are markdown DELIVERABLES in the CODE repo (README.md, CHANGELOG.md, docs/*), NOT vault JSON; only this manifest lives in the vault.",
   "at": "<ts>",
   "source_commit": "08f217c",
   "public_surface": {

@@ -1,5 +1,5 @@
-"""skills/product-doc/scripts/grounding_verify.py + _crg_grounding_probe.py
-— independently verify /product-doc's self-attested grounding tokens against
+"""skills/release/scripts/grounding_verify.py + _crg_grounding_probe.py
+— independently verify /release's self-attested grounding tokens against
 reality before doc-manifest.json records them (slice-015).
 
 Written test-first (TF-1 / AC4). Exercises the verifier end-to-end via subprocess
@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-VERIFY = REPO / "skills" / "product-doc" / "scripts" / "grounding_verify.py"
+VERIFY = REPO / "skills" / "release" / "scripts" / "grounding_verify.py"
 PY = sys.executable
 _BASE_GIT = {
     "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e",
@@ -264,14 +264,14 @@ def test_vault_root_unresolved_source_unavailable(tmp_path):
 #   AC3  : a genuine export/entry_point (symbol OR file stem) -> verified.
 #   AC4  : public_surface_verified is true ONLY when the check ran against a reachable graph;
 #          unsupplied / unreachable / malformed each keep it false, never crash (fail-closed).
-#   AC5  : /product-doc routes public_surface through verification before the manifest write.
+#   AC5  : /release routes public_surface through verification before the manifest write.
 #   m1   : entry_point label-strip ('cli: x' -> 'x'); empty residual -> malformed.
 #   M1   : an unresolved label entry_point reads unverified but verified EXPORTS still flip the gate.
 #   m2   : --names set_ready derives from the total_nodes>0 health gate, not a non-raising call.
 #   M-add-2: a pure file-stem match (no symbol of that name) still verifies (the union is required).
 # ============================================================================
 
-PROBE = REPO / "skills" / "product-doc" / "scripts" / "_crg_grounding_probe.py"
+PROBE = REPO / "skills" / "release" / "scripts" / "_crg_grounding_probe.py"
 
 
 def _run_ps(public_surface, repo_root, grounding=None, env=None):
@@ -407,10 +407,10 @@ def test_names_probe_unbuilt_graph_not_ready(tmp_path):
     assert json.loads(p.stdout)["reachable"] is False
 
 
-# ---- AC5: /product-doc wires public_surface through verification + persists the sibling ----
+# ---- AC5: /release wires public_surface through verification + persists the sibling ----
 
 def test_product_doc_wires_public_surface():
-    skill = (REPO / "skills" / "product-doc" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (REPO / "skills" / "release" / "SKILL.md").read_text(encoding="utf-8")
     # Step 4 / M-add-1: the manifest write persists the unverified sibling (a NEW token; not
     # present before this slice) -> proves the wiring was updated end-to-end.
     assert "public_surface_unverified" in skill
@@ -457,7 +457,7 @@ def test_public_surface_endpoints_not_verified(built_repo):
 
 # in-process import of both scripts (their own bootstrap adds the plugin root to sys.path for
 # scripts.lib._stdout; inserting the scripts dir lets us import the modules by bare name).
-_SCRIPTS = REPO / "skills" / "product-doc" / "scripts"
+_SCRIPTS = REPO / "skills" / "release" / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 import grounding_verify as gv          # noqa: E402

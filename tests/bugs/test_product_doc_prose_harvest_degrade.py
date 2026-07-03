@@ -1,4 +1,4 @@
-"""skills/product-doc/scripts/harvest_degrade.py -- deterministic prose-doc
+"""skills/release/scripts/harvest_degrade.py -- deterministic prose-doc
 harvest-degrade classifier (slice-029, SC-013).
 
 Written test-first (TF-1 / AC4). The degrade is decided DETERMINISTICALLY from
@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]  # tests/bugs/X.py -> tests -> repo
-SCRIPTS = REPO / "skills" / "product-doc" / "scripts"
+SCRIPTS = REPO / "skills" / "release" / "scripts"
 HARVEST = SCRIPTS / "harvest_degrade.py"
 PY = sys.executable
 _BASE_GIT = {

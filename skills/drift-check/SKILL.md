@@ -1,6 +1,6 @@
 ---
 name: drift-check
-description: "Audits vault claims against code reality and flags divergence in four categories: DRIFT (blocker), UNSPECIFIED CODE (major), STALE CLAIM (major), and STALE DOC (major — a /product-doc-generated doc that no longer matches the code surface it documented, via the doc-manifest.json provenance anchor). Runs in fast mode (<2s, for the /build-slice pre-finish gate) or full mode (on-demand audit). Appends findings to drift-log.json via the SVW-1 safe channel. Detect-only, all-modes counterpart to the Heavy-mode-only /sync skill."
+description: "Audits vault claims against code reality and flags divergence in four categories: DRIFT (blocker), UNSPECIFIED CODE (major), STALE CLAIM (major), and STALE DOC (major — a /release-generated doc that no longer matches the code surface it documented, via the doc-manifest.json provenance anchor). Runs in fast mode (<2s, for the /build-slice pre-finish gate) or full mode (on-demand audit). Appends findings to drift-log.json via the SVW-1 safe channel. Detect-only, all-modes counterpart to the Heavy-mode-only /sync skill."
 when_to_use: "Trigger phrases: /drift-check, 'check for drift', 'vault sync check', 'is the vault still accurate', 'audit vault vs code'. Use in --fast mode as the /build-slice pre-finish gate (DCE-1), or on-demand (full mode) before starting a new slice or after external changes. (Not a git pre-commit hook — nothing installs one; hooks/ is SessionStart-only.)"
 argument-hint: "[--fast] [--resolve] [--status] [path]"
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion, Skill
@@ -48,7 +48,7 @@ Read only the live-claim surfaces. Always included:
 - `<vault>/risk-register.json` — risks with `status: retired`; verify retirement is real.
 - `<vault>/slices/*/mission-brief.json` — active slices only; check `must_not_defer` items are implemented.
 - `<vault>/slices/*/design.json` — active slices only; verify referenced file paths exist and components are touched.
-- `<vault>/doc-manifest.json` — **if it exists** (written by `/product-doc`, all modes): the generated docs + the CRG public-surface snapshot each was grounded in. Drives the STALE DOC check (Step 3). Absent → skip the doc audit entirely (no-op for projects that never ran `/product-doc`).
+- `<vault>/doc-manifest.json` — **if it exists** (written by `/release`, all modes): the generated docs + the CRG public-surface snapshot each was grounded in. Drives the STALE DOC check (Step 3). Absent → skip the doc audit entirely (no-op for projects that never ran `/release`).
 
 **Skip**: `slices/archive/*` (historical, not live assertions), `slices/_index.json` (metadata), any folder that doesn't exist.
 
@@ -83,7 +83,7 @@ For each mismatch capture: vault file path, vault claim text, code evidence, sev
 **Doc-vs-code (STALE DOC).** If `<vault>/doc-manifest.json` exists, for each entry in its `docs[]`: (a) confirm the
 doc file still exists on disk; (b) re-resolve each `grounded_in` token — these are now **path-based** (slice-015),
 so split on the scheme: `crg:<repo-rel-path>::<symbol>` re-resolves via the same code-map path+symbol check the
-producer uses (reuse `skills/product-doc/scripts/grounding_verify.py` / `_crg_grounding_probe.py` — single source of
+producer uses (reuse `skills/release/scripts/grounding_verify.py` / `_crg_grounding_probe.py` — single source of
 truth, don't re-describe the resolution), `file:<repo-rel-path>` by repo-file existence (+ optional symbol), and
 `vault:<vault-rel-path>` by vault-file existence. A previously-verified token that no longer resolves means the doc
 describes something gone (the tokens are verified-only now, so a non-resolving one is a real STALE-DOC signal, not a
@@ -94,7 +94,7 @@ narrowed to verified-only), with a sibling `public_surface_unverified[{token, re
 reality-grounded at doc-gen. **Diff the FULL snapshot** so a real symbol that was momentarily unverifiable at doc-gen
 (stale graph, packaging label, or ambiguous name) still has a baseline and is caught when it genuinely vanishes; the
 annotation only records an entry's doc-gen provenance, it never shrinks the baseline. Each mismatch → a **STALE DOC**
-finding citing the doc path + the specific vanished symbol, with `Resolve: regenerate via /product-doc`. No manifest →
+finding citing the doc path + the specific vanished symbol, with `Resolve: regenerate via /release`. No manifest →
 skip this check (no-op).
 
 In `--fast` mode: only check claims in files touched by the injected diff. Skip deep graph traversal.
@@ -104,7 +104,7 @@ In `--fast` mode: only check claims in files touched by the injected diff. Skip 
 - **DRIFT (blocker)** — vault says X, code does Y. Must pick one: update vault or fix code.
 - **UNSPECIFIED CODE (major)** — code does X, vault doesn't mention it. Either scope creep or missing ADR.
 - **STALE CLAIM (major)** — vault mentions a removed feature/library/file. Delete or supersede.
-- **STALE DOC (major)** — a `/product-doc`-generated doc (README / API-reference / user-guide, per `doc-manifest.json`) documents a code surface that no longer matches reality. Regenerate via `/product-doc`. (Skipped when no `doc-manifest.json` exists.)
+- **STALE DOC (major)** — a `/release`-generated doc (README / API-reference / user-guide, per `doc-manifest.json`) documents a code surface that no longer matches reality. Regenerate via `/release`. (Skipped when no `doc-manifest.json` exists.)
 
 ## Step 5 — Output
 

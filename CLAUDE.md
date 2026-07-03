@@ -155,7 +155,7 @@ whole-codebase **defect-finding** complement (vs `/code-review`'s diff scope). T
    (code-review 9-dim lens, intent-aware, NOT one-shot) → `finding_dedup` → adversarial code-review refute gate → `findings.json`
    (+ optional `--report` HTML) → declinable `/repro`→`/slice` handoff. Shares `write_pass.py` / `assemble.py` /
    `finding.yaml` with `/diagnose` in **`scripts/lib/`** (promotion DONE — no cross-skill reach; `passes/*.md` stay
-   diagnose-only). Manifest in `.build/manifests/batch6.json`; `aggregate.py` count guard now 30. **Now 30 skills total** (bug-hunt + `/setup` + `/slice-story` + `/product-doc`, hand-authored in `.build/manifests/batch8.json` / `batch9.json` / `batch10.json`).
+   diagnose-only). Manifest in `.build/manifests/batch6.json`; `aggregate.py` count guard now 30. **Now 30 skills total** (bug-hunt + `/setup` + `/slice-story` + `/release`, hand-authored in `.build/manifests/batch8.json` / `batch9.json` / `batch10.json`).
 
 **✅ NEW SKILL `/slice-story`** (added later — NOT part of the original fan-out): a plain-language per-slice **report
 generator**. Runs just after `/critique` as the pre-build overview (also user-invokable any time), spawns the forked
@@ -181,7 +181,7 @@ Code restart to register the new skill + agent** (NAW-1: the agent registry load
 - **The uat/master release model makes "served = release-only" STRUCTURAL (SC-020 / slice-022 — IMPLEMENTED).**
   Slices branch from + merge to the `uat` integration branch and integrate WITHOUT a version bump (so parallel
   slices never conflict on the `version` line); `master` is released-only and is the marketplace-served default,
-  advanced ONLY by the deliberate `uat->master` release cut. `/product-doc`'s `release_cut.py` performs that cut
+  advanced ONLY by the deliberate `uat->master` release cut. `/release`'s `release_cut.py` performs that cut
   ATOMICALLY — stage `merge --no-ff --no-commit uat` + bump `.claude-plugin/plugin.json` (semver: **patch** = fix /
   docs / refactor, **minor** = new skill / backward-compatible feature, **major** = breaking change) + regenerate
   the version-grouped CHANGELOG as **ONE commit**, then sync `uat` back (on any pre-commit failure it `git reset
@@ -201,7 +201,7 @@ Code restart to register the new skill + agent** (NAW-1: the agent registry load
   `--plugin-dir C:\Users\sshub\aisdlc-v2`, so the LIVE plugin is this working tree, not the marketplace cache (run
   `/reload-plugins` after editing skills/agents). **This working copy stays checked out to `uat`** (the integration
   branch); all slice work happens here. `master` is merged from `uat` on a **weekly** release cadence via the
-  `uat->master` release cut (`/product-doc` → `release_cut.py`), never by direct commits to `master`. **This
+  `uat->master` release cut (`/release` → `release_cut.py`), never by direct commits to `master`. **This
   `CLAUDE.md` is now git-tracked** (dropped from `.gitignore` 2026-06-19) for version history — it remains local dev
   scaffolding (plugin installers do not load it as instructions); the enforcement that ships is the code/audit above
   per SC-019/SC-020.
@@ -210,7 +210,7 @@ Code restart to register the new skill + agent** (NAW-1: the agent registry load
 
 ```
 aisdlc-v2/  (the v2 PLUGIN)
-  .claude-plugin/plugin.json   ← plugin manifest (name: ai-sdlc; version cut POST-MERGE by /product-doc — see Hard rules; not a per-commit bump)
+  .claude-plugin/plugin.json   ← plugin manifest (name: ai-sdlc; version cut POST-MERGE by /release — see Hard rules; not a per-commit bump)
   CLAUDE.md                    ← you are here
   skill-graph.json             ← the global dependency graph
   requirements.txt             ← runtime deps (PyYAML, for /diagnose + build_backlog's yaml fallback)
@@ -308,7 +308,7 @@ Start here to answer "what touches X?" or "what does skill Y produce?". `stats` 
 `risk-spike --mode design` (**design spike** — post-synthesis; reality adjudicates the tournament's empirically-decidable disagreements + must-verify invariants; conditional) →
 `critique` (+`critique-review`) → `slice-story` (plain-language pre-build report; delivered to you via SendUserFile) → `build-slice` → `code-review` → `validate-slice` →
 `reflect` → next `slice`. `commit-slice` finalizes. Maintenance: `drift-check`, `reduce`, `archive`, `sync`,
-`supersede-slice`, `critic-calibrate`, `product-doc` (grounded README/CHANGELOG/API-ref/user-guide; out-of-loop).
+`supersede-slice`, `critic-calibrate`, `release` (grounded README/CHANGELOG/API-ref/user-guide; out-of-loop).
 Orientation: `pulse`, `query-design`. Brownfield analysis: `diagnose`, `bug-hunt`,
 `slice-candidates`. **Heavy-mode-only:** `heavy-architect`, `sync`.
 Single candidate backlog: `<vault>/candidates.json` (live) + `<vault>/archive/candidates.json` (shipped).

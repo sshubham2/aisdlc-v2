@@ -124,17 +124,17 @@ Output schema by example → `examples/changelog.json`. The script writes `<slic
 path. On exit 2 (slice folder not found): surface the message but do **NOT** block the flow — the changelog.json is
 an audit artifact, never a gate. This skill writes nothing to the code repo root.
 
-## Step 4.6 — product-doc refresh hook (Theme 6: auto-maintain docs as slices ship)
+## Step 4.6 — release-skill doc refresh hook (Theme 6: auto-maintain docs as slices ship)
 
-If `<vault>/doc-manifest.json` exists, this project maintains product docs with `/product-doc`, and the slice you
+If `<vault>/doc-manifest.json` exists, this project maintains product docs with `/release`, and the slice you
 just shipped may have made them stale — the per-slice `changelog.json` from Step 4.5 is the CHANGELOG's source.
 **Offer** a refresh (don't force, don't auto-run — it writes to the repo root):
 
-> "Slice shipped. Product docs are maintained here — refresh them? `/product-doc --docs changelog` reassembles the
+> "Slice shipped. Product docs are maintained here — refresh them? `/release --docs changelog` reassembles the
 >  CHANGELOG from the per-slice entries; if this slice changed user-facing behavior, add `readme,guide` to also
 >  refresh those."
 
-Skip silently when `doc-manifest.json` is absent (the project doesn't generate docs yet — `/product-doc` is how to
+Skip silently when `doc-manifest.json` is absent (the project doesn't generate docs yet — `/release` is how to
 start). This is a reminder, never a gate; never block the commit flow on it. `/drift-check`'s `stale-doc` category
 is the backstop for docs that drift when this hook is declined.
 

@@ -10,7 +10,7 @@ Actual:   - `build .` (adopt, triage) and `build <path> --out <dir>` (diagnose,
             bug-hunt) fail at argparse with exit 2 "unrecognized arguments";
             real signature is `build [--repo REPO] [--data-dir DATA_DIR]`.
           - `search`, `impact-radius`, `review-context` are invoked as CLI verbs
-            (design-slice, product-doc, 4 agents, diagnose passes) but CRG 2.3.5
+            (design-slice, release, 4 agents, diagnose passes) but CRG 2.3.5
             has NO such subcommands -- they are MCP-only tools.
 
 Pure static analysis -- does NOT build a real graph (no CRG runtime needed).
