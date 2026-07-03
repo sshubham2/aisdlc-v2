@@ -312,10 +312,10 @@ def test_m3_autodetect_picks_lingering_remote():
 def test_m2_onpath_region_never_issues_remote_push():
     text = _SKILL.read_text(encoding="utf-8")
     region = _region(text, "SYNC-5D-ONPATH")
-    # pos: the local-only safe-delete sequence is intact
+    # pos: the local-only cleanup sequence is intact (slice-057: routed through the actuator)
     assert "pull --ff-only" in region
-    assert "git branch -d" in region
-    assert "safe-delete" in region
+    assert "local_branch_delete.py" in region      # slice-057: the local delete goes via the actuator
+    assert "safe-delete" in region                 # the actuator safe-deletes first
     # neg: this path NEVER issues the origin remote delete
     assert "push origin --delete" not in region
 
@@ -325,14 +325,16 @@ def test_m2_onpath_region_never_issues_remote_push():
 
 def test_cr1_4b_actuator_precedes_local_branch_delete():
     # SKILL.md bash sites are not statically executed, so pin the ordering by doc-guard
-    # (BC-PROJ-7): in the 4b region, the actuator invocation must appear BEFORE any
-    # `git branch -d/-D` — else the actuator's Signal-B re-verify reads a deleted local ref.
+    # (BC-PROJ-7): in the 4b region, the REMOTE actuator must appear BEFORE the LOCAL-delete
+    # actuator (slice-057) — else the remote actuator's Signal-B re-verify reads a deleted
+    # local ref. (Both local delete arms now go through local_branch_delete.py, not an inline
+    # `git branch -d`.)
     region = _region(_SKILL.read_text(encoding="utf-8"), "SYNC-5D-4BORDER")
-    i_actuator = region.find("remote_branch_delete.py")
-    i_branch = region.find("git branch -d")
-    assert i_actuator != -1, "4b must invoke remote_branch_delete.py"
-    assert i_branch != -1, "4b must delete the local branch"
-    assert i_actuator < i_branch, "the actuator must run BEFORE the local branch delete (CR1)"
+    i_remote = region.find("remote_branch_delete.py")
+    i_local = region.find("local_branch_delete.py")
+    assert i_remote != -1, "4b must invoke remote_branch_delete.py"
+    assert i_local != -1, "4b must invoke local_branch_delete.py for the local cleanup"
+    assert i_remote < i_local, "the remote actuator must run BEFORE the local-delete actuator (CR1)"
 
 
 def test_cr1_actuator_denies_when_local_ref_deleted():
@@ -349,13 +351,15 @@ def test_cr1_actuator_denies_when_local_ref_deleted():
 
 
 def test_cr2_4b_safe_delete_refusal_is_handled_without_force():
-    # The 4b local delete must HANDLE a squash-merge safe-delete refusal (CR2) — with a STOP
-    # hint, NOT a force-delete (the slice-008 never-force-delete floor is preserved; ADR-053).
+    # The 4b local delete must HANDLE a squash-merge safe-delete refusal (CR2). slice-057:
+    # the refusal is now handled by the gh-gated local_branch_delete.py actuator (safe-delete
+    # first, force-complete ONLY on an authoritative MERGED verdict), and SKILL.md must STILL
+    # never inline a force op — the slice-008 floor: the -D lives only in the scanned actuator.
     region = _region(_SKILL.read_text(encoding="utf-8"), "SYNC-5D-4BORDER")
-    assert "git branch -d" in region          # safe-delete
-    assert "git branch -D" not in region      # NEVER force-delete
+    assert "local_branch_delete.py" in region  # the local cleanup goes via the actuator
+    assert "git branch -D" not in region       # SKILL.md NEVER inlines a force op (preserved)
     assert "squash" in region.lower()
-    assert "refus" in region.lower()          # the refusal path is explicitly handled
+    assert "refus" in region.lower()           # the refusal path is explicitly handled
 
 
 # ── helper: extract a region-keyed doc-guard block from SKILL.md ──────────────
