@@ -63,6 +63,47 @@ them to the install docs. Do NOT proceed with missing prerequisites.
 
 `crg: MISSING` is advisory only (code-review-graph is optional; skip the Step 5b-pre offer if absent).
 
+## Step 0.5 — git-at-open gate (slice-058 / ADR-055 / SC-107 — run BEFORE any vault write)
+
+The external vault keys on a hash of its LOCATOR — `sha256(cwd)` before git exists, `sha256(<git-common-dir>)`
+after. So opening the pipeline in a NON-git dir and running `git init` LATER silently re-keys the vault to a
+fresh empty store (the SC-107 field incident: /triage+/discover pre-git → `git init` → empty phantom vault →
+`/slice` sees no candidates). Close it at the source: gate on git HERE, **before the first vault artifact is
+written** (Step 5a). Probe git with a bare `git rev-parse` (no new tool):
+```bash
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 && echo "GIT_OK" || echo "NON_GIT"
+```
+
+- **`GIT_OK`** → already a git work tree; the top-of-file `$VAULT` injection is valid. Proceed to Step 1.
+- **`NON_GIT`** → HALT and offer via `AskUserQuestion` (3 outcomes; the actuator NEVER self-consents to `git init`):
+  - **Run `git init` now (recommended)** — the consented, fail-closed actuator (list-form, no `shell=True`,
+    canonical root re-verify):
+    ```bash
+    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" git-init --root .
+    ```
+    A **non-zero exit** (exit 3 = git-init failure / not-a-directory / permission-denied / post-init root
+    mismatch) → **STOP, write NO vault artifact**, surface the reason. Exit 0 → the vault is now git-keyed;
+    **RE-RESOLVE `$VAULT`** (next block).
+  - **Decline (fail-closed)** → **STOP. Write NO vault artifact.** State plainly: "The vault would key on this
+    directory path and silently orphan if you run `git init` later — refusing to create a fragile pre-git vault.
+    Run `git init` (or re-run and accept), then /triage."
+  - **Proceed without git anyway (explicit informed skip)** → the sanctioned escape hatch for a genuinely
+    non-git / throwaway workflow. Proceed, but WARN concretely: "This vault keys on the current directory path.
+    If you run `git init` later — and the stranded-slice audit AND the Step-5b-pre code-review-graph install both
+    prompt you to — the vault RE-KEYS, orphans, and re-running /triage will NOT find it (it looks FRESH and
+    overwrites an empty store). You would have to hand-write the tier-2 pin to recover."
+
+**Post-gate re-resolution (B1 — mandatory when `git init` just ran).** Shell vars do NOT persist across skill
+bash blocks and the top-of-file `!`-injection resolved `$VAULT` **PRE-git** (cwd-keyed). After a consented
+`git init` the vault path CHANGED — re-resolve it in a bash BODY step and use THIS value for the Step-1 re-triage
+detection AND every Step-5 vault write. **Do NOT reuse the load-time injected `$VAULT` for any write.**
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+[ -z "$VAULT" ] && { echo "STOP: vault unresolved after git init." >&2; exit 2; }
+if [ -f "$VAULT/triage.json" ]; then echo "RE_TRIAGE (existing vault: $VAULT)"; else echo "FRESH (vault: $VAULT)"; fi
+```
+Re-evaluate FRESH vs RE_TRIAGE (Step 1) against THIS re-resolved `$VAULT`, not the stale load-time injection.
+
 ## Step 1 — Detect re-triage
 
 If the injected `triage.json` is NOT `"NOT_FOUND"`: this is a **re-triage**. Read the existing mode and
@@ -190,9 +231,18 @@ On **re-triage**: append a new `history` entry to `triage.json` via
 Update `risk-register.json` via `scripts.lib.vault_edit update --file risk-register.json --array risks --id <R-NN> --set ...` (or `append` for a new risk) for any changed/new risks.
 
 **Pin the vault (4.7, FRESH only).** After the FRESH writes, record the tier-2 git-common-dir pin so a later
-repo move/rename does NOT orphan this vault (the pin survives a rename; `_vault_paths` reads it at tier 2):
+repo move/rename does NOT orphan this vault (the pin survives a rename; `_vault_paths` reads it at tier 2).
+**slice-058/M1 — guard on git presence + check the exit:** on the explicit-skip (pre-git) branch there is no
+git-common-dir to pin into, so do NOT call write-pin there (git-absent would return the benign exit 2, which is
+NOT a failure here); on the git path, a **genuine** pin failure (exit 3) must STOP — never leave the vault
+silently unpinned or mis-pinned:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" write-pin
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" write-pin; rc=$?
+  [ "$rc" = 0 ] || { echo "STOP: vault_admin write-pin failed (rc=$rc) — surface + fix; do not leave the vault unpinned." >&2; exit "$rc"; }
+else
+  echo "note: pre-git explicit-skip path — no git-common-dir to pin into; the vault is fragile until \`git init\` (see the Step 0.5 warning)."
+fi
 ```
 It also drops a `.source-repo` back-ref in the vault (for `vault_admin list`'s orphan detection) and WARNs if a
 same-name / different-hash sibling vault already exists (a likely prior-rename orphan to migrate + clean up).
@@ -210,9 +260,12 @@ If yes:
 "${CRG:-code-review-graph}" build --repo .
 ```
 
-If the directory is not a git repo and `code-review-graph install` fails with a git error: **STOP**. Ask:
-"This isn't a git repo yet. Run `git init` yourself, then re-run /triage, or skip the git-hook step for now?"
-Do NOT run `git init` or `git config`. Repo creation is the user's decision.
+If the directory is not a git repo and `code-review-graph install` fails with a git error: this means the user
+took the **Step 0.5 explicit-skip (pre-git) path** (the git-at-open gate offers a consented `git init`; reaching
+here git-less means they declined it for a throwaway workflow). The CRG git-hook install needs a repo — note it in
+`triage.json` `deferred_steps` and skip it, or offer to re-run the Step 0.5 `git init` now (consented, via
+`vault_admin.py git-init --root .`). Git-at-open is owned by Step 0.5; this skill offers a **consented** init there
+rather than refusing outright — but the init is still the user's decision (the actuator never self-consents).
 
 If no or crg is absent: note in `triage.json` `deferred_steps` — can be installed later.
 
@@ -312,7 +365,11 @@ me on the pipeline across sessions. If you ever want me to bypass, say so explic
 - **Do NOT state the mode silently.** State rationale; wait for confirmation before writing.
 - **Do NOT write files until Step 5** (mode confirmed).
 - **Re-triage**: append via `vault_edit` — never overwrite history.
-- **NEVER run `git init` or `git config`.** Repo creation is the user's decision.
+- **git-at-open is a CONSENTED gate, not a silent init (slice-058 / ADR-055).** Step 0.5 offers `git init` via
+  `AskUserQuestion` BEFORE any vault write and runs it only on the user's explicit choice (the `vault_admin
+  git-init` actuator NEVER self-consents); repo creation is still the user's decision. Do NOT silently run `git
+  init` / `git config`, and do NOT write a vault artifact while the dir is non-git and the user has not accepted
+  the init or explicitly chosen to skip.
 - **Greenfield only**: if the user has >500 LOC of existing code, STOP and suggest `/adopt` instead.
 
 ## Mode quick reference

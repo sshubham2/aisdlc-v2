@@ -70,6 +70,42 @@ Proceeding to forensic analysis offer.
 Parse: `/adopt MINIMAL|STANDARD|HEAVY` → skip mode-selection questions.
 `/adopt` with no mode → interactive (ask at Step 4 after interview context).
 
+## Step 2.5 — git-at-open gate (slice-058 / ADR-055 / SC-107 — run BEFORE any vault write, incl. Step 3 `/slice-candidates`)
+
+Same rationale as `/triage` Step 0.5: the vault keys on `sha256(cwd)` pre-git vs `sha256(<git-common-dir>)`
+after, so a later `git init` silently orphans a pre-git vault (SC-107). **This gate must precede the FIRST vault
+write.** In `/adopt` that first write is NOT Step 9 — it is **Step 3's `/slice-candidates`** Skill-tool
+invocation (on the `/diagnose`=YES path), which writes `<vault>/candidates.json` via `vault_edit`. (Step 1's
+`crg build` is a CRG scan, not a vault write, so it legitimately precedes the gate; a Skill-tool sub-invocation
+that writes the vault does NOT.) A brownfield repo is USUALLY already a git work tree (`GIT_OK`, the common path),
+but handle the non-git case. Probe git:
+```bash
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 && echo "GIT_OK" || echo "NON_GIT"
+```
+- **`GIT_OK`** → proceed to Step 3; the injected `$VAULT` is valid.
+- **`NON_GIT`** → HALT and offer via `AskUserQuestion` (3 outcomes; the actuator NEVER self-consents):
+  - **Run `git init` now (recommended)** — consented, fail-closed actuator:
+    ```bash
+    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" git-init --root .
+    ```
+    Non-zero (exit 3) → **STOP, write NO vault artifact** (do NOT run `/slice-candidates`); exit 0 → **RE-RESOLVE
+    `$VAULT`** (next block).
+  - **Decline (fail-closed)** → **STOP. Write NO vault artifact** (including no `/slice-candidates` run). State the
+    pre-git fragility, as in `/triage` Step 0.5.
+  - **Proceed without git anyway (explicit informed skip)** → proceed pre-git, but WARN concretely: a later
+    `git init` (which the stranded-slice audit + CRG git-hook install both prompt) RE-KEYS + orphans this vault,
+    and re-running the opener looks FRESH — you would hand-write the tier-2 pin to recover.
+
+**Post-gate re-resolution (B1 — mandatory when `git init` just ran; used by Step 3 `/slice-candidates` AND
+Steps 6-9 writes AND the Step-7 pin).** Shell vars do NOT persist across skill bash blocks and the top-of-file
+`!`-injection resolved `$VAULT` **PRE-git**. Re-resolve in a bash BODY step and use THIS for every vault write;
+**do NOT reuse the load-time injection.**
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+[ -z "$VAULT" ] && { echo "STOP: vault unresolved after git init." >&2; exit 2; }
+if [ -f "$VAULT/triage.json" ]; then echo "EXISTING_VAULT=true (re-resolved: $VAULT)"; else echo "EXISTING_VAULT=false (re-resolved: $VAULT)"; fi
+```
+
 ## Step 3 — offer /diagnose (gate 1)
 
 For non-trivial brownfields, offer forensic analysis. Recommend `yes` (default) when: codebase >500 LOC OR >10 source files OR maturity=production/legacy/handed-off OR AI-assisted history suspected.
@@ -133,9 +169,16 @@ Write `<vault>/concept.json` (schema: `examples/concept.json`) grounded in code 
 - Add `doc_vs_code_discrepancies` field if /diagnose found README contradictions.
 
 **Pin the vault (4.7, NEW vault only — skip when merging into an existing one).** Record the tier-2
-git-common-dir pin so a later repo move/rename does not orphan this vault:
+git-common-dir pin so a later repo move/rename does not orphan this vault. **slice-058/M1 — guard on git
+presence + check the exit** (on the Step-2.5 explicit-skip pre-git branch there is no git-common-dir to pin
+into, so do NOT call write-pin there; on the git path a genuine failure (exit 3) must STOP):
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" write-pin
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" write-pin; rc=$?
+  [ "$rc" = 0 ] || { echo "STOP: vault_admin write-pin failed (rc=$rc) — surface + fix; do not leave the vault unpinned." >&2; exit "$rc"; }
+else
+  echo "note: pre-git explicit-skip path — no git-common-dir to pin into; the vault is fragile until \`git init\` (see Step 2.5)."
+fi
 ```
 
 ## Step 8 — capture historical ADRs (firsthand only)
