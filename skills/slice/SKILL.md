@@ -170,7 +170,7 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
    reservation `reserved → spiking` — **same-owner only**; a reservation held by a different git identity refuses
    (exit 1, no slice number minted). A fresh `candidate`/`deferred` pick (no prior reservation) still claims directly.
 2. **Compute paths** from the RETURNED `folder`: `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder <folder> --repo-root .` (line 1 = `$wt` path, line 2 = `slice/NNN-<name>`).
-3. **Resolve the integration base + create the worktree** (slice-022: slices branch off the integration branch `uat`, degrading visibly to the default trunk when uat is absent — never a hardcoded master):
+3. **Resolve the integration base + create the worktree** (slice-022/061: slices branch off the integration branch `aisdlc-uat` — legacy `uat` accepted as back-compat in an ai-sdlc-managed repo — degrading visibly to the default trunk when no integration branch exists; never a hardcoded master):
    ```bash
    base=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root <main>)
    [ -z "$base" ] && { echo "STOP: cannot resolve the integration branch (git unusable)." >&2; exit 2; }

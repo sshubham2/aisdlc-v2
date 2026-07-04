@@ -34,7 +34,10 @@ def _git(repo, *a):
     subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)
 
 
-def _repo(tmp_path, with_uat=False):
+def _repo(tmp_path, with_uat=False, with_aisdlc_uat=False, genesis=True):
+    """A test repo. ``genesis`` tags ``release-genesis`` at the base — i.e. an ai-sdlc-managed
+    repo (the M2 discriminator). ``with_uat`` alone + ``genesis=True`` is the legacy back-compat
+    state; ``with_uat`` + ``genesis=False`` is a FRESH host whose own `uat` must NOT be claimed."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", "master")
@@ -44,8 +47,12 @@ def _repo(tmp_path, with_uat=False):
     (repo / "f.txt").write_text("base\n", encoding="utf-8")
     _git(repo, "add", "f.txt")
     _git(repo, "commit", "-m", "base")
+    if genesis:
+        _git(repo, "tag", "release-genesis")
     if with_uat:
         _git(repo, "branch", "uat")
+    if with_aisdlc_uat:
+        _git(repo, "branch", "aisdlc-uat")
     return repo
 
 
@@ -56,9 +63,32 @@ def _cli(repo, *args):
 
 # ── the function ─────────────────────────────────────────────────────────────
 @gitok
-def test_uat_present_returns_uat(tmp_path):
-    repo = _repo(tmp_path, with_uat=True)
+def test_aisdlc_uat_present_returns_aisdlc_uat(tmp_path):
+    # slice-061 AC1: the namespaced integration branch wins (self-identifying by name).
+    repo = _repo(tmp_path, with_aisdlc_uat=True)
+    assert resolve_integration_branch(repo) == "aisdlc-uat"
+
+
+@gitok
+def test_both_present_prefers_aisdlc_uat(tmp_path):
+    # slice-061 AC1: aisdlc-uat takes precedence over the legacy uat during the transition.
+    repo = _repo(tmp_path, with_uat=True, with_aisdlc_uat=True)
+    assert resolve_integration_branch(repo) == "aisdlc-uat"
+
+
+@gitok
+def test_legacy_uat_present_returns_uat(tmp_path):
+    # Back-compat: an ai-sdlc-managed repo (release-genesis tag) still resolves legacy uat.
+    repo = _repo(tmp_path, with_uat=True)  # genesis=True by default
     assert resolve_integration_branch(repo) == "uat"
+
+
+@gitok
+def test_fresh_host_uat_without_genesis_degrades(tmp_path):
+    # M2 / M-add-2: a FRESH host with its own `uat` and NO release-genesis tag must NOT
+    # be claimed as the integration branch -> the legacy arm is rejected -> degrade to trunk.
+    repo = _repo(tmp_path, with_uat=True, genesis=False)
+    assert resolve_integration_branch(repo) == "master"
 
 
 @gitok
@@ -84,6 +114,39 @@ def test_git_unusable_returns_none(tmp_path, monkeypatch):
     notgit.mkdir()
     monkeypatch.setattr(mod, "resolve_default_branch", lambda r: None)
     assert mod.resolve_integration_branch(notgit) is None
+
+
+# ── existing_integration_branch (the non-degrading precedence leaf) ───────────
+@gitok
+def test_existing_integration_branch_precedence(tmp_path):
+    import scripts.lib._git_default_branch as mod
+
+    def _sub(name):
+        d = tmp_path / name
+        d.mkdir()
+        return d
+
+    assert mod.existing_integration_branch(_repo(_sub("a"), with_aisdlc_uat=True)) == "aisdlc-uat"
+    assert mod.existing_integration_branch(_repo(_sub("b"), with_uat=True)) == "uat"
+    # fresh host: uat, no genesis -> NOT an integration branch (never degrades to trunk here)
+    assert mod.existing_integration_branch(_repo(_sub("c"), with_uat=True, genesis=False)) is None
+    # neither branch -> None
+    assert mod.existing_integration_branch(_repo(_sub("d"), with_uat=False)) is None
+
+
+@gitok
+def test_legacy_uat_note_once_per_process(tmp_path, capsys, monkeypatch):
+    # m4 / M2: legacy uat is a VALID resolution (not a degrade) -> the note fires at most
+    # ONCE per process so frequent read-only callers stay quiet during the transition window.
+    import scripts.lib._git_default_branch as mod
+    monkeypatch.setattr(mod, "_LEGACY_NOTE_EMITTED", False)
+    repo = _repo(tmp_path, with_uat=True)
+    mod.resolve_integration_branch(repo)
+    first = capsys.readouterr().err
+    mod.resolve_integration_branch(repo)
+    second = capsys.readouterr().err
+    assert "legacy" in first.lower() and "uat" in first
+    assert second.strip() == "", f"legacy note must fire once per process, got: {second!r}"
 
 
 # ── the CLI ──────────────────────────────────────────────────────────────────
@@ -119,6 +182,33 @@ def test_cli_write_ok_when_uat_present(tmp_path):
     r = _cli(repo, "--integration", "--write")
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "uat"
+
+
+@gitok
+def test_cli_integration_prints_aisdlc_uat(tmp_path):
+    repo = _repo(tmp_path, with_aisdlc_uat=True)
+    r = _cli(repo, "--integration")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "aisdlc-uat"
+
+
+@gitok
+def test_cli_write_ok_when_aisdlc_uat_present(tmp_path):
+    repo = _repo(tmp_path, with_aisdlc_uat=True)
+    r = _cli(repo, "--integration", "--write")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "aisdlc-uat"
+
+
+@gitok
+def test_cli_write_refuses_on_fresh_host_uat(tmp_path):
+    """M-add-2: a host's own `uat` with NO release-genesis tag is a trunk-degrade for the
+    WRITE guard -> REFUSE (exit 3), never merge slice work into the host's branch."""
+    repo = _repo(tmp_path, with_uat=True, genesis=False)
+    r = _cli(repo, "--integration", "--write")
+    assert r.returncode == 3, (r.stdout, r.stderr)
+    assert "aisdlc-uat" in r.stderr and "refus" in r.stderr.lower()
+    assert r.stdout.strip() == ""  # no branch leaked on stdout
 
 
 @gitok

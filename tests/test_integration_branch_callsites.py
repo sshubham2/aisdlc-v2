@@ -27,7 +27,7 @@ def _git(repo, *a):
     subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)
 
 
-def _repo(tmp_path, with_uat):
+def _repo(tmp_path, with_uat=False, with_aisdlc_uat=False, genesis=True):
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", "master")
@@ -37,8 +37,13 @@ def _repo(tmp_path, with_uat):
     (repo / "f.txt").write_text("base\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "base")
+    # slice-061: release-genesis marks an ai-sdlc-managed repo -> legacy `uat` resolves.
+    if genesis:
+        _git(repo, "tag", "release-genesis")
     if with_uat:
         _git(repo, "branch", "uat")
+    if with_aisdlc_uat:
+        _git(repo, "branch", "aisdlc-uat")
     return repo
 
 
@@ -51,6 +56,17 @@ def test_resolve_sync_target_resolves_uat_when_present(tmp_path):
     assert r.returncode == 0, r.stderr
     plan = json.loads(r.stdout.strip().splitlines()[-1])
     assert plan["integration_branch"] == "uat"
+
+
+@gitok
+def test_resolve_sync_target_resolves_aisdlc_uat_when_present(tmp_path):
+    # slice-061 AC3: the namespaced integration branch is what the callsite resolves.
+    repo = _repo(tmp_path, with_aisdlc_uat=True)
+    r = subprocess.run([sys.executable, str(RST), "--repo-root", str(repo), "--json"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    plan = json.loads(r.stdout.strip().splitlines()[-1])
+    assert plan["integration_branch"] == "aisdlc-uat"
 
 
 @gitok

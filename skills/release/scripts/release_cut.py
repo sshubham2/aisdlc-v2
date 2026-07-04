@@ -113,7 +113,7 @@ def run_release_cut(repo_root, new_version=None, *, level=None, source=None,
     if src == released:
         return {**res, "action": "no-integration-branch",
                 "reason": f"no integration branch distinct from the released trunk '{released}' "
-                          f"(uat absent); nothing to release.",
+                          f"(aisdlc-uat/uat absent); nothing to release.",
                 "exit_code": 2}
     res["source"] = src
 
@@ -192,7 +192,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--level", default=None, choices=["patch", "minor", "major"],
                     help="compute the target by incrementing the current version")
     ap.add_argument("--vault", default=None, help="vault root (for the changelog regen)")
-    ap.add_argument("--source", default=None, help="integration branch (default: resolve uat)")
+    ap.add_argument("--source", default=None,
+                    help="integration branch (default: resolve aisdlc-uat, legacy uat as back-compat)")
     ap.add_argument("--confirmed", action="store_true", help="required human release-confirmation gate")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)

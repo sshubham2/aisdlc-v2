@@ -57,7 +57,7 @@ def test_red_suite_refuses_and_names_rows():
     assert GATE._exit_for(r) == 1
     assert [row["row"] for row in r["failing_rows"]] == ["bad_test_row"]
     assert "bad_test_row" in r["reason"]
-    assert "uat is untouched" in r["reason"]
+    assert "integration branch is untouched" in r["reason"]
 
 
 def test_runner_usage_error_is_fail_closed():

@@ -60,11 +60,12 @@ an additional advisory.)
 **version-grouped** (Keep-a-Changelog `## [x.y.z]` sections), with the per-slice records laid over the versions
 they cover.
 
-**The plugin version is cut HERE — AS the deliberate `uat->master` merge — not in the slice commit.** Slice commits
-integrate onto `uat` WITHOUT a version bump (so parallel slices never conflict on the plugin.json `version` line);
-`/release`'s release cut (`release_cut.py`) bumps the version once as it merges `uat` into the released `master`,
-and rolls every unreleased commit (the *open period* — everything merged into uat since the last version-change)
-forward onto it.
+**The plugin version is cut HERE — AS the deliberate integration→`master` merge — not in the slice commit.** The
+integration branch is `aisdlc-uat` (slice-061; legacy `uat` accepted as back-compat in an ai-sdlc-managed repo),
+resolved via `resolve_integration_branch`. Slice commits integrate onto it WITHOUT a version bump (so parallel
+slices never conflict on the plugin.json `version` line); `/release`'s release cut (`release_cut.py`) bumps the
+version once as it merges the integration branch into the released `master`, and rolls every unreleased commit (the
+*open period* — everything merged into the integration branch since the last version-change) forward onto it.
 
 **Sub-step 1a — the atomic release cut (`release_cut.py`).** Under the uat/master model (slice-022) the
 `uat->master` merge IS the version cut, and `release_cut.py` performs it ATOMICALLY — it is the **ONLY** path that
@@ -79,10 +80,10 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/release_cut.py" --confirmed \
 ```
 
 `release_cut.py` (slice-022): REFUSES on a dirty target tree (B2); treats a uat-not-ahead state as a clean
-**no-op** (idempotent re-run — M2); else CAPTURES the pre-merge `master` SHA, stages `git merge --no-ff --no-commit uat`,
-runs `bump_plugin_version.py` (refuses a non-increasing bump / malformed manifest; no-op at-target — M4) +
+**no-op** (idempotent re-run — M2); else CAPTURES the pre-merge `master` SHA, stages `git merge --no-ff --no-commit <integration>`
+(the resolved `aisdlc-uat` / legacy `uat`), runs `bump_plugin_version.py` (refuses a non-increasing bump / malformed manifest; no-op at-target — M4) +
 `assemble_changelog.py` (open-period grouping) into the worktree, then lands the merge + bump + changelog as **ONE
-commit** (the atomic boundary), and finally syncs `uat` back to the new release. On ANY pre-commit failure it does
+commit** (the atomic boundary), and finally syncs the integration branch back to the new release. On ANY pre-commit failure it does
 `git reset --hard <captured-SHA>` so `master` is byte-identical (the `merge --abort`-alone gap, proven by
 spike-release-cut-atomicity, is why the cleanup is an explicit reset). **`/release` fails visibly if the target
 version cannot be determined (no silent skip).** Read the verdict JSON's `action` — `released` (cut landed), `no-op`

@@ -33,7 +33,7 @@ def _git(repo, *a):
     subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)
 
 
-def _setup(tmp_path, checkout):
+def _setup(tmp_path, checkout, integration="uat", genesis=True):
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", "master")
@@ -43,7 +43,10 @@ def _setup(tmp_path, checkout):
     (repo / "f.txt").write_text("base\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "base")
-    _git(repo, "branch", "uat")
+    # slice-061: release-genesis marks an ai-sdlc-managed repo -> legacy `uat` resolves.
+    if genesis:
+        _git(repo, "tag", "release-genesis")
+    _git(repo, "branch", integration)
     _git(repo, "branch", "slice/001-x")
     _git(repo, "checkout", checkout)
     slice_folder = tmp_path / "slice-001-x"
@@ -59,6 +62,16 @@ def test_on_uat_fires_on_default_branch(tmp_path):
     assert res.resolved_default_branch == "uat", "BRANCH-1 must resolve the integration branch (uat)"
     kinds = [v.kind for v in res.violations]
     assert "on-default-branch" in kinds, kinds
+
+
+@gitok
+def test_on_aisdlc_uat_fires_on_default_branch(tmp_path):
+    # slice-061 AC3: BRANCH-1 keys on the namespaced integration branch too.
+    bwa = _load()
+    repo, sf = _setup(tmp_path, checkout="aisdlc-uat", integration="aisdlc-uat")
+    res = bwa.audit(slice_folder=sf, repo_root=repo)
+    assert res.resolved_default_branch == "aisdlc-uat", "BRANCH-1 must resolve aisdlc-uat"
+    assert "on-default-branch" in [v.kind for v in res.violations]
 
 
 @gitok

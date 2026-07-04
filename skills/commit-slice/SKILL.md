@@ -165,7 +165,8 @@ Both `--merge` (5b) and `--push` (5c) reach the **REBASED** rung through this ON
 so the rebase + conflict gate behave IDENTICALLY in both modes —
 `parallel_conflict_resolver.py` is invoked UNCHANGED (extracting the rebase into a script
 was rejected: its hard part, the PCR-2b gate, is interactive). Resolve the INTEGRATION branch
-(slice-022: slices rebase ONTO `uat`, not the released trunk; rebase does not advance master, so the
+(slice-022/061: slices rebase ONTO the integration branch `aisdlc-uat` — legacy `uat` accepted as
+back-compat in an ai-sdlc-managed repo — not the released trunk; rebase does not advance master, so the
 read-only resolution is correct):
 ```bash
 default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root .)
@@ -247,14 +248,14 @@ No git operations are executed.
    section has already halted — do NOT proceed.
 
 2.7. **Integration-health gate** (slice-059 / SC-093 / ADR-056 — `--merge` ONLY): the 2.5 rebase produced the
-   exact about-to-merge state (the slice branch replayed onto the current `uat` tip). BEFORE advancing to the
+   exact about-to-merge state (the slice branch replayed onto the current integration-branch tip). BEFORE advancing to the
    step-3 merge, re-run the full shippability catalog against THAT post-rebase state and **REFUSE the merge on
-   red** — so per-slice green can never merge into a `uat` made red by an already-landed sibling break. This runs
+   red** — so per-slice green can never merge into an integration branch made red by an already-landed sibling break. This runs
    from the slice **worktree** (still the cwd here, BEFORE step-3's `cd "$main_tree"`), so it tests the post-rebase
-   tip; because the merge is strictly downstream, a refusal here means the merge simply never runs and `uat` is
+   tip; because the merge is strictly downstream, a refusal here means the merge simply never runs and the integration branch is
    left untouched **by placement** (no rollback). It reuses `shippability_runner.run_catalog` → `verification_core`
    (the SAME check `/validate-slice` Step 6 runs) via `integration_health_gate.py`; it never re-implements the
-   suite. (Not wired into 5c `--push` — that path does not advance `uat` locally; its integration-health
+   suite. (Not wired into 5c `--push` — that path does not advance the integration branch locally; its integration-health
    enforcement is the CI required-check, out of scope. M-add-1.)
    ```bash
    wt="$(git rev-parse --show-toplevel | tr -d '\r')"   # cwd is the post-rebase worktree here (pre-step-3 cd)
@@ -267,7 +268,7 @@ No git operations are executed.
    - **`gate_rc` is any non-zero** (`action` `refuse` = red rows named, or `refuse-unrunnable` = fail-closed: the
      suite could not be evaluated) → **STOP — do NOT proceed to step 3.** Print the gate's report (the failing
      rows / cause), append a `<ts> FINDING: integration-health gate REFUSED (<action>) — <reason>` line to
-     `build-log.json` **Events** (fail-visible), and leave `uat` + the worktree untouched. To merge anyway, the
+     `build-log.json` **Events** (fail-visible), and leave the integration branch + the worktree untouched. To merge anyway, the
      user re-runs `/commit-slice --merge --skip-integration-health "<reason>"` (the override is explicit + logged,
      never silent).
    - **`gate_rc` is 0 and `gate_action` is `overridden`** → the user pulled the andon cord: append a
@@ -281,7 +282,7 @@ No git operations are executed.
    ```bash
    main_tree=$(git worktree list --porcelain | awk '/^worktree / {print $2; exit}')
    ```
-   If empty: STOP — "main-tree-unresolvable." `cd "$main_tree"`. **Resolve the integration branch as a WRITE target (slice-022 M3)** — `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --write --repo-root .)`; on non-zero exit (uat absent) **STOP**: "integration branch uat absent; refusing to merge a slice into the released trunk — establish uat first" (NEVER fall back to master for a write — a `--merge` advances `$default`). Then `git checkout "$default"` + `git merge --no-ff slice/NNN-<name> -m "Merge slice/NNN-<name>: <intent>"`. If conflict: STOP with manual resolution hint (no recovery flow in v1).
+   If empty: STOP — "main-tree-unresolvable." `cd "$main_tree"`. **Resolve the integration branch as a WRITE target (slice-022 M3 / slice-061 M-add-2)** — `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --write --repo-root .)`; on non-zero exit (no `aisdlc-uat` AND no ai-sdlc-managed `uat` — a full trunk-degrade, keyed on resolution SOURCE) **STOP**: "no integration branch; refusing to merge a slice into the released trunk — establish aisdlc-uat first" (NEVER fall back to master for a write — a `--merge` advances `$default`). Then `git checkout "$default"` + `git merge --no-ff slice/NNN-<name> -m "Merge slice/NNN-<name>: <intent>"`. If conflict: STOP with manual resolution hint (no recovery flow in v1).
 
 4. Confirm: "Confirm merge + delete? (yes/no)" — on no: ABORT cleanly, leave merged branch intact.
 
@@ -318,13 +319,13 @@ direct-merge path was dropped at slice-008 TRI-1 (ADR-006); nothing merges local
    runs ON the slice branch, so the worktree IS the cwd — pass `--repo-root .` (do NOT reference a `$wt` from
    another block):
    ```bash
-   # slice-022 (B1): pr_flow self-resolves the INTEGRATION branch (uat) for the PR base + rebase target.
+   # slice-022/061 (B1): pr_flow self-resolves the INTEGRATION branch (aisdlc-uat; legacy uat as back-compat) for the PR base + rebase target.
    # Do NOT pass --default -- an inline origin/HEAD=master would OVERRIDE the swapped resolver.
    $PY "${CLAUDE_SKILL_DIR}/scripts/pr_flow.py" --confirmed \
        --branch slice/NNN-<name> --repo-root . --json
    ```
-   (pr_flow self-resolves the integration branch from `--repo-root` via `resolve_integration_branch` — uat when
-   present, the released trunk otherwise.) `pr_flow.py` pushes (`git push -u origin slice/NNN-<name>` — never force-push, never skip
+   (pr_flow self-resolves the integration branch from `--repo-root` via `resolve_integration_branch` — aisdlc-uat
+   (or legacy uat in an ai-sdlc-managed repo) when present, the released trunk otherwise.) `pr_flow.py` pushes (`git push -u origin slice/NNN-<name>` — never force-push, never skip
    hooks) → creates the PR with `gh pr create --base <default> --head <branch> --fill` (the `--fill` is REQUIRED so
    the title/body come from the slice commits — `gh pr create` is otherwise interactive; gh present + GitHub origin,
    else it prints the hint) → enables non-blocking auto-merge ONLY when `.permissions.push==true`, **verifying the
@@ -350,7 +351,7 @@ target slice itself, so the owner need not `cd` into the slice worktree.
 2. Origin remote present.
 
 **Cleanup flow:**
-1. **Resolve the integration branch** (slice-022 M-add-1): `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root .)`. A slice merges to `uat`, so the classifier below (`git cherry origin/<default>` / `git merge-base origin/<default>`) and the post-merge `git checkout <default>` + `git pull --ff-only origin <default>` target `origin/uat` / `uat`, NOT the released trunk. STOP exit 2 if it does not resolve.
+1. **Resolve the integration branch** (slice-022 M-add-1 / slice-061): `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root .)`. A slice merges to the integration branch `aisdlc-uat` (legacy `uat` as back-compat), so the classifier below (`git cherry origin/<default>` / `git merge-base origin/<default>`) and the post-merge `git checkout <default>` + `git pull --ff-only origin <default>` target `origin/<default>` / `<default>`, NOT the released trunk. STOP exit 2 if it does not resolve.
 2. `git fetch --prune origin <default>` (fresh refs so the classifier's `git cherry` / `git merge-base` against `origin/<default>` are accurate; explicit refspec required).
 3. **Resolve the target slice + its classification** — resolve-only; the merge-state classifier AND the single-sourced `authorize_remote_delete` (gh PR merged-state primary) run HERE, in Python. **§5d NEVER recomputes Signal A/B in bash** (M1/ADR-052 — the classification has exactly one home):
    ```bash

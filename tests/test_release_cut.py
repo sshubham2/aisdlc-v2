@@ -52,7 +52,7 @@ def _set_version(repo, v):
     p.write_text(json.dumps({"name": "ai-sdlc", "version": v}, indent=2) + "\n", encoding="utf-8")
 
 
-def _repo(tmp_path, uat_ahead=True):
+def _repo(tmp_path, uat_ahead=True, integration="uat", genesis=True):
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", "master")
@@ -63,12 +63,15 @@ def _repo(tmp_path, uat_ahead=True):
     (repo / "CHANGELOG.md").write_text("# Changelog\n\n## 2.35.1\n- base\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "base 2.35.1")
-    _git(repo, "branch", "uat")
+    # slice-061: release-genesis marks an ai-sdlc-managed repo -> legacy `uat` resolves.
+    if genesis:
+        _git(repo, "tag", "release-genesis")
+    _git(repo, "branch", integration)
     if uat_ahead:
-        _git(repo, "checkout", "uat")
+        _git(repo, "checkout", integration)
         (repo / "feat.py").write_text("slice work\n", encoding="utf-8")
         _git(repo, "add", "-A")
-        _git(repo, "commit", "-m", "slice work on uat")
+        _git(repo, "commit", "-m", f"slice work on {integration}")
         _git(repo, "checkout", "master")
     return repo
 
@@ -115,6 +118,20 @@ def test_happy_path_one_commit(tmp_path):
     assert r.get("sync_back") == "ok"
     # uat now contains the release
     assert run_git(repo, "merge-base", "--is-ancestor", "master", "uat").returncode == 0
+
+
+# ── slice-061 AC3: with aisdlc-uat present, the cut targets the namespaced branch ─
+@gitok
+def test_resolves_and_merges_aisdlc_uat(tmp_path):
+    rc = _load()
+    repo = _repo(tmp_path, uat_ahead=True, integration="aisdlc-uat")
+    before = _master_sha(repo)
+    r = rc.run_release_cut(repo, "2.36.0", git=run_git, bump=_fake_bump, changelog=_fake_changelog)
+    assert r["action"] == "released", r
+    assert r["source"] == "aisdlc-uat", r
+    fp = run_git(repo, "rev-list", "--first-parent", f"{before}..master").stdout.split()
+    assert len(fp) == 1, fp
+    assert run_git(repo, "merge-base", "--is-ancestor", "master", "aisdlc-uat").returncode == 0
 
 
 # ── B2: refuse on a dirty tree, master untouched ─────────────────────────────
