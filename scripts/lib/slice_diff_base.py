@@ -3,7 +3,8 @@
 The /build-slice pre-finish gate, /code-review, and /validate-slice derive the
 slice diff base to scope the changed-files set to the current slice's own work.
 The base MUST be the fork point of the slice branch against the LOCAL integration
-branch (uat, degrading to the released trunk) -- NOT ``origin/HEAD``. Slices branch
+branch (aisdlc-uat, legacy uat as back-compat, degrading to the released trunk) --
+NOT ``origin/HEAD``. Slices branch
 off the LOCAL integration branch, which in the dogfood flow is AHEAD of origin, so
 ``merge-base HEAD origin/HEAD`` resolves to a stale ancestor and the changed-files
 set BALLOONS to include every prior-merged slice (mis-scoping BC-1 / LINT-MOCK /

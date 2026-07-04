@@ -169,6 +169,31 @@ def test_uat_not_descending_from_genesis_flagged(tmp_path):
     assert r.returncode == 1, "uat not descending from genesis must be flagged (M4)"
 
 
+# ── slice-061 AC2: the M4 check resolves the namespaced integration branch ───
+@gitok
+def test_aisdlc_uat_rooted_at_genesis_passes(tmp_path):
+    repo = _base_repo(tmp_path)
+    _git(repo, "branch", "aisdlc-uat")  # from master == genesis
+    r = _run(repo, "--json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(r.stdout).get("integration_branch_checked") == "aisdlc-uat"
+
+
+@gitok
+def test_aisdlc_uat_not_descending_from_genesis_flagged(tmp_path):
+    repo = _base_repo(tmp_path, tag_genesis=False)
+    (repo / "a.py").write_text("a\n", encoding="utf-8")
+    _git(repo, "add", "-A"); _git(repo, "commit", "-m", "advance")
+    _set_version(repo, "2.36.0")
+    _git(repo, "commit", "-am", "bump 2.36.0")
+    _git(repo, "tag", "release-genesis")        # genesis is HERE
+    _git(repo, "branch", "aisdlc-uat", "HEAD~2")  # rooted before genesis
+    r = _run(repo, "--json")
+    assert r.returncode == 1, "aisdlc-uat not descending from genesis must be flagged (M4)"
+    kinds = [v["kind"] for v in json.loads(r.stdout)["violations"]]
+    assert "integration-genesis-mismatch" in kinds, kinds
+
+
 # ── NO-OP on a non-methodology repo ──────────────────────────────────────────
 @gitok
 def test_noop_on_non_methodology_repo(tmp_path):

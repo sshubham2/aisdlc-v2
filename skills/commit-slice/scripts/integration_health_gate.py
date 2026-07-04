@@ -2,16 +2,18 @@
 /commit-slice --merge (slice-059 / SC-093 / ADR-056).
 
 The gap it closes ("integration is the leak"): a slice can pass its whole
-per-slice loop on its own branch while the integration branch (uat) is red from a
-sibling's already-landed break, and nothing re-runs the full suite against the
-POST-REBASE uat tip before the local merge advances uat. This gate is that
-re-run, wired into `commit-slice/SKILL.md` sub-step 2.7 -- AFTER the 2.5 rebase
-onto uat and BEFORE the step-3 `git checkout uat; git merge --no-ff`. Because the
-merge is strictly downstream, a REFUSE here means the merge never runs, so uat is
-left untouched BY PLACEMENT (no git rollback to get wrong).
+per-slice loop on its own branch while the integration branch (aisdlc-uat; legacy
+uat in an ai-sdlc-managed repo) is red from a sibling's already-landed break, and
+nothing re-runs the full suite against the POST-REBASE integration-branch tip
+before the local merge advances it. This gate is that re-run, wired into
+`commit-slice/SKILL.md` sub-step 2.7 -- AFTER the 2.5 rebase onto the integration
+branch and BEFORE the step-3 `git checkout <integration>; git merge --no-ff`.
+Because the merge is strictly downstream, a REFUSE here means the merge never
+runs, so the integration branch is left untouched BY PLACEMENT (no git rollback
+to get wrong).
 
 It is --merge-only (M-add-1): --push pushes the slice branch + opens a
-remote-auto-merge PR and does NOT advance uat locally, so its integration-health
+remote-auto-merge PR and does NOT advance the integration branch locally, so its integration-health
 enforcement is the CI required-check (front a of SC-093, out of scope), not this
 local gate.
 
@@ -216,7 +218,7 @@ def run_gate(
             "action": REFUSE,
             "reason": (
                 f"integration-health gate REFUSED the merge: {failed} shippability catalog row(s) FAIL "
-                f"against the post-rebase uat tip [{names}]. uat is untouched (the merge did not run). "
+                f"against the post-rebase integration-branch tip [{names}]. The integration branch is untouched (the merge did not run). "
                 f"Fix the regression, or bypass with --skip-integration-health <reason>."
             ),
             "failing_rows": failing,
@@ -228,7 +230,7 @@ def run_gate(
     return {
         "action": PROCEED,
         "reason": (
-            f"integration-health gate PASSED: full suite green against the post-rebase uat tip "
+            f"integration-health gate PASSED: full suite green against the post-rebase integration-branch tip "
             f"({evidence.get('passed')} passed, {evidence.get('absent')} absent/not-on-checkout, 0 failed)."
         ),
         "failing_rows": [],
@@ -252,7 +254,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="integration_health_gate",
         description="Pre-merge integration-health gate for /commit-slice --merge: re-run the full "
-                    "shippability catalog against the post-rebase uat tip and REFUSE the merge on red "
+                    "shippability catalog against the post-rebase integration-branch tip and REFUSE the merge on red "
                     "(fail-closed; reuses shippability_runner). --merge-only.",
     )
     p.add_argument("--repo-root", required=True,

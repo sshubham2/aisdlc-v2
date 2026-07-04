@@ -463,8 +463,8 @@ def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     args = _build_arg_parser().parse_args(argv)
     runner = _real_runner(args.repo_root)
-    # slice-022: a slice merges to the INTEGRATION branch (uat), so merged-detection
-    # targets origin/uat, not the released trunk.
+    # slice-022/061: a slice merges to the INTEGRATION branch (aisdlc-uat), so merged-detection
+    # targets origin/<integration>, not the released trunk.
     default = args.default or resolve_integration_branch(args.repo_root)
     if not default:
         sys.stderr.write("resolve_sync_target: could not resolve the integration branch.\n")
