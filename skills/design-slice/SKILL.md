@@ -27,11 +27,19 @@ VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vau
 ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --slice "$ARG"; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --repo-root .; fi   # SC-064: resolution moved from a `!`-injection to this BODY step so $ARG binds. active_slice_brief is exit-0-always so the no-arg AMBIGUOUS note degrades VISIBLY, never an exit-4 HALT (ADR-022 design-slice carve-out -- M-add-2). reflection-lookup + Step-0.5 project-frame stay branch-resolved advisory context (SC-063 scope).
 ```
 
-## Live state — injected
+## Prior-lesson recall — resolve in a BODY step (feeds the shared designer context)
 
-Nearest prior slice + relevant past reflections (lexical match via vault JSON — shared designer context):
-```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reflection_lookup.py" --vault "$AI_SDLC_VAULT_ROOT" --from-mission-brief
+Graded prior-lesson recall (`reflection_lookup.py`, slice-063 / SC-096) — the past slices + reflections most
+relevant to THIS mission, surfaced by the default `tfidf-cosine` scorer. **Run this as a BODY step, NOT a
+`!`-injection (M-add-1):** a `!`-injection runs at skill-LOAD before `${ARGUMENTS}` binds, so it cannot pass
+`--slice` and — under parallel in-flight slices resolved from a non-worktree context — hits the ambiguous-active
+path and returns nothing (the exact incident this closes; SC-064/ADR-022 precedent). This body block binds the
+explicit `/design-slice slice-NNN` `$ARG` and passes `--slice`, degrading to `--from-mission-brief` (branch/cwd
+resolution) only when no slice arg was given. Capture its stdout as the "Nearest prior slice + relevant
+reflections" block in the Step-1 designer context.
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reflection_lookup.py" --vault "$VAULT" --slice "$ARG" --scorer tfidf-cosine; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reflection_lookup.py" --vault "$VAULT" --from-mission-brief --scorer tfidf-cosine; fi
 ```
 
 ## Step 0 — graph context (before designing)
@@ -98,7 +106,7 @@ Mode: <Minimal | Standard | Heavy>   Risk tier: <low | medium | high>
 <stdout of project_frame_synth, or "(project-frame unavailable)">
 
 # Nearest prior slice + relevant reflections
-<the injected reflection_lookup output>
+<the body-resolved reflection_lookup output (from the Prior-lesson recall BODY step above)>
 
 # CRG blast-radius / reachability
 <your Step 0 summary>

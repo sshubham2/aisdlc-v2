@@ -231,6 +231,14 @@ expert), then reality-grounds a single synthesis using CRG blast-radius, spike e
 and a simplest-that-works heuristic (ADR-018 — generation breadth is always maximal; tier still drives whether
 `/critique` runs, not the tournament size). Writes `design.json`.
 
+Before designing, each blind designer is fed the **prior lessons most relevant to this mission** — surfaced by a
+graded relevance ranking over past slices + reflections (`scripts/lib/reflection_lookup.py`), so hard-won
+learnings reach the point of generation instead of being re-discovered. The relevance engine is **pluggable**:
+the default `tfidf-cosine` scorer is pure-stdlib (no extra dependency), and a different scorer (e.g. a future
+semantic/embedding tier) registers by name with **zero call-site edits**. The seam, the default scorer's math,
+and how to add a new one are documented at the top of `scripts/lib/reflection_scoring.py` (and ADR-060) — that
+module docstring is the durable reference; this paragraph is only a pointer.
+
 Empirically-decidable tournament disagreements gate a post-synthesis design spike:
 
 ### 4d. Design spike — `/risk-spike --mode design`
