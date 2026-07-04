@@ -454,5 +454,16 @@
       { "term": "server-sent events (SSE)", "plain": "a one-way live feed the browser keeps open to receive updates the moment they happen." }
     ],
     "generated_at": "<ts>"
+  },
+  "reality-gates": {
+    "_schema": "aisdlc/reality-gates@1",
+    "_note": "Repo-tracked per-project declared reality gates (slice-062/SC-095/ADR-059) at <repo-root>/.aisdlc/reality-gates.json -- DISTINCT from the external per-machine ~/.aisdlc/<slug>-<hash>/ vault (same basename, opposite intent: this file is committed + travels to teammates + CI). Checks are grouped by surface {security,nfr,ops}; each gate is {id, command (SCMD-1 <interp>-anchored), description?}. An absent OR all-empty manifest is a structural no-op. A declared gate SHOULD invoke a stack tool via `<interp> -m <module>`, NOT cite a slice-local tests/*.py path (which would trip fail-closed under the parallel-slice model, ADR-021 divergence). Runtime validator: scripts/lib/reality_gate_runner.py (malformed -> REFUSE exit 3). artifact_lint --self-check covers only THIS canonical example shape, never the live repo instance. The concrete gates (bandit/pip-audit/schemathesis/latency/telemetry) are out of scope here -> SC-097 + feedback #6/#12.",
+    "gates": {
+      "security": [
+        { "id": "bandit", "command": "<interp> -m bandit -q -r .", "description": "example only -- Python SAST; concrete gates ship in SC-097" }
+      ],
+      "nfr": [],
+      "ops": []
+    }
   }
 }

@@ -246,3 +246,95 @@ def run_verification(command: str, repo_root: Path | str, *,
                 "exited-nonzero")
 
     return ExecVerdict("PASS", "", "ok")
+
+
+# ── reality-gate fold (slice-062 / SC-095 / ADR-059) ──────────────────────────
+# A pluggable reality-gate SLOT runs a project's DECLARED deterministic checks at the
+# /build-slice pre-finish gate and at /validate-slice. This is the PURE, purely-additive
+# fold half: run each declared gate through the existing run_verification engine and map
+# its ExecVerdict to a 2-valued GateResult. Leaf-pure (stdlib-only, NO file IO) -- all
+# manifest IO / no-op / malformed policy / the set-aggregate live in the sibling CLI
+# scripts/lib/reality_gate_runner.py. run_verification / ExecVerdict are UNCHANGED, so the
+# two existing importers (shippability_runner, brief_variants_audit) are untouched.
+#
+# GateResult is a NEW 2-valued sibling type -- deliberately NOT a widening of ExecVerdict's
+# 3-valued enum (slice-004: a verdict that must survive a binary gate gets a SIBLING field,
+# not an enum extension every ExecVerdict consumer would then have to learn).
+
+_GateStatus = Literal["PASS", "FAIL"]
+
+
+@dataclass(frozen=True)
+class GateResult:
+    """The fail-closed outcome of running ONE declared reality gate.
+
+    `status` is 2-valued (PASS | FAIL) -- a declared gate either produced a clean PASS or
+    it TRIPS. `subkind` carries WHY (for logging / a consumer's policy): the ExecVerdict
+    subkind that ran (`not-runnable` / `exited-nonzero` / `timeout` / `unparseable` /
+    `absent-tests` / `ok`), or `bad-entry` when the declared entry itself was malformed."""
+    gate_id: str | None
+    surface: str | None
+    status: _GateStatus
+    subkind: str = ""
+    reason: str = ""
+    command: str = ""
+
+
+def _gate_field(entry, name: str):
+    """Read `name` off a declared-gate entry that may be a dict or an attr-carrying object."""
+    if isinstance(entry, dict):
+        return entry.get(name)
+    return getattr(entry, name, None)
+
+
+def run_declared_gates(gates, repo_root: Path | str, *,
+                       timeout: float | None = None, _run=run_verification) -> list[GateResult]:
+    """Run each DECLARED reality gate through `_run` (default: the real run_verification)
+    and return one GateResult per gate, IN ORDER.
+
+    Fail-closed mapping (the whole point -- a declared security gate that can't run is a
+    false-green risk): ONLY an ExecVerdict PASS -> GateResult PASS; ABSENT and EVERY FAIL
+    subkind -> GateResult FAIL. This DIVERGES deliberately from run_catalog's
+    ABSENT=not-a-regression (ADR-021) -- ABSENT is a per-slice repro concept, meaningless
+    for a project-level gate, so it TRIPS here (ADR-059).
+
+    Per-entry totality / no common-cause abort (design invariant #3): a malformed ENTRY
+    (missing a non-empty string `id` or `command`) FAILs THAT entry (subkind `bad-entry`)
+    and the loop CONTINUES -- one bad line never blinds the rest. Nothing raises to the
+    caller (run_verification is already total).
+
+    `gates` is an ordered iterable of entries, each carrying `id`, `surface`, `command`
+    (a dict, or any attr-object). `repo_root` is the checkout each gate runs against --
+    ALWAYS supplied by the caller (the reality_gate_runner CLI resolves it explicitly),
+    never re-derived here. `timeout` is threaded to run_verification (m5)."""
+    results: list[GateResult] = []
+    for entry in gates:
+        gid = _gate_field(entry, "id")
+        surface = _gate_field(entry, "surface")
+        cmd = _gate_field(entry, "command")
+        if not (isinstance(gid, str) and gid.strip()) or not (isinstance(cmd, str) and cmd.strip()):
+            results.append(GateResult(
+                gate_id=gid if isinstance(gid, str) else None,
+                surface=surface if isinstance(surface, str) else None,
+                status="FAIL", subkind="bad-entry",
+                reason="declared gate is missing a non-empty string `id` or `command`",
+                command=cmd if isinstance(cmd, str) else ""))
+            continue
+        # CR1 fail-closed: a command that is non-empty but tokenizes to NO runnable segment
+        # (only `;` separators / backtick fences / whitespace) would slip past run_verification
+        # as PASS 'ok' -- a declared gate that verifies NOTHING is a false-green (must_not_defer
+        # #1). A gate must actually run something to be green.
+        if not _segments(cmd):
+            results.append(GateResult(
+                gate_id=gid, surface=surface if isinstance(surface, str) else None,
+                status="FAIL", subkind="no-runnable-command",
+                reason="declared gate `command` has no runnable content (only separators / "
+                       "backtick fences / whitespace) -- it would verify nothing.",
+                command=cmd))
+            continue
+        verdict = _run(cmd, repo_root, timeout=timeout)
+        results.append(GateResult(
+            gate_id=gid, surface=surface if isinstance(surface, str) else None,
+            status="PASS" if verdict.status == "PASS" else "FAIL",
+            subkind=verdict.subkind, reason=verdict.reason, command=cmd))
+    return results

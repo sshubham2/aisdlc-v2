@@ -126,6 +126,18 @@ def main(argv: list[str]) -> int:
 
     print(f"AI SDLC setup - interpreter: {PY}\n", flush=True)
 
+    # Step 0 - scaffold the empty reality-gates manifest (slice-062 / SC-095 / ADR-059).
+    # A pure repo-file write, run on the DEFAULT (non---check) path BEFORE the deps install so
+    # a deps FATAL never skips it (DR-1 m3). Idempotent: never clobbers a populated manifest.
+    try:
+        from scripts.lib.scaffold_reality_gates import scaffold as _scaffold_reality_gates
+        _rg = _scaffold_reality_gates(repo)
+        print(f"reality-gates manifest : {_rg['action']} ({_rg['path']})", flush=True)
+        if _rg.get("gitignore_hint"):
+            print("  ! " + _rg["gitignore_hint"], flush=True)
+    except Exception as exc:  # visible, non-fatal: the runner no-ops without a manifest anyway
+        print(f"reality-gates manifest : scaffold skipped ({exc})", flush=True)
+
     # Step 1 - install deps (VISIBLE)
     if not REQ.is_file():
         print(f"FATAL: requirements.txt not found at {REQ}", flush=True)

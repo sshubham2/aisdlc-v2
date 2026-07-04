@@ -187,6 +187,19 @@ def run_gate(args: argparse.Namespace) -> tuple[str, list[CheckResult]]:
         cwd,
     ))
 
+    # REALITY-GATES (slice-062 / SC-095 / ADR-059) — run the project's DECLARED deterministic
+    # reality gates (<repo-root>/.aisdlc/reality-gates.json) against the worktree. --repo-root
+    # is passed EXPLICITLY (never ambient cwd; the env-lucky wrong-checkout class), and --json
+    # is the accepted no-op the runner emits its result on (M2: the exact argv is pinned so a
+    # flag mismatch can't exit-2 -> FAIL every slice). Absent/empty manifest -> the runner exits
+    # 0 -> PASS (no-op safety); a declared-gate FAIL / malformed manifest -> nonzero -> this
+    # check FAILs, which the gate-level FAIL fold below then blocks the finish on.
+    results.append(_run(
+        "REALITY-GATES",
+        [_PY, str(_LIB / "reality_gate_runner.py"), "--repo-root", worktree, "--json"],
+        cwd,
+    ))
+
     # ADR-APPEND-1 (SC-019 / ADR-023) — VERIFY ADR append-only via the content-hash baseline.
     # No new --vault flag: derive the decisions dir from the existing --slice arg, since
     # slice_folder == <vault>/slices/slice-NNN, so parents[1] == <vault> (critique M3).
