@@ -327,6 +327,34 @@ Main-thread-deferral-resolution steps (AskUserQuestion fix-vs-defer, rationale m
 JSON shape, write via `vault_edit`, only then advance); (d) on any FAIL/PARTIAL/credential HALT — what to
 surface to the user. A bare verdict with no relayed instructions strands the main thread.
 
+### Run the declared reality gates (REALITY-GATES; slice-062 / SC-095 / ADR-059)
+
+Run the project's DECLARED deterministic reality gates (`<repo-root>/.aisdlc/reality-gates.json`) against the SAME
+worktree checkout the catalog ran against. **Pass `--repo-root "$wt"` EXPLICITLY** (M-add-1 / WT-ROOT-1): unlike
+the sibling catalog run above (which relies on `cd "$wt"`), the reality-gate runner resolves the manifest off
+`--repo-root`, so an omitted/ambient root would resolve it under the external `~/.aisdlc` vault and **silently
+no-op the declared security gates at the highest reality gate** — a false-green. An absent/empty manifest is a
+structural no-op (exit 0). A declared-gate FAIL (exit 1) or a malformed manifest (exit 3) is a **hard block**:
+this skill is a forked context and CANNOT `AskUserQuestion`, so enforcement is **structural** — a non-zero exit
+makes the aggregate `Result: FAIL` and the fork returns `blocked` to the main thread (**invoked != enforced**, AC4).
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+ARG="${ARGUMENTS[0]:-}"
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+else
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
+fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reality_gate_runner.py" --repo-root "$wt" --json
+rgc=$?
+[ "$rgc" -eq 0 ] || echo "REALITY-GATES: a declared reality gate FAILED (exit 1) or the manifest is malformed (exit 3) [exit $rgc] -- validation BLOCKED (fail-closed). Set validation.json Result: FAIL and return blocked to the main thread; do NOT advance to /reflect." >&2
+```
+On `rgc == 0`: no manifest / all declared gates green — continue. On `rgc != 0`: record the runner's JSON in
+`validation.json` (`Result: FAIL`) and **return blocked** — a declared reality gate that trips is a real regression
+at the ship gate, never advisory. (No per-gate `--timeout` by default — a hung gate blocks, fail-safe; SC-097 owns
+concrete gates + any override.)
+
 ## Step 7 — write validation.json
 
 Write `<vault>/slices/slice-NNN-<name>/validation.json` (schema by example: `examples/validation.json`):
