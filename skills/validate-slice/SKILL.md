@@ -299,12 +299,23 @@ else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"
-$PY "${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py" <vault>/shippability.json
+# slice-064/ADR-061: pass an EXPLICIT generous --session-timeout so a hung MERGED session is bounded (AC3).
+# The runner MERGES the mergeable plain-pytest rows into ONE pytest session by default (session fixtures boot
+# ONCE, not once-per-row -- the Step-6 speedup); --no-merge is the per-project escape for a session-order-
+# dependent suite whose merged verdicts could diverge from serial (ADR-061). The timeout is CALLER-SUPPLIED
+# here on purpose: integration_health_gate passes NEITHER timeout, so it stays None there (preserves m5, no
+# false-REFUSE of a slow-but-passing merge). [aisdlc:step6-runner-invocation -- doc-guarded: keep the runner
+# + the explicit --session-timeout; never hard-code --no-merge on.]
+$PY "${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py" <vault>/shippability.json --session-timeout 1800
 ```
 
 The runner reads each row's Machine-cmd, splits on ` ; `, strips backticks per segment (reuses SCMD-1
-`_segments()`), executes each interpreter-anchored segment from the worktree root (`$wt`), and reports a
-three-valued verdict per row — **PASS / FAIL / ABSENT** (SC-021 / ADR-021). A row whose cited `tests/...py`
+`_segments()`), and reports a three-valued verdict per row — **PASS / FAIL / ABSENT** (SC-021 / ADR-021).
+**slice-064/ADR-061:** the mergeable plain-pytest rows run in ONE shared pytest session (fixtures boot once)
+attributed back per-row by JUnit classname+name; a non-pytest / multi-segment / behavior-flagged / `isolate:true`
+/ not-all-present row still runs STANDALONE via the UNCHANGED per-segment engine, and any row the merged session
+cannot confidently attribute (timeout / exit∉{0,1} / no JUnit / zero-match) falls back to that exact serial run —
+so a merged PASS/FAIL/ABSENT is verdict-identical to the serial runner and never a silent PASS. A row whose cited `tests/...py`
 file(s) are absent on this checkout (a sibling slice's not-yet-merged repro) is recorded **ABSENT** — decided
 by file existence, never the pytest exit code (exit 4 conflates absent-file / phantom-citation / usage-error) —
 and is NOT counted as a regression; a row with a present test file, or no test token, still runs (so a

@@ -33,6 +33,7 @@ as an exit-2 catalog usage error (slice-011). Stdlib-only; no scripts.lib import
 """
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import subprocess
@@ -69,6 +70,36 @@ def _normalize_interp(tokens: list[str]) -> list[str]:
     if is_interp:
         return [sys.executable, *tokens[1:]]
     return tokens
+
+
+# ── below-normal launch priority (slice-064 / SC-118 / ADR-061; additive) ──
+def _priority_kwargs(below_normal: bool) -> dict:
+    """subprocess.run kwargs to launch a child at BELOW-NORMAL OS priority.
+
+    VERDICT-NEUTRAL by construction: it changes only OS scheduling, never the exit
+    code or which segments run. BEST-EFFORT + FAIL-SAFE (must_not_defer): if the
+    platform cannot express below-normal priority, return {} (a no-op) rather than
+    raise -- a priority-set failure must NEVER turn a passing command into a FAIL.
+      * Windows: the BELOW_NORMAL_PRIORITY_CLASS creationflag (inert if absent).
+      * POSIX: a preexec_fn that nices ONLY the forked CHILD (never the parent
+        runner / forked agent), swallowing any nice failure.
+    `below_normal=False` (the default for every existing caller) returns {} -> the
+    subprocess.run call is byte-identical (AC5)."""
+    if not below_normal:
+        return {}
+    if os.name == "nt":
+        flag = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+        return {"creationflags": flag} if flag else {}
+
+    def _nice_child() -> None:  # pragma: no cover -- runs in the forked child
+        # Lowering priority via a positive increment is always permitted; still
+        # guard so a nice failure can never abort the child (verdict-neutral).
+        try:
+            os.nice(10)
+        except OSError:
+            pass
+
+    return {"preexec_fn": _nice_child}
 
 
 # ── relocated: canonical segmentation (M3.2; was shippability_decoupling_audit) ──
@@ -184,14 +215,21 @@ class ExecVerdict:
 
 
 def run_verification(command: str, repo_root: Path | str, *,
-                     timeout: float | None = None) -> ExecVerdict:
+                     timeout: float | None = None,
+                     below_normal_priority: bool = False) -> ExecVerdict:
     """Run ONE verification command string and return a three-valued ExecVerdict.
 
     `repo_root` is the checkout the command runs against (the ABSENT existence
     check + the subprocess cwd). It is ALWAYS supplied by the caller and NEVER
     re-derived here (the two consumers compute it differently -- run_catalog from
-    the catalog path, brief_variants from --repo-root; M2)."""
+    the catalog path, brief_variants from --repo-root; M2).
+
+    `below_normal_priority` (slice-064; default False => byte-identical for every
+    existing caller, AC5) launches each segment at below-normal OS priority so a
+    heavy catalog run keeps the machine responsive -- verdict-neutral (see
+    `_priority_kwargs`)."""
     repo_root = Path(repo_root)
+    _prio = _priority_kwargs(below_normal_priority)
 
     # ── ABSENT pre-check (ADR-021): decided by FILE existence, pre-execution ──
     # If the command cites >=1 tests/...py token AND every cited token is absent on
@@ -225,6 +263,7 @@ def run_verification(command: str, repo_root: Path | str, *,
                 capture_output=True, text=True,
                 encoding="utf-8", errors="replace",  # BB-25: avoid cp1252 reader UnicodeDecodeError
                 timeout=timeout,
+                **_prio,  # slice-064: below-normal priority when requested (else {}; byte-identical)
             )
         except FileNotFoundError:
             # The command's program is not on PATH / not installed. This is the
