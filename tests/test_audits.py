@@ -81,6 +81,79 @@ def test_triage_audit_verdict_mismatch_fails(tmp_path):
     assert triage_audit.main([str(p)]) == 1
 
 
+def test_triage_audit_orphan_disposition_fails(tmp_path):
+    # A disposition naming a nonexistent finding id (typo'd C7 for C1) must be refused,
+    # not silently accepted; the real finding is separately flagged missing-row.
+    c = _valid_critique()
+    c["triage"]["dispositions"][0]["finding"] = "C7"
+    p = tmp_path / "critique.json"
+    _write(p, c)
+    assert triage_audit.main([str(p)]) == 1
+    r = triage_audit.audit_critique_file(p)
+    assert any(v.kind == "orphan-row" for v in r.violations)
+
+
+def _deferred_blocker_critique():
+    c = _valid_critique()
+    c["findings"] = [{"id": "B1", "severity": "blocker", "claim": "x", "disposition": "deferred"}]
+    c["verdict"] = "clean"
+    c["triage"] = {
+        "verdict": "clean", "ratified_by": "user", "at": "2026-01-01",
+        "dispositions": [
+            {"finding": "B1", "action": "deferred", "rationale": "punt to SC-031 (backlog)"}
+        ],
+        "deferred_blockers": ["B1"],
+    }
+    return c
+
+
+def test_triage_audit_deferred_blocker_qualified_passes(tmp_path):
+    p = tmp_path / "critique.json"
+    _write(p, _deferred_blocker_critique())
+    assert triage_audit.main([str(p)]) == 0
+
+
+def test_triage_audit_deferred_blocker_no_target_fails(tmp_path):
+    # DD-15: "later" is not a target — the rationale must name slice-NNN or SC-NNN.
+    c = _deferred_blocker_critique()
+    c["triage"]["dispositions"][0]["rationale"] = "later"
+    p = tmp_path / "critique.json"
+    _write(p, c)
+    assert triage_audit.main([str(p)]) == 1
+    r = triage_audit.audit_critique_file(p)
+    assert any(v.kind == "deferred-blocker" for v in r.violations)
+
+
+def test_triage_audit_deferred_blocker_unlisted_fails(tmp_path):
+    # DD-15: the deferred blocker id must appear in triage.deferred_blockers[].
+    c = _deferred_blocker_critique()
+    del c["triage"]["deferred_blockers"]
+    p = tmp_path / "critique.json"
+    _write(p, c)
+    assert triage_audit.main([str(p)]) == 1
+
+
+def test_triage_audit_deferred_blockers_mismatch_fails(tmp_path):
+    # DD-15 converse: a deferred_blockers entry that is not a deferred blocker finding.
+    c = _valid_critique()
+    c["triage"]["deferred_blockers"] = ["C1"]  # C1 is a major, accepted-pending
+    p = tmp_path / "critique.json"
+    _write(p, c)
+    assert triage_audit.main([str(p)]) == 1
+
+
+def test_triage_audit_deferred_major_needs_no_qualification(tmp_path):
+    # DD-15 scopes to BLOCKER severity only — a deferred major with a plain rationale passes.
+    c = _valid_critique()
+    c["triage"]["dispositions"][0]["action"] = "deferred"
+    c["triage"]["dispositions"][0]["rationale"] = "not worth it this slice"
+    c["triage"]["verdict"] = "clean"
+    c["verdict"] = "clean"
+    p = tmp_path / "critique.json"
+    _write(p, c)
+    assert triage_audit.main([str(p)]) == 0
+
+
 # ── critique_review_audit (DR-1) ─────────────────────────────────────────────────
 
 def _valid_cr():

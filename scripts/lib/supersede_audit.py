@@ -35,7 +35,10 @@ explicitly linked as the supersession of the old one. The audit catches:
   - One-way links (active claims, archive doesn't acknowledge — or
     vice versa)
 
-The audit is project-wide; not gated by Heavy mode.
+The audit is project-wide; not gated by Heavy mode. SHARED lib module (promoted from
+skills/supersede-slice/scripts in the 2026-07 review sweep): `/supersede-slice` Step 5
+validates the just-written link; `/drift-check` full mode re-runs the same sweep
+periodically, catching a link broken LATER by manual edits.
 
 Layout assumed (VAULT_ROOT-routed; the shared external store):
   <vault>/slices/slice-NNN-<name>/                  active slices
@@ -61,8 +64,8 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-# --- single-skill import bootstrap (cannot use `python -m` for a bundled script) ---
-_REPO = pathlib.Path(__file__).resolve().parents[3]
+# --- plugin-root import bootstrap (shared lib invoked by ABSOLUTE PATH from SKILL.md) ---
+_REPO = pathlib.Path(__file__).resolve().parents[2]  # scripts/lib/X.py -> <plugin>
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 

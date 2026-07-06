@@ -13,8 +13,10 @@ agent: general-purpose
 You are validating the current slice on real environments. Tests passing is NOT enough — real device, real
 user, real data. Both phases must pass before the slice is considered validated.
 
-> Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / the git-common-dir
-> `aisdlc/vault-root` config). You run forked and do NOT inherit the project CLAUDE.md — resolve it here.
+> Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/`. 4.6.1: `AI_SDLC_VAULT_ROOT`
+> is NOT exported — the bundled resolvers (`active_slice.py`, `active_slice_info.py`) resolve the vault internally,
+> so no `--vault` flag is passed; where a block itself needs the path it derives `VAULT` via `_vault_paths.py --path`
+> (the Step-9b pattern). You run forked and do NOT inherit the project CLAUDE.md — resolve it here.
 
 ## Active slice + inputs — run this block FIRST (a body step, not a load-time injection)
 
@@ -26,9 +28,9 @@ user, real data. Both phases must pass before the slice is considered validated.
 # branch degrades visibly (ambiguous/ready_to_validate=false) rather than aborting.
 ARG="${ARGUMENTS[0]:-}"
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-  $PY "${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --json
+  $PY "${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py" --slice "$ARG" --json
 else
-  $PY "${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py" --vault "$AI_SDLC_VAULT_ROOT" --json
+  $PY "${CLAUDE_SKILL_DIR}/scripts/active_slice_info.py" --json
 fi
 ```
 
@@ -50,9 +52,9 @@ Read from the active slice folder:
   repo_root="$(git rev-parse --show-toplevel)"
   ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
   if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
+    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --path-only)"
   else
-    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --path-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
   fi
   $PY -c "import json,os,sys; p=sys.argv[1]+'/code-review.json'; d=json.load(open(p,encoding='utf-8')) if os.path.exists(p) else {}; F=d.get('findings') or []; tr=d.get('triage') or {}; D={str(x.get('finding','')).strip() for x in (tr.get('dispositions') or []) if str(x.get('action','')).strip().lower() in {'fixed','overridden'} and str(x.get('rationale','')).strip()}; miss=[str(f.get('id')) for f in F if str(f.get('severity','')).lower()=='blocker' and str(f.get('id','')).strip() not in D]; print('CRD-1 un-dispositioned code-review blocker(s): '+', '.join(miss)) if miss else print('CRD-1: ok'); sys.exit(1 if miss else 0)" "$slice_folder"
   ```
@@ -67,9 +69,9 @@ Read from the active slice folder:
   repo_root="$(git rev-parse --show-toplevel)"
   ARG="${ARGUMENTS[0]:-}"
   if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
+    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --path-only)"
   else
-    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"
+    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --path-only)"
   fi
   if [ -f "$slice_folder/code-review.json" ]; then
     $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type code-review "$slice_folder/code-review.json"; rc=$?
@@ -78,6 +80,27 @@ Read from the active slice folder:
   fi
   ```
   Exit 1 → STOP. (The M-add-1 keystone: the independent, un-skippable enforcement the forked self-check cannot provide.)
+- **NCC-1 — a NO-CODE-CHANGES review must match reality (review sweep 2026-07).** If `code-review.json` says
+  `result: "NO-CODE-CHANGES"` but the worktree actually changed, the reviewer's field of view was broken (wrong
+  base/worktree resolution, or a scoped diff) — a confident empty review over a real change is the laundered
+  false-green class. Cross-check structurally; mismatch → STOP and re-run `/code-review`:
+  ```bash
+  repo_root="$(git rev-parse --show-toplevel)"
+  ARG="${ARGUMENTS[0]:-}"
+  if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --path-only)"
+  else
+    slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --path-only)"
+  fi
+  res="$($PY -c "import json,os,sys; p=os.path.join(sys.argv[1],'code-review.json'); print((json.load(open(p,encoding='utf-8')).get('result') or '') if os.path.exists(p) else '')" "$slice_folder")"
+  if [ "$res" = "NO-CODE-CHANGES" ]; then
+    wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$(basename "$slice_folder")" --repo-root "$repo_root" | head -1)"
+    base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"
+    n="$( { git -C "$wt" diff --name-only "$base"; git -C "$wt" ls-files --others --exclude-standard; } 2>/dev/null | grep -c . )"
+    [ "$n" -gt 0 ] && { echo "STOP: NCC-1 -- code-review.json claims NO-CODE-CHANGES but the worktree diff has $n changed/untracked file(s). Re-run /code-review (its collection was blind or mis-based) before validating." >&2; exit 1; }
+  fi
+  ```
+  Exit 1 → STOP. (Skip silently when `code-review.json` is absent or carries a real review.)
 
 ## Step 1 — per-criterion real-world checks
 
@@ -160,9 +183,9 @@ the repro test live), NOT the main tree. Each code ```bash block below is a fres
 repo_root="$(git rev-parse --show-toplevel)"
 ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 cd "$wt"
@@ -176,9 +199,9 @@ changed — from `build-log.json`, or (from `$wt`) `git -C "$wt" diff --name-onl
 repo_root="$(git rev-parse --show-toplevel)"
 ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"   # WT-ROOT-1: scan worktree code
 $PY "${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py" \
@@ -204,9 +227,9 @@ Only when `mission-brief.json` sets `variants.walking_skeleton: true`:
 repo_root="$(git rev-parse --show-toplevel)"
 ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"   # WT-ROOT-1: re-resolve $wt (fresh shell)
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/brief_variants_audit.py" <vault>/slices/slice-NNN-<name> --variant walking_skeleton --execute --repo-root "$wt"
@@ -243,9 +266,9 @@ Skip if `<vault>/shippability.json` does not exist (first slice — /reflect wil
 repo_root="$(git rev-parse --show-toplevel)"
 ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py" --worktree "$wt"
@@ -263,9 +286,9 @@ Non-zero → STOP: fix the row before running the catalog.
 repo_root="$(git rev-parse --show-toplevel)"
 ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"
 $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_path_audit.py" <vault>/shippability.json
@@ -294,9 +317,9 @@ the fix → false regression):
 repo_root="$(git rev-parse --show-toplevel)"
 ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"
 # slice-064/ADR-061: pass an EXPLICIT generous --session-timeout so a hung MERGED session is bounded (AC3).
@@ -308,6 +331,14 @@ wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-fol
 # + the explicit --session-timeout; never hard-code --no-merge on.]
 $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py" <vault>/shippability.json --session-timeout 1800
 ```
+
+> **Harness budget (review sweep 2026-07).** The Bash tool's own ceiling is **600s** (default 120s) —
+> BELOW the runner's 1800s bound, so a long catalog dies at the TOOL layer before the runner's timeout /
+> serial-fallback ladder can produce verdicts (the slice-059 fork-returned-early incident class). Run this
+> command with an explicit tool `timeout: 600000`. If the catalog legitimately needs longer than 10 minutes,
+> run it with `run_in_background` (the harness notifies on completion — do not poll) or chunk the catalog
+> (`--no-merge` + row subsets); never let the tool default kill it mid-run and read the absence of output
+> as a verdict.
 
 The runner reads each row's Machine-cmd, splits on ` ; `, strips backticks per segment (reuses SCMD-1
 `_segments()`), and reports a three-valued verdict per row — **PASS / FAIL / ABSENT** (SC-021 / ADR-021).
@@ -352,9 +383,9 @@ makes the aggregate `Result: FAIL` and the fork returns `blocked` to the main th
 repo_root="$(git rev-parse --show-toplevel)"
 ARG="${ARGUMENTS[0]:-}"
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"
 fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reality_gate_runner.py" --repo-root "$wt" --json
@@ -381,6 +412,7 @@ Write `<vault>/slices/slice-NNN-<name>/validation.json` (schema by example: `exa
       "id": "AC1",
       "result": "pass|fail|partial",
       "evidence": "<command + output, screenshot ref, log excerpt>",
+      "reality_proxy": "real-device",
       "cause": null
     }
   ],
@@ -398,6 +430,11 @@ Write `<vault>/slices/slice-NNN-<name>/validation.json` (schema by example: `exa
   "at": "<ts>"
 }
 ```
+
+Per-criterion `reality_proxy` (optional, §2.7 vocabulary — `real-device` … `docs-only`): record WHAT stood in
+for reality on EACH criterion, so `/pulse` can show which ACs were device-proven vs simulator-proven; the Step-9b
+gate row carries only the weakest across all criteria. `evidence` is REQUIRED NON-EMPTY per row — `artifact_lint
+--type validation` enforces it mechanically ("it worked" without evidence is not a PASS).
 
 `shippability_regression.deferral` stays `null` when the fork writes validation.json. If `failed_rows` is
 non-empty, the **main thread** fills it post-return (Main-thread deferral resolution): either it is never written
@@ -427,17 +464,26 @@ Edit `<vault>/slices/slice-NNN-<name>/milestone.json` (schema by example: `examp
 For each reality surprise discovered:
 
 ```bash
+# Same idiom as Step 9b: derive VAULT once, pass --vault + a vault-RELATIVE --file
+# (one shape for both steps — adjacent steps modeling different idioms is copy-drift bait).
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+# PRE-MINT the risk id in-lock (never model-mint "next R-NN" — parallel slices collide on it);
+# $R also feeds the candidate's source ref below.
+R="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --vault "$VAULT" --file risk-register.json --kind r)"
 # Append to risk-register.json (SVW-1: vault_edit append, never raw Write/Edit)
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-  --file "<vault>/risk-register.json" \
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$VAULT" \
+  --file risk-register.json \
   --array risks \
-  --json '{"id":"R-NN","title":"<title>","likelihood":"...","impact":"...","status":"open","score":...,"band":"...","mitigation":"...","discovered":{"phase":"validate","at":"<ts>","ref":"slice-NNN"}}'
+  --json '{"id":"'"$R"'","title":"<title>","likelihood":"...","impact":"...","status":"open","score":...,"band":"...","mitigation":"...","discovered":{"phase":"validate","at":"<ts>","ref":"slice-NNN"}}'
 
-# If the surprise spawns future work, append to candidates.json too (SVW-1)
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-  --file "<vault>/candidates.json" \
+# If the surprise spawns future work, append to candidates.json too (SVW-1).
+# NO "id" field in this payload: candidates is a MANAGED array — the SC-NNN id is minted
+# in-lock by the allocator; a supplied id is rejected (slice-019/AC2). (The risk ref DOES
+# carry the alloc'd $R — risk ids are pre-minted, not mint-on-append, for exactly this ref.)
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$VAULT" \
+  --file candidates.json \
   --array candidates \
-  --json '{"id":"SC-NNN","title":"...","status":"candidate","source":[{"type":"reality-surprise","ref":"R-NN"}],...}'
+  --json '{"title":"...","status":"candidate","source":[{"type":"reality-surprise","ref":"'"$R"'"}],...}'
 ```
 
 ## Step 9b — record gate outcome (measurement spine)
@@ -454,14 +500,21 @@ already appends to shared files in Step 9):
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
 SLICE_DIR="$VAULT/slices/<slice-NNN-name>"
 CD=""; [ -f "$SLICE_DIR/design.json" ] && $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1],encoding='utf-8')).get('cross_domain_transfer') else 1)" "$SLICE_DIR/design.json" 2>/dev/null && CD="--cross-domain"
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+# Gold-standard append shape: --out/--content-file (never pipe+--stdin: the double-apply-
+# under-contention hazard), rc-checked fail-visible.
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-val-row.XXXXXX")"
+"$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate validate-slice --slice <slice-NNN-name> \
     --verdict <pass|partial|fail> --findings-count <N fail+partial> $CD \
-    --reality-proxy <real-device|real-account|real-sandbox|staging|local-real-data|simulator|docs-only> \
-  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$VAULT" --file gate-log.json --array entries --stdin
+    --reality-proxy <real-device|real-account|real-sandbox|staging|local-real-data|simulator|docs-only> --out "$T/row.json" \
+  && "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$VAULT" --file gate-log.json --array entries --content-file "$T/row.json"; rc=$?
+[ "$rc" = 0 ] || echo "STOP: validate-slice gate-row append failed (rc=$rc) -- surface, never fire-and-forget (must-not-defer)" >&2
+rm -rf "$T"
 # --reality-proxy (§2.7): the WEAKEST environment any criterion was checked on (a slice validated
-# on a simulator must not log the same green as one validated on real devices).
+# on a simulator must not log the same green as one validated on real devices). The per-criterion
+# proxy lives in each criteria[] row's optional `reality_proxy` (Step 7) — this row carries the floor.
 ```
 
 ## Main-thread deferral resolution (post-return — runs OUTSIDE the fork) (3.17)
@@ -474,9 +527,15 @@ this is where the user is asked, because a forked context cannot `AskUserQuestio
 2. `AskUserQuestion` — two paths:
    - **Fix the regression** → do NOT write a deferral; tell the user to fix it and re-run `/validate-slice`. HALT
      (no advance to `/reflect`).
-   - **Defer with rationale** (rationale is mandatory; empty → re-ask) → append the decision to `validation.json`
-     via `vault_edit` (the file is a shared-aggregate write target; do not raw-overwrite):
-     set `shippability_regression.deferral = {"approved": true, "rationale": "<text>", "by": "user", "at": "<ts>"}`.
+   - **Defer with rationale** (rationale is mandatory; empty → re-ask) → write the decision into
+     `validation.json` with the WIRED nested-path set (SVW-1 locked; never a raw overwrite, never improvised):
+     ```bash
+     VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+     $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" set --vault "$VAULT" \
+         --file "slices/<slice-NNN-name>/validation.json" \
+         --path .shippability_regression.deferral \
+         --json '{"approved": true, "rationale": "<text>", "by": "user", "at": "<ts>"}'
+     ```
      Then the regression is consciously accepted and the slice may advance to `/reflect`, which will record the
      deferral as a known-debt lesson.
 3. Only after a `deferral.approved == true` (or a clean run with no failed rows) does the main thread auto-advance

@@ -35,7 +35,8 @@ if str(_REPO) not in sys.path:
 
 from scripts.lib import _stdout  # noqa: E402
 
-_PROBE = pathlib.Path(__file__).resolve().parent / "_crg_grounding_probe.py"
+# review sweep 2026-07: the probe was PROMOTED to scripts/lib (shared with /drift-check).
+_PROBE = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "lib" / "_crg_grounding_probe.py"
 
 # Messages are GENERIC (cause + remedy only) -- NO machine-local paths / counts (m3 banner hygiene).
 # The CLI JSON carries the counts separately for the console signal.

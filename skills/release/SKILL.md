@@ -67,13 +67,28 @@ slices never conflict on the plugin.json `version` line); `/release`'s release c
 version once as it merges the integration branch into the released `master`, and rolls every unreleased commit (the
 *open period* — everything merged into the integration branch since the last version-change) forward onto it.
 
+**Intent branching (decide BEFORE touching anything):** run sub-step 1a ONLY when the user explicitly asked
+to **release** — "cut a release", "merge uat to master", "bump version", "publish", "ship to master". A
+docs-flavored request ("regenerate CHANGELOG", "update the README", "generate docs", or any `--docs` run) uses
+the **standalone regen below and NEVER 1a** — do not infer a release from a docs request; when the phrasing is
+genuinely ambiguous, ask.
+
 **Sub-step 1a — the atomic release cut (`release_cut.py`).** Under the uat/master model (slice-022) the
 `uat->master` merge IS the version cut, and `release_cut.py` performs it ATOMICALLY — it is the **ONLY** path that
-advances `master` (AC4). The human/release supplies the target (`--new-version X.Y.Z`, the primary form, or
-`--level patch|minor|major`):
+advances `master` (AC4). The USER supplies the target (`--new-version X.Y.Z`, the primary form, or
+`--level patch|minor|major`) — NEVER infer a version or "helpfully" default `--level patch`; no user-stated
+target = no cut.
+
+**Confirmation gate (mandatory — this is the single most consequential git action in the plugin: it advances
+the released trunk the marketplace serves).** Before running the cut, present via `AskUserQuestion`:
+the resolved target version (current → new), the resolved integration branch (`aisdlc-uat` / legacy `uat`)
+and its unreleased commit count, and the target (`master`). Run the command — passing `--confirmed` — ONLY
+after an explicit yes; on no, stop (offer the standalone CHANGELOG regen if docs were the actual intent).
+(`/commit-slice` gates every local merge this way; the trunk cut is not less.)
 
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
+# --confirmed asserts the AskUserQuestion gate above returned YES — never pre-supply it without the gate.
 $PY "${CLAUDE_SKILL_DIR}/scripts/release_cut.py" --confirmed \
     --repo-root "$repo_root" --vault "$AI_SDLC_VAULT_ROOT" \
     --new-version "${TARGET:?supply the release version, e.g. 2.36.0}" --json
@@ -89,7 +104,9 @@ spike-release-cut-atomicity, is why the cleanup is an explicit reset). **`/relea
 version cannot be determined (no silent skip).** Read the verdict JSON's `action` — `released` (cut landed), `no-op`
 (nothing to release), or a `refuse-*` / `*-failed` reason (master untouched). After a `released` action, verify the
 integrity invariant with `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/release_advance_audit.py" --root "$repo_root"`
-(asserts `master` advanced only via versioned cuts since the recorded `release-genesis`).
+(asserts `master` advanced only via versioned cuts since the recorded `release-genesis`). CI runs the SAME audit
+on every `master` push (the `release-guard` job, slice-023/SC-049) — out-of-band advances between releases are
+caught there, not only here.
 
 **Standalone CHANGELOG regen (no release).** To refresh `CHANGELOG.md` WITHOUT advancing `master` (a docs-only
 run), invoke `assemble_changelog.py` directly — it reads committed git history + the per-slice records, never bumps
@@ -143,6 +160,12 @@ README.md: <current contents, or "none">
 docs/*: <current contents, or "none">
 ```
 
+**Prompt-weight rule for large existing docs:** a doc over ~200 lines is NOT passed in full — pass its section
+OUTLINE (headings + first line of each section) plus, verbatim, ONLY the sections whose content the Step-0
+surface diff touches (changed/added/removed interface facts). Small docs pass in full. The refresh semantics
+survive (the agent sees the doc's shape and the sections it may rewrite); the cost of re-shipping an unchanged
+2,000-line README into the spawn does not.
+
 **Await the real agent — never fabricate doc content.** It returns one `aisdlc/product-doc-draft@1` JSON object
 (`readme` / `api_reference` / `user_guide` markdown + `grounding` + `ungrounded_claims_omitted`). Surface its
 `ungrounded_claims_omitted` to the user — those are real gaps (code the agent couldn't verify), not oversights.
@@ -154,15 +177,46 @@ reality first, so a hallucinated flag can't ship with false provenance. Ensure t
 (`"${CRG:-code-review-graph}" update` — M2: a stale graph false-rejects a just-merged symbol), then run the
 deterministic verifier (no model judges the model — exact membership only):
 
+The verifier input is composed via TEMP FILES, never by splicing agent JSON into a quoted `-c` one-liner
+(a single quote in any agent-produced token/reason would break the command — the /slice Step-5.6 hazard
+class, here with model-generated content):
+
+1. Create the per-run dir:
 ```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+G="$(mktemp -d "$TMPD/aisdlc-grounding.XXXXXX")"
+echo "grounding temp dir: $G"   # NOTE this path -- the next blocks are FRESH shells; reuse the SAME dir
+```
+
+2. Write — via the **Write tool**, never shell quoting/heredocs — the agent's `grounding` object to
+   `"$G/grounding.json"` and the Step-0 `public_surface` `{entry_points, exports}` (slice-040) to
+   `"$G/public_surface.json"`, verbatim as JSON.
+
+3. Compose + run the verifier (all values pass through files/env — zero shell interpolation of content):
+```bash
+G="<the per-run dir path printed above>"   # fresh shell -- reuse the SAME $G
 repo_root="$(git rev-parse --show-toplevel)"
 # M2: guard the vault root — an unset/empty $AI_SDLC_VAULT_ROOT must NOT pass "" (the verifier would
 # then be unable to resolve vault: tokens against the right root). Resolve deterministically, fail-visible.
 vault_root="${AI_SDLC_VAULT_ROOT:-$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 [ -n "$vault_root" ] || { echo "grounding-verify: vault root unresolved — run /setup or set AI_SDLC_VAULT_ROOT" >&2; exit 1; }
-$PY -c "import json,sys; json.dump({'grounding': <agent.grounding>, 'public_surface': <step-0 public_surface {entry_points, exports} -- slice-040>, 'repo_root': sys.argv[1], 'vault_root': sys.argv[2]}, sys.stdout)" "$repo_root" "$vault_root" \
-  | $PY "${CLAUDE_SKILL_DIR}/scripts/grounding_verify.py"
+G="$G" REPO="$repo_root" VR="$vault_root" $PY -c "
+import json, os, pathlib
+g = pathlib.Path(os.environ['G'])
+payload = {
+    'grounding': json.loads((g / 'grounding.json').read_text(encoding='utf-8')),
+    'public_surface': json.loads((g / 'public_surface.json').read_text(encoding='utf-8')),
+    'repo_root': os.environ['REPO'],
+    'vault_root': os.environ['VR'],
+}
+(g / 'verify_input.json').write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/grounding_verify.py" < "$G/verify_input.json"
+rm -rf "$G"
 ```
+(The verifier + its `_crg_grounding_probe.py` sibling live in `scripts/lib/` — PROMOTED there in the 2026-07
+review sweep because `/drift-check`'s STALE-DOC audit shares them; shared code never lives in one skill's
+`scripts/`.)
 
 It returns `{docs: {<doc>: {verified[], grounding_unverified[{token,reason}]}}, grounding_check{ran, crg_reachable,
 graph_last_updated, graph_stale, public_surface_verified}}`. Each token is `crg:<repo-rel-path>::<symbol>` /
@@ -248,4 +302,5 @@ Report what was written (repo doc paths + the vault manifest), the `ungrounded_c
   Step 4.6 now **offers** a `/release --docs changelog` refresh on ship when a `doc-manifest.json` exists
   (roadmap Theme 6 [P3], landed as a non-blocking reminder, not an auto-run). `/drift-check` `stale-doc` consumes the manifest this writes.
 - auto-advance: false.
-- user-input gates: Step 3 overwrite confirmation for any existing hand-written doc.
+- user-input gates: Step 1a release-cut confirmation (mandatory `AskUserQuestion` echoing resolved version +
+  branches BEFORE `--confirmed` is passed); Step 3 overwrite confirmation for any existing hand-written doc.

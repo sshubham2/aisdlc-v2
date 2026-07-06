@@ -41,8 +41,9 @@ import re
 import subprocess
 import sys
 
-# --- single-skill import bootstrap ---
-_REPO = pathlib.Path(__file__).resolve().parents[3]  # skills/<name>/scripts/X.py -> <plugin>
+# --- plugin-root import bootstrap (PROMOTED to scripts/lib, review sweep 2026-07: shared by
+# /release + /drift-check — cross-skill reach forbidden, so the pair moved here together) ---
+_REPO = pathlib.Path(__file__).resolve().parents[2]  # scripts/lib/X.py -> <plugin>
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 

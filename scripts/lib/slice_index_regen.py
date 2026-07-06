@@ -12,9 +12,10 @@ empty-but-valid index (no crash). Idempotent: the ONLY non-deterministic field, 
 CALLER-SUPPLIED (`--updated`) so re-runs are byte-identical modulo that stamp.
 
 The per-entry shapes + the 8 live top-level keys conform to the canonical schema-by-example
-(`schemas/artifact-examples.json` / the bundled `examples/`); the stage value uses the file-presence
-rule shared verbatim with `/archive` Step 3 + `/pulse` (so an active slice can never carry the
-out-of-enum legacy `reflect` stage — slice-030 m1).
+(`schemas/artifact-examples.json` / the bundled `examples/`); the stage value comes from
+`_derive_stage` — the CANONICAL file-presence rule (the tables in `/archive` Step 3 and `/pulse`
+Step 2 are renderings of it; so an active slice can never carry the out-of-enum legacy `reflect`
+stage — slice-030 m1).
 
 CLI: `--vault ROOT --emit live|archive [--updated ISO]`. Exit 0 always (an empty vault is a normal
 early state, not an error).
@@ -57,10 +58,12 @@ def _read_json(p: Path) -> dict:
 
 
 def _derive_stage(folder: Path) -> str | None:
-    """Canonical file-presence stage rule, shared verbatim with /archive Step 3 + /pulse (highest
-    present file wins). reflection.json -> 'complete' (a valid milestone-stage enum value). Because
-    active slices have NO reflection.json, the 'complete' row is unreachable for active[] -- so this
-    can never emit the out-of-enum legacy 'reflect' value an active milestone.json might carry (m1)."""
+    """THE canonical file-presence stage rule — single source of truth (the tables in /archive
+    Step 3 and /pulse Step 2 are renderings of this function; change here first, then re-render
+    both). Highest present file wins. reflection.json -> 'complete' (a valid milestone-stage enum
+    value). Because active slices have NO reflection.json, the 'complete' row is unreachable for
+    active[] -- so this can never emit the out-of-enum legacy 'reflect' value an active
+    milestone.json might carry (m1)."""
     if (folder / "reflection.json").is_file():
         return "complete"
     if (folder / "validation.json").is_file():

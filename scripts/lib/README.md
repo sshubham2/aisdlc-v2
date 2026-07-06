@@ -37,6 +37,10 @@ absolute-path idea: `$PY "${CLAUDE_SKILL_DIR}/scripts/<x>.py"` + a `parents[3]` 
 | `vault_flip_prose_inventory` | build-slice, validate-slice | vault op-gate |
 | forward-sync gates (`methodology_changelog_forward_sync`, `ai_sdlc_version_forward_sync`, `ai_sdlc_tools_version_forward_sync`) | build-slice, reflect | installed==repo parity |
 | `finding_dedup` | diagnose, bug-hunt | cross-pass / cross-finder finding de-dup — merge same-location findings into one `F-MRG-*` (category-independent). The single dedup seam for both forensic skills. |
+| `grounding_verify` | release, drift-check | deterministic doc-grounding verifier (exact-membership over `crg:`/`file:`/`vault:` tokens + public_surface; fail-closed). Promoted from skills/release/scripts (2026-07 review sweep — /drift-check's STALE-DOC audit shares it). |
+| `build_entry` | drift-check, sync | serialize the ONE foldable `drift-log.json` entry shape (`{at, trigger, category, finding, …}`; DCE-1 slice-trigger canonicalization; accept-drift REQUIRES rationale). Promoted from skills/drift-check/scripts (2026-07 review sweep — /sync's accept-drift shares it; a divergent hand-rolled shape is UNFOLDABLE to `drift_status.py`). |
+| `supersede_audit` | supersede-slice, drift-check | SUP-1 project-wide supersession-link sweep (bidirectional consistency + strict revert-shape validation). Promoted from skills/supersede-slice/scripts (2026-07 review sweep — /drift-check full mode re-runs it periodically to catch links broken after `/supersede-slice` validated them). |
+| `_crg_grounding_probe` | release, drift-check (via `grounding_verify`/`harvest_degrade` subprocess) | the ONE CRG-touching probe (`--health`/`--batch`/`--names`); never imported, always a subprocess. Moves with `grounding_verify` as a sibling. |
 | `write_pass` | diagnose, bug-hunt | parse a subagent's 4-backtick fenced section/findings/summary blocks → normalize/validate → per-pass files. Imports `assemble`. |
 | `assemble` | diagnose, bug-hunt | compose `diagnosis.html` from per-pass artifacts; runs `finding_dedup` after load + carries over prior annotations. Imports `finding_dedup`. |
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-SCRIPT = "skills/supersede-slice/scripts/supersede_audit.py"
+SCRIPT = "scripts/lib/supersede_audit.py"  # promoted from skills/supersede-slice/scripts (2026-07 review sweep)
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 

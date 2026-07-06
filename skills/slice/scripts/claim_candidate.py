@@ -105,9 +105,12 @@ def _external_slice_max(vault: Path) -> int:
 
 def _make_claim_mutate(path: Path, candidate_id: str, name: str,
                        git_name: str, git_email: str, ts: str,
-                       external_max: int, result: dict):
+                       vault: Path, result: dict):
     """SVW-1 mutate (current JSON text -> new JSON text). Mints the slice number IN-LOCK and
-    stashes the minted ``slice``/``folder`` into ``result`` for the caller to print."""
+    stashes the minted ``slice``/``folder`` into ``result`` for the caller to print. The
+    external floor (``_external_slice_max``) is also computed INSIDE the locked mutate (and
+    recomputed on a CAS retry), so an archive-move racing the claim cannot slip a folder past
+    the scan — the pre-lock window that used to exist is gone."""
 
     def mutate(text: str) -> str:
         if not text.strip():
@@ -149,11 +152,13 @@ def _make_claim_mutate(path: Path, candidate_id: str, name: str,
 
         # Mint the slice number IN-LOCK (claim-first). seed_max = max(external floor, in-data
         # slice fields + pick_log) so the counter never re-issues a live OR archived number.
+        # The external floor is scanned here, under the lock, not pre-computed by the caller.
         in_data = id_allocator.scan_max(
             [c.get("slice") for c in cands if isinstance(c, dict)], "slice")
         in_data = max(in_data, id_allocator.scan_max(
             [e.get("slice") for e in data.get("pick_log", []) if isinstance(e, dict)], "slice"))
-        slice_short = id_allocator.next_id(data, "slice", seed_max=max(external_max, in_data))
+        slice_short = id_allocator.next_id(
+            data, "slice", seed_max=max(_external_slice_max(vault), in_data))
         folder = f"{slice_short}-{name}"
 
         rec["status"] = "spiking"
@@ -353,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"(expected lowercase tokens joined by hyphens, e.g. fix-thumbnail-orientation)\n")
                 return 2
             mutate = _make_claim_mutate(path, candidate_id, name, git_name, git_email, ts,
-                                        _external_slice_max(_root(args.vault)), result)
+                                        _root(args.vault), result)
         safe_mutate_text(path, mutate)
     except _ClaimError as exc:
         sys.stderr.write(f"claim_candidate: {exc}\n")

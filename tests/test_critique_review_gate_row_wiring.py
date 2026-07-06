@@ -49,10 +49,14 @@ def test_exactly_one_writer_of_the_critique_review_row():
 # ---- BC-PROJ-7: the consumers CALL the shipped precision helper (a revert to inline prose is caught) ----
 
 def test_consumers_reference_the_shipped_precision_helper():
-    for name, txt in (("critic-calibrate", CRITIC_CALIBRATE), ("pulse", PULSE)):
-        assert "triage_precision.py" in txt and "--gate-precision" in txt, (
+    # /pulse consumes the bounded --summary aggregation (2026-07 review sweep — the gate log grows
+    # without bound, so pulse never reads it raw); /critic-calibrate still uses --gate-precision.
+    # Both flags run the SAME shipped gate_precision_recall — the invariant is "no inline re-derive".
+    for name, txt, flag in (("critic-calibrate", CRITIC_CALIBRATE, "--gate-precision"),
+                            ("pulse", PULSE, "--summary")):
+        assert "triage_precision.py" in txt and flag in txt, (
             f"{name}/SKILL.md must compute precision/recall via the shipped triage_precision "
-            f"--gate-precision helper (M3/AC4), not re-derive it inline")
+            f"{flag} helper (M3/AC4), not re-derive it inline")
 
 
 # ---- BC-PROJ-4: prose copies of the real-set must not silently diverge from the SSOT ----

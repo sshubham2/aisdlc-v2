@@ -20,13 +20,21 @@ to the user via `SendUserFile`** (it reaches them wherever they are, phone inclu
 > Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` /
 > git config `aisdlc/vault-root`). Active slice = latest `<vault>/slices/slice-NNN-*/` (not under `archive/`).
 
-## Step 0 — resolve the active slice + its artifacts (run this FIRST)
+## Step 0 — resolve the TARGET slice + its artifacts (SINGLE authority; run this FIRST)
 
-Run the `bash` block below **first** — it resolves the active slice in a BODY step that BINDS an explicit
+Run the `bash` block below **first** — it resolves the target slice in a BODY step that BINDS an explicit
 `/slice-story slice-NNN` `$ARG` (a `!`-injection runs at skill-LOAD before `${ARGUMENTS}` binds, so it
 CANNOT — SC-064 / ADR-022) and prints which artifacts exist (this drives which story sections to include).
-`--slice` is archive-aware (a `/commit-slice` on-ship auto-emit may target an already-ARCHIVED slice); the
-no-arg case resolves the active, non-archived slice.
+The printed `active_slice_dir` is **the ONE authoritative `<target-slice>` path** for ALL subsequent reads
+(Step 1) and writes (Steps 3, 4) — there is no second resolution step and no override to remember:
+
+- **Arg present → `--slice`** (ARCHIVE-AWARE: searches `slices/` AND `slices/archive/`, active first, and
+  prints an ABSOLUTE path). A `/commit-slice` on-ship auto-emit may target an already-archived slice —
+  `/reflect`'s DD-20 archives *before* `/commit-slice` runs — and the absolute path keeps the write target
+  cwd-independent (correct under `--merge`, which `cd`s to the main tree, AND `--push`, on the worktree).
+  NEVER `--repo-root` for the explicit case — it EXCLUDES `archive/`.
+- **No arg → `--repo-root .`** (the active, non-archived slice). The `[ -n "$ARG" ]` guard is load-bearing
+  (SC-064/M2): a no-arg invocation must never run `--slice ""`, which mis-resolves.
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"   # a slice id (e.g. /commit-slice's on-ship auto-emit) may target an ARCHIVED slice
@@ -34,27 +42,11 @@ if [ -n "$ARG" ]; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/acti
 $PY -c "import json,glob,os,sys; d=sys.argv[1] or None; have=[os.path.basename(f) for f in sorted(glob.glob(f'{d}/*.json'))] if d else []; mb=json.load(open(f'{d}/mission-brief.json',encoding='utf-8')) if d and os.path.exists(f'{d}/mission-brief.json') else {}; ms=json.load(open(f'{d}/milestone.json',encoding='utf-8')) if d and os.path.exists(f'{d}/milestone.json') else {}; print(json.dumps({'active_slice_dir':d,'slice':mb.get('slice'),'title':mb.get('title'),'mode':mb.get('mode'),'risk_tier':mb.get('risk_tier'),'stage':ms.get('stage'),'artifacts_present':have},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
-## Step 0b — resolve the write target (archive-aware)
+From the printed JSON take `active_slice_dir` (= `<target-slice>`, absolute), `slice`, `title`, `mode`,
+`risk_tier`, `stage`.
 
-From the Step-0 block above take `active_slice_dir` (absolute path), `slice`, `title`, `mode`, `risk_tier`, `stage`.
-
-**If `$ARGUMENTS` names a slice id** (e.g. `slice-017`, or `/commit-slice`'s on-ship auto-emit passing the
-just-shipped slice id) the target may already be **archived** — by `/reflect`'s DD-20 a slice is moved to
-`slices/archive/` *before* `/commit-slice` runs. So resolve it **archive-aware** and use the resolved ABSOLUTE
-path as `<target-slice>` for ALL subsequent reads (Step 1) and writes (Steps 3, 4), overriding the Step-0
-active-slice path:
-```bash
-VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-ARG="${ARGUMENTS[0]:-}"
-if [ -n "$ARG" ]; then TARGET="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else TARGET=""; fi   # SC-064/M2: guard so a no-arg invocation never runs `--slice ""` (which mis-resolves); no-arg authority is the Step-0 active_slice_dir. --slice stays archive-aware for the explicit/archived case -- NEVER --repo-root, which EXCLUDES archive/.
-```
-`--slice` searches BOTH `slices/` and `slices/archive/` (active first) and prints an ABSOLUTE path — so the write
-target is cwd-independent (correct under `/commit-slice --merge`, which `cd`s to the main tree, AND `--push`,
-which stays on the slice worktree). With NO `$ARGUMENTS`, use the Step-0 `active_slice_dir` (the active,
-non-archived slice) as before.
-
-Prerequisite: the resolved folder must contain at least `mission-brief.json`. If it doesn't (empty `TARGET` /
-no such slice id), STOP:
+Prerequisite: the resolved folder must contain at least `mission-brief.json`. If it doesn't (empty
+`active_slice_dir` / no such slice id), STOP:
 _"No slice to tell a story about — run /slice first."_ If `design.json` is absent, proceed but tell the user the
 story will be thin (objective + acceptance outcomes only — there's no design or review to narrate yet).
 
@@ -66,9 +58,40 @@ Decide the **furthest lifecycle stage** from which artifacts are present:
 
 Read (from the target slice folder, whichever exist) so you can hand their contents to the narrator:
 `mission-brief.json`, `design.json`, `critique.json`, `critique-review.json`, `milestone.json`, and any
-`build-log.json` / `code-review.json` / `validation.json` / `reflection.json`. Also read this slice's spikes
-(`<vault>/spikes/spike-*.json` whose `candidate` / `slice` ties to this slice) and the ADRs this slice locked
-(`design.json.adrs[]` → `<vault>/decisions/ADR-*.json`).
+`build-log.json` / `code-review.json` / `validation.json` / `reflection.json`. Also read the ADRs this slice
+locked (`design.json.adrs[]` → `<vault>/decisions/ADR-*.json`) and this slice's spikes — **the spike join is
+deterministic, not model judgment** (a spike may be keyed by the slice id OR by its source candidate SC-NNN;
+this block resolves the candidate↔slice mapping from candidates.json live + archive and prints the matching
+spike files, which you then Read):
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+TS="<target-slice>"   # the Step-0 absolute path
+TS="$TS" VAULT="$VAULT" $PY -c "
+import glob, json, os
+ts, vault = os.environ['TS'], os.environ['VAULT']
+mb = json.load(open(os.path.join(ts, 'mission-brief.json'), encoding='utf-8'))
+slice_id = mb.get('slice')
+cand = None
+for rel in ('candidates.json', 'archive/candidates.json'):
+    p = os.path.join(vault, rel)
+    if not os.path.exists(p):
+        continue
+    for c in json.load(open(p, encoding='utf-8')).get('candidates', []):
+        if isinstance(c, dict) and c.get('slice') == slice_id:
+            cand = c.get('id'); break
+    if cand:
+        break
+spikes = []
+for f in sorted(glob.glob(os.path.join(vault, 'spikes', 'spike-*.json'))):
+    try:
+        d = json.load(open(f, encoding='utf-8'))
+    except (OSError, ValueError):
+        continue
+    if isinstance(d, dict) and (d.get('slice') == slice_id or (cand and d.get('candidate') == cand)):
+        spikes.append(f)
+print(json.dumps({'slice': slice_id, 'candidate': cand, 'spikes': spikes}, indent=2))
+"
+```
 
 Embed the **full JSON contents** into the narrator prompt (Step 2). Embedding (rather than handing the subagent
 a path to the external vault) avoids the out-of-cwd subagent access pitfall (R-1) — the narrator needs no
@@ -121,7 +144,10 @@ again later, or proceed to `/build-slice` without a narrated story."_ Never loop
 
 Write the narrator's returned object to `<target-slice>/story-sections.json` (raw-write — this is a per-slice
 active-folder artifact, not a shared aggregate, so SVW-1's `vault_edit` requirement does not apply). Set/keep
-`slice`, `title`, `stage`, `mode`, `risk_tier` consistent with Step 0 if the narrator left any blank.
+`slice`, `title`, `stage`, `mode`, `risk_tier` consistent with Step 0 if the narrator left any blank. Also record
+the delivery mode you will use in Step 5 as a structured field — `"delivery": {"status": "proactive"|"normal",
+"auto_invoked": true|false}` — so the delivery behavior is auditable from the artifact, not just prose-decided
+(auto_invoked = this run was spawned by `/critique` or `/commit-slice`, not typed by the user).
 
 ## Step 4 — render the ONE combined story.html
 
@@ -142,7 +168,7 @@ $PY "${CLAUDE_SKILL_DIR}/scripts/render_story.py" \
 ```
 
 `render_story.py` is deterministic, stdlib-only, stamps the generation time, and is the SINGLE exit-code authority
-for the combined render. `<target-slice>` is the archive-aware resolved folder (Step 0b), so the tournament half
+for the combined render. `<target-slice>` is the archive-aware resolved folder (Step 0), so the tournament half
 composes for an in-flight OR an already-shipped/archived slice. The tournament half degrades honestly: a slice with
 no three-designer contest composes an honest "no contest" region, never an invented one; and (M-add-1) it shows
 what each designer *found and proposed*, NOT the literal search queries it ran. The jargon tripwire guards ONLY the
@@ -172,7 +198,8 @@ file goes to the user's own session, not a third-party endpoint) the auto-mode s
   — deliver NO file and report the stderr (never `SendUserFile` a path that does not exist).
 - `status`: use `"proactive"` when `/slice-story` was auto-invoked (by `/critique` pre-build, or by
   `/commit-slice` on ship — the shipped story is the keystone deliverable) or the user may be away (so it pushes
-  to their phone); use `"normal"` when the user just invoked `/slice-story` themselves and is watching.
+  to their phone); use `"normal"` when the user just invoked `/slice-story` themselves and is watching. Use the
+  SAME value you recorded in `story-sections.json.delivery` at Step 3 (the artifact is the audit record).
 - `caption`: one short line, e.g.
   `"Slice story — <slice-id> <title> (<stage-label>): a plain-language overview of the objective, how it's built, and what review changed."`
 

@@ -150,9 +150,10 @@ row `PASSING` (at least one per AC). The canonical shape is `SPECS['test_first']
 **WT-ROOT-1:** explore the WORKTREE — `Read`/`Grep`/`Glob` files under `"$wt/"`, not the main tree. The task
 sequence's file paths must be `$wt`-rooted, so the edits in Step 4 land on the slice branch.
 
-Use code-review-graph MCP tools for structural understanding before Reads:
-- `impact-radius` on the module(s) this slice touches — what it reaches transitively
-- `search` for symbols and integration points
+Use the code-review-graph **MCP tools** for structural understanding before Reads (CRG 2.3.x has no
+`search`/`impact-radius` CLI verb — these capabilities are MCP-only, same names `/design-slice` pins):
+- `mcp__code-review-graph__get_impact_radius_tool` on the module(s) this slice touches — what it reaches transitively
+- `mcp__code-review-graph__semantic_search_nodes_tool` for symbols and integration points
 
 Then Read specific files for detail. Build dependency understanding for this slice's surface area.
 
@@ -211,13 +212,19 @@ Run the smoke gate from `mission-brief.json` on a real environment:
 - Mobile: install on a real device
 - ML: run inference on a real sample
 
+**Record the result as a REQUIRED `SMOKE` event in `build-log.json`** — the command run + a one-line observed
+output. This is the loop's only reality contact between the design spike and `/validate-slice`, and the event is
+how `/validate-slice` and `/reflect` can see the gate actually ran (a missing SMOKE event reads as "never ran",
+not "passed silently").
+
 Fail: **STOP (PCA-1 gate-halt)** — diagnose, surface to user, HALT. Do NOT auto-advance on a broken base.
 
 ## Step 6: Pre-finish gate
 
 All of the following must pass before declaring done:
 
-- [ ] All ACs pass with evidence
+- [ ] All ACs pass with evidence (**model attestation here** — the gate's 9 checks do NOT verify AC evidence;
+      reality verifies it at `/validate-slice`, so don't read this line as gate-enforced)
 - [ ] All must-not-defer items addressed (no TODO, no stub, no silent except)
 - [ ] No new TODOs / FIXMEs / debug prints / console.logs
 - [ ] Mid-slice smoke still passes (no regression)
@@ -229,9 +236,9 @@ verdict, so no check can be silently skipped (the failure mode of the old hand-r
 (ARTIFACT-LINT = 3.18.7 schema-by-example lint over this slice's vault JSON artifacts; on FAIL, fix the
 offending artifact's required keys / enum values.)
 
-**Derive `--changed-files` canonically — the gate's coverage is exactly as good as this list** (LINT-MOCK
-SKIPs entirely on an empty test-file list; BC-1 scopes to what it is told). Fresh shell — re-derive `$wt` first
-(WT-ROOT-1):
+**Derive `--changed-files` canonically for the Step-A BC-1 enumerate pass.** (The Step-B gate no longer
+consumes a transcribed list — it derives its own via `--changed-from-git`, so its coverage holds by
+construction; this block feeds only the enumerate pass.) Fresh shell — re-derive `$wt` first (WT-ROOT-1):
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
 ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /build-slice slice-NNN (BODY block binds ${ARGUMENTS}; SC-064)
@@ -272,21 +279,26 @@ else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$(basename "$slice_folder")" --repo-root "$repo_root" | head -1)"
-[ -d "$wt" ] || { echo "STOP: worktree '$wt' does not exist -- refusing to run the pre-finish gate against it (pre_finish_gate.py silently falls back to the main tree's cwd on an invalid --worktree). m3/C3: fail-visible, never a silent main-tree audit." >&2; exit 2; }
+[ -d "$wt" ] || { echo "STOP: worktree '$wt' does not exist -- refusing to run the pre-finish gate against it. m3/C3: fail-visible, never a silent main-tree audit. (Belt-and-braces: pre_finish_gate.py itself now exits 2 on an invalid --worktree — no cwd fallback.)" >&2; exit 2; }
 cd "$wt"
+base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"   # SC-043: fork point vs the LOCAL integration branch
 $PY "${CLAUDE_SKILL_DIR}/scripts/pre_finish_gate.py" \
     --slice "$slice_folder" --worktree "$wt" \
-    --changed-files <list> \
-    --changed-test-files <changed-test-files> \
-    --ack-critical <addressed-ids>
+    --changed-from-git "$base" \
+    --ack-critical <addressed-ids> --json
+# --changed-from-git makes the GATE derive the changed-files list + its test subset itself, inside the
+#   worktree — no cross-block transcription of $changed (vars don't persist between bash blocks, and the
+#   gate's coverage is exactly as good as this list — so the gate owns it).
 # Append optional flags as applicable: --seam-allowlist <vault>/.cross-chunk-seams (if present);
 #   --test-first (when mission-brief.json test_first == true) -> TF-1 runs brief_variants_audit --variant
 #     test_first --strict-pre-finish, requiring every test_first_plan[] row PASSING (the plan drafted at Step 1);
 #   --strict (Heavy mode, LINT-MOCK Important rules block).
 ```
-The gate prints `=== pre-finish gate: PASS|FAIL ===` with one line per check (`ok` / `FAIL` / `skip`). **Any FAIL
-→ do not declare done; fix or escalate.** (CRP-1 already ran as prerequisite #5 before plan mode — not re-run here;
-the six plugin self-audits are CI-only per 1.5.)
+The `--json` verdict prints `"gate": "PASS|FAIL"` with one entry per check. **Any FAIL → do not declare done;
+fix or escalate.** Append the gate's JSON verdict (or at minimum its per-check pass/fail/skip summary line) to
+`build-log.json` as a `TEST` event so the gate result is a durable artifact, not just conversation output.
+(CRP-1 already ran as prerequisite #5 before plan mode — not re-run here; the six plugin self-audits are CI-only
+per 1.5.)
 
 **Step C — gate-log the BCSG-1 build-checks attestation (model-tier).** BCSG-1 is a **model-tier self-attestation**
 gate: it verifies you *acknowledged* each applicable Critical build-check, **not** that *reality* verified it. Per
@@ -296,12 +308,20 @@ the gate PASSES, append ONE `build-checks` row (`findings-count` = unacknowledge
 path; mode from `triage.json`, tier = `risk_tier` from `mission-brief.json`):
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+# Gold-standard append shape (same as /critique's gate rows): derive VAULT (4.6.1 — the env
+# var is NOT exported) + --out/--content-file (never pipe+--stdin: the double-apply-under-
+# contention hazard vault_edit itself documents), rc-checked fail-visible.
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-bc-row.XXXXXX")"
+"$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate build-checks --slice <slice-NNN-name> \
     --verdict <clean|blocked> --findings-count <unacknowledged-critical count; 0 on pass> \
-    --mode <minimal|standard|heavy> --tier <low|medium|high> \
-  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+    --mode <minimal|standard|heavy> --tier <low|medium|high> --out "$T/row.json" \
+  && "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$VAULT" --file gate-log.json --array entries --content-file "$T/row.json"; rc=$?
+[ "$rc" = 0 ] || echo "STOP: build-checks gate-row append failed (rc=$rc) -- surface, never fire-and-forget (must-not-defer)" >&2
+rm -rf "$T"
 ```
 
 > **Note — plugin self-audits are NOT in this gate.** Six checks that grade the *plugin's own* static

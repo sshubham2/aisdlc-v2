@@ -21,6 +21,9 @@ You scan the AI SDLC vault and produce a compact structured summary.
 - `/pulse --brief` — one-screen (~20 lines) for quick orientation
 - `/pulse --full` — comprehensive view (~150 lines); includes all deferred items, calibration history, full stranded-branch detail
 
+(Mode flags are read by the model from `${ARGUMENTS[@]}` — there is deliberately no bash parse gate: the
+flags only pick verbosity, so the worst failure is wrong verbosity, not a wrong action.)
+
 ## Prerequisite check
 
 If `<vault>/` does not exist: project not opened yet — suggest `/triage` or `/adopt` and stop.
@@ -34,8 +37,10 @@ git worktree list --porcelain 2>/dev/null
 ```
 
 For each worktree on a `slice/NNN-<name>` branch (canonical path `<main-parent>/<main-name>-wt/slice-NNN-<name>`):
-- Read that worktree's `<vault>/slices/slice-NNN-<name>/milestone.json` (or `slices/archive/` if archived).
-- The worktree's milestone is authoritative for that slice during the BRANCH-2 window (pre-merge).
+- Read `<vault>/slices/slice-NNN-<name>/milestone.json` (or `slices/archive/` if archived). NOTE: the vault is
+  ONE shared store across all worktrees (keyed on git-common-dir) — worktrees do NOT have private vaults;
+  "that worktree's milestone" means the slice's folder in the SHARED vault, authoritative for that slice
+  during the BRANCH-2 window (pre-merge).
 - Classify each: `IN_PROGRESS` | `BUILT_BUT_NOT_MERGED` | `MERGED` | `UNKNOWN`.
 
 **Stranded-slice signal (R-26) — bare branches without worktrees:**
@@ -49,7 +54,7 @@ Entries with `halt: true` (`klass` in `stranded-complete`, `orphaned`, `indeterm
 **Core vault state — injected at load time:**
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_snapshot.py" --vault "$AI_SDLC_VAULT_ROOT" \
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_snapshot.py" \
     --files triage.json concept.json slices/_index.json candidates.json \
             shippability.json critic-calibration-log.json lessons-learned.json \
             drift-log.json 2>/dev/null
@@ -58,7 +63,7 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_snapshot.py" --vault "$AI_SDLC_
 Active slice milestone (injected):
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_snapshot.py" --vault "$AI_SDLC_VAULT_ROOT" \
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_snapshot.py" \
     --active-slice milestone.json risk-register.json slices/action-points.json 2>/dev/null
 ```
 
@@ -68,7 +73,7 @@ sitting between `/heavy-architect` and the first `/slice` would look "pre-archit
 re-running `/heavy-architect`):
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_snapshot.py" --vault "$AI_SDLC_VAULT_ROOT" \
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_snapshot.py" \
     --presence threat-model.json requirements.json non-functional.json \
                cost-estimation.json diagrams.json actors 2>/dev/null
 ```
@@ -89,7 +94,7 @@ Read the following JSON files if not fully covered by the injections above (skip
 | `<vault>/critic-calibration-log.json` | last calibration date, slices since |
 | `<vault>/lessons-learned.json` | last 3-5 lessons |
 | `<vault>/drift-log.json` | unresolved drift count |
-| `<vault>/gate-log.json` | per-gate outcome log (Phase 0 measurement spine) — **read the file FULLY** here (do NOT rely on a truncated snapshot); aggregate per gate in Step 2 |
+| `<vault>/gate-log.json` | per-gate outcome log (Phase 0 measurement spine) — **do NOT read this file directly** (it grows without bound — multiple rows per slice, forever; a full read blows the token budget at slice-100+). Read ONLY the bounded aggregation: `VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"` then `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/triage_precision.py" --summary --gate-log "$VAULT/gate-log.json" --slice slice-NNN [--recent 30]` — one JSON with the per-gate table, design-tournament split, cross-domain ratio, active-slice rows, and a capped newest-first `recent[]`. `{"absent": true}` → omit the gate sections. |
 | `<vault>/threat-model.json` · `requirements.json` · `non-functional.json` · `cost-estimation.json` · `diagrams.json` · `actors/` | **Heavy-mode upfront architecture** — presence-probed above (existence + counts, not full-read). Their existence = `/heavy-architect` has run; their absence in Heavy mode = it has not. |
 
 **Active slice:** Read `<vault>/slices/slice-NNN-<name>/milestone.json` first (primary source: `stage`, `next_action`, progress checkboxes, `on_resume`). If `stage` is `build` or later and `build-log.json` exists, read the last ~15 lines of its `events` array — the events trace is the durable record; compare its latest timestamp to `milestone.json.at`. If events are newer, milestone is stale — flag it.
@@ -98,11 +103,11 @@ Do NOT read individual slice design/mission files (active slice excepted). Do NO
 
 ## Step 2 — Compute derived metrics
 
-**Active slice stage + next action:** Read directly from `milestone.json` fields (`stage`, `next_action`, progress checkboxes, `on_resume`). If `milestone.json` is missing, derive stage from file existence as fallback (WARN: milestone absent) using the **canonical stage-derivation rule** (shared verbatim with `/archive` Step 3 — keep the two identical): check the **highest** stage first (first match wins); `critique.json` is **OPTIONAL** (a low-tier slice with no mandatory trigger skips it — 1.1), so `build-log.json` presence decides `build` regardless of whether `critique.json` exists:
+**Active slice stage + next action:** Read directly from `milestone.json` fields (`stage`, `next_action`, progress checkboxes, `on_resume`). If `milestone.json` is missing, derive stage from file existence as fallback (WARN: milestone absent) using the **canonical stage-derivation rule** — the single source of truth is the CODE: `scripts/lib/slice_index_regen.py:_derive_stage`; this table and `/archive` Step 3's are RENDERINGS of it (fix the function first, then re-render both). Check the **highest** stage first (first match wins); `critique.json` is **OPTIONAL** (a low-tier slice with no mandatory trigger skips it — 1.1), so `build-log.json` presence decides `build` regardless of whether `critique.json` exists:
 
 | Highest-present file in `<vault>/slices/slice-NNN-<name>/` | Derived stage |
 |---|---|
-| `reflection.json` | `reflect` (complete) |
+| `reflection.json` | `complete` (the legacy `reflect` label is out-of-enum — slice-030 m1) |
 | `validation.json` | `validate` |
 | `build-log.json` | `build` |
 | `critique.json` (only when `build-log.json` is **absent**) | `critique` |
@@ -139,34 +144,23 @@ the spike proved the assumption against THAT day's external reality, which drift
 (`/risk-spike R-NN`) only when the slice being planned touches the same technology. Cap at 3 rows; omit the
 section when none qualify.
 
-**Gate hit-rate (GATE-LOG — Phase 0 measurement spine):** From the FULL `<vault>/gate-log.json` `entries[]`
-(skip this whole metric if the file is absent or empty), **first split rows by kind**: a row is a RECALL row
-when `kind == "miss"` (Phase 0.2 recall half), otherwise it is a VERDICT row (one gate-run). **Only VERDICT
-rows feed runs/raised/precision** — a miss row carries no `findings_count` and counting it as a run would
-deflate `raised_rate`. Group by `gate` and compute per gate:
-- `runs` = number of **verdict** rows.
-- `raised` = verdict rows with `findings_count > 0`; `raised_rate` = `raised / runs`.
-- `precision` + `recall` + `misses` = computed by the SHIPPED helper
-  `triage_precision.gate_precision_recall(entries, gate)` (the SAME computation `/critic-calibrate` 1e uses — ONE
-  tested source, not eyeballed): precision = `Σ findings_real / (Σ findings_real + Σ findings_noise)` over verdict
-  rows; recall = `catches / (catches + misses)` where catches = `Σ findings_real`. A verdict row lacking
-  `findings_real` is UNKNOWN (excluded), NEVER 0; the helper returns `precision`/`recall` = null when uncomputable —
-  omit them then (do NOT show 0%), but still show `missed <misses>` whenever `misses > 0` (a miss is real signal
-  even before recall is computable). These fields are present today for `critique` + `critique-review`
-  (slice-052/ADR-045 populated the DR-1 row). Invoke:
-  `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/triage_precision.py" --gate-precision --gate <g> --gate-log "$VAULT/gate-log.json"`.
-- `reality_contact` = the rows' `reality_contact` (constant per gate): `high` / `medium` / `low`.
-- `last` = the most-recent **verdict** row's `verdict` (+ `slice`).
-Order the gates by `reality_contact` **high → medium → low** (reality-touching gates read first — Theme 2
-seed). Mark a gate `(quiet)` when `runs >= 5` AND `raised_rate == 0` — it has flagged nothing for many slices
-(a future lighten candidate, Phase 4/5). This is descriptive only — pulse changes nothing.
-**Exclude the `design-tournament` gate from this whole section** (the precision/raised/quiet math): it is
-INFORMATIONAL (3.3) — it raises no findings by design, so a zero raised_rate is expected, never a lighten signal.
-Its rows carry `approach_divergence`, not a verdict; report them separately in `--full` (see below).
+**Gate hit-rate (GATE-LOG — Phase 0 measurement spine):** Rendered ENTIRELY from the `--summary` JSON
+(the Step-1 invocation — skip this whole metric on `{"absent": true}`). The full-file aggregation runs in
+Python (`triage_precision.gate_summary`, built on the SAME `gate_precision_recall` `/critic-calibrate` 1e
+uses — ONE tested source, not eyeballed); you consume its fields:
+- `gates[]` — already split by kind (`kind == "miss"` rows are RECALL data, never counted as runs), already
+  ordered `reality_contact` **high → medium → low** (reality-touching gates read first — Theme 2 seed), and
+  already excluding the INFORMATIONAL `design-tournament` gate (3.3 — it raises no findings by design; its
+  zero raised_rate is expected, never a lighten signal; see `design_tournament` below for `--full`).
+- Per gate render: `runs`, `raised` (→ `raised_rate = raised/runs`), `precision`/`recall` (null = UNKNOWN —
+  **omit**, do NOT show 0%; a verdict row lacking `findings_real` is excluded, never counted as 0), `misses`
+  (show `missed <N>` whenever > 0 — a miss is real signal even before recall is computable), `last`
+  (most-recent verdict + slice), and `quiet` (`runs >= 5` AND zero raised — a future lighten candidate,
+  Phase 4/5; descriptive only — pulse changes nothing).
 
-**Reality-approved vs model-approved (active slice — Phase 1.2):** From the active slice's gate-log rows
-(filter on the **canonical** `slice == slice-NNN` — gate-log rows store the canonical id, NOT the
-`slice-NNN-<name>` folder name, so match on the `slice-NNN` prefix), split the gates that returned a
+**Reality-approved vs model-approved (active slice — Phase 1.2):** From the summary's `slice_rows[]`
+(the `--slice slice-NNN` argument — the helper does the canonical-prefix matching, folding
+`slice-NNN-<name>` folder ids onto `slice-NNN`), split the gates that returned a
 **passing** verdict by what signed off:
 - **Reality-approved** — `reality_contact` in {high, medium} with a pass-class verdict (`go`/`conditional`,
   `pass`, or drift `clean`): the spike / real-device validation / code-vs-claims check said yes against
@@ -190,8 +184,8 @@ the sample size. ~0 over 10+ runs = the premortem pass is duplicating the first 
 lighten/gate-skip candidate (never auto-acted on here).
 
 **Cross-domain transfer validity ratio (Phase 2.3 — the number that decides the Phase 3 tournament):** From
-`gate-log.json` rows with `cross_domain == true`, restricted to **reality gates** (`reality_contact` in
-{high, medium}): `held` = rows with a pass-class verdict (`go`/`conditional`, `pass`); `total` = all such rows.
+the summary's `cross_domain` field (`{held, total}` — computed over rows with `cross_domain == true` at
+reality contact {high, medium}; held = pass-class verdict `go`/`conditional`/`pass`).
 Ratio = `held / total` — "when a design imported a borrowed pattern, how often did REALITY confirm its
 preconditions held?" (Part I §6's empirical measure of how much to trust the latent space). Report it WITH the
 sample size (`held/total`); it is a **soft, model-tagged signal** (a row is tagged only when the slice's design
@@ -203,7 +197,7 @@ self-declared a transfer), so present it as directional evidence, not a hard met
 |---|---|
 | Any worktree `BUILT_BUT_NOT_MERGED` | `cd <wt-path> && /commit-slice --merge` |
 | Any worktree `IN_PROGRESS` (no BUILT_BUT_NOT_MERGED) | `cd <wt-path>` + worktree milestone `next_action` |
-| Any worktree `MERGED` (worktree still exists post-merge) | WARN: CLEANUP-CANDIDATE — `git worktree remove <wt-path>` (merged branch leaked; run regardless of CAL-1 state) |
+| Any worktree `MERGED` (worktree still exists post-merge) | WARN: CLEANUP-CANDIDATE — `/commit-slice --sync-after-pr` (owns exactly this cleanup: gh-verified merged-state detection → safe branch delete → idempotent worktree remove; run regardless of CAL-1 state). Raw `git worktree remove <wt-path>` only as a manual fallback when you have independently verified the merge landed. |
 | Any worktree `UNKNOWN` (classification indeterminate) | WARN: unknown worktree state on `<branch>` — inspect manually before continuing; surface the sub-reason (no milestone found / divergent commit history / missing branch) |
 | No BRANCH-2 override + CAL-1 overdue (>20 slices) | `/critic-calibrate` |
 | **Pre-slice** (no worktree, `slices/_index.json` absent/no active entry, no `slices/slice-NNN/milestone.json`) + `triage.json` **absent** | `/triage` (greenfield) or `/adopt` (existing codebase) — project not classified yet |
@@ -223,16 +217,22 @@ what its predecessor produced — not inferred.
 e.g. `concept.json` present but `triage.json` absent), do **not** improvise a slash command. State the observed
 phase files and recommend `/pulse --full` or a manual check. A wrong "run X next" is worse than "here's what I see."
 
-## Step 3 — Render via Haiku dispatch
+## Step 3 — Render
 
-Dispatch to a Haiku subagent (COST-1: read-only summarization, no synthesis required):
+**`--brief`: render INLINE — do NOT dispatch.** The output is <500 tokens; duplicating all computed state
+into a spawn to save that costs more than it saves (`/commit-slice` removed its COST-1 twin for exactly this
+economics). Fill the brief template yourself and print it.
+
+**Default / `--full`: dispatch to a Haiku subagent** (COST-1: read-only summarization, no synthesis
+required; the trade only pays when the rendered output is large relative to the spawn overhead — re-measure
+here first if you're tempted to extend the dispatch, the way the commit-slice removal did):
 
 ```python
 # Use the Agent tool:
 # subagent_type: "general-purpose"
 # model: haiku
 # Pass:
-#   - mode_arg: "brief" | "default" | "full"
+#   - mode_arg: "default" | "full"
 #   - All computed state from Steps 1+2 as a structured dict
 #   - The output template for the requested mode (below)
 ```
@@ -345,13 +345,16 @@ Balanced view plus:
 - All cross-slice action-points from `action-points.json`
 - Full shippability catalog listing
 - Critic calibration history (all past runs)
-- **Designer divergence (3.3)** — from the `design-tournament` gate-log rows, the per-pair `approach_divergence`
-  distribution (`identical` / `overlapping` / `disjoint`). Flag when `designer-practice ~ designer-expert` is
+- **Designer divergence (3.3)** — from the summary's `design_tournament.divergence` (the per-pair
+  `approach_divergence` distribution: `identical` / `overlapping` / `disjoint`). Flag when `designer-practice ~ designer-expert` is
   `identical`/`overlapping` on **most slices**: the expert lens is converging on practice and may not be earning
   its spawn cost → surface this for **human review of the always-3 policy** (ADR-018). Do NOT recommend dropping a
   designer — generation is always 3; this is an advisory signal for a human, never an auto-action. Omit if no tournament has run.
 - Stranded slice branches in detail (every `halt: true` entry with its class)
-- Full gate-log history: every row, newest first — verdict rows (gate · slice · verdict · findings_count · reality_contact) and recall rows (gate · slice · `miss` · severity · caught_by)
+- Gate-log history: the summary's `recent[]` (newest first, capped at 30 by `--recent` — NEVER a raw read of
+  the full log; state the cap with `total_entries` so the truncation is visible, e.g. "last 30 of 402 rows") —
+  verdict rows (gate · slice · verdict · findings_count · reality_contact) and recall rows (gate · slice ·
+  `miss` · severity · caught_by)
 
 ## Critical rules
 

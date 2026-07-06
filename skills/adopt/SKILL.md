@@ -19,14 +19,26 @@ After `/adopt`, the normal pipeline continues: `/discover` (optional, if concept
 ## Live state — injected
 
 ```!
-# Prior vault check
+# Prior vault check (UX-2 fail-closed, three-state — mirrors /triage 3.19.7)
 AI_SDLC_VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-if [ -f "$AI_SDLC_VAULT/triage.json" ]; then echo "EXISTING_VAULT=true"; else echo "EXISTING_VAULT=false"; fi
+if [ -z "$AI_SDLC_VAULT" ]; then echo "VAULT_UNRESOLVED"
+elif [ -f "$AI_SDLC_VAULT/triage.json" ]; then echo "EXISTING_VAULT=true (vault: $AI_SDLC_VAULT)"; grep -o '"adopt_state"[^,}]*' "$AI_SDLC_VAULT/triage.json" 2>/dev/null || true
+else echo "EXISTING_VAULT=false (vault: $AI_SDLC_VAULT)"; fi
 # Stack probe
 for f in package.json pyproject.toml go.mod Cargo.toml; do [ -f "$f" ] && echo "STACK_FILE=$f"; done
 # CRG graph status
 if [ -d ".code-review-graph" ]; then echo "CRG=present"; else echo "CRG=missing"; fi
 ```
+
+> **UX-2 fail-closed — read before ANY vault write (same rule as /triage).**
+> - `VAULT_UNRESOLVED` → **STOP. Write NOTHING** — no Step-3 `/slice-candidates` sub-invocation, no Step 6–9
+>   writes. The vault root can't be determined (usually `$PY` / the SessionStart hook isn't set up); tell the
+>   user to run `/ai-sdlc:setup`, then retry. Refuse rather than guess — a wrong guess overwrites an existing
+>   project's vault (the incident class /triage's UX-2 rework documents). An empty resolution must NEVER read
+>   as "fresh adopt".
+> - `EXISTING_VAULT=true` with `"adopt_state": "awaiting-annotation"` → a PAUSED `/adopt` (the Step-3
+>   diagnose HALT) — resume at Step 3's resume point (`/slice-candidates`), do NOT ask merge-vs-fresh.
+> - `EXISTING_VAULT=true` otherwise / `EXISTING_VAULT=false` → Step 0 handles as before.
 
 ## Step 0 — preflight
 
@@ -38,7 +50,10 @@ If `CRG_MISSING`: do NOT hard-stop with a raw pip command (that contradicts the 
 - **(a) Install + retry** — run `/ai-sdlc:setup` (it resolves + installs CRG and registers the MCP server, surfacing the resolved version), then re-run `/adopt`.
 - **(b) Degraded adopt** — proceed WITHOUT the code graph: the brownfield interview + a stack-file scan still run, but every code-derived finding is marked **"unconfirmed — CRG absent"** (mirrors `/reduce`'s degraded pattern). Blast-radius / reachability claims are skipped, never guessed.
 
-If injected state shows `EXISTING_VAULT=true`: ask via `AskUserQuestion` — merge with existing vault, or start fresh (user must clean up first)?
+If injected state shows `EXISTING_VAULT=true`: ask via `AskUserQuestion` — merge with existing vault, or start
+fresh (user must clean up first)? **Exception**: if the injection also printed `"adopt_state": "awaiting-annotation"`,
+this is a PAUSED `/adopt` mid-diagnose — skip the ask and resume at Step 3's resume point. (`VAULT_UNRESOLVED`
+already STOPped at the UX-2 rule above.)
 
 ## Step 1 — scan the codebase
 
@@ -115,7 +130,14 @@ Offer via `AskUserQuestion`:
 > Cost: ~10–20 min analysis + your annotation pass."
 > Options: Run /diagnose now (recommended) | Skip (I know this codebase) | Tell me more
 
-**If YES**: invoke `/diagnose` via Skill tool, then **HALT** — tell user to annotate `diagnose-out/diagnosis.html`, save it, and say "continue /adopt". On resume: invoke `/slice-candidates` via Skill tool; those confirmed findings feed Steps 5 and 6.
+**If YES**: invoke `/diagnose` via Skill tool. Before HALTing, write a **durable resume marker** so a FRESH
+session can resume deterministically (the HALT spans a session boundary; "say 'continue /adopt'" alone relies on
+the user's phrasing): raw-write a minimal `<vault>/triage.json` stub —
+`{"_schema": "aisdlc/triage@1", "adopt_state": "awaiting-annotation", "at": "<ts>"}` (safe: the git gate at
+Step 2.5 already ran, and Step 9's full triage.json write overwrites this stub). Then **HALT** — tell user to
+annotate `diagnose-out/diagnosis.html`, save it, and say "continue /adopt". On resume (detected by the user's
+phrasing OR the injected `adopt_state` marker): invoke `/slice-candidates` via Skill tool; those confirmed
+findings feed Steps 5 and 6.
 
 **If SKIP**: note `diagnose_ran: false` + reason in triage.json. Risk register (Step 5) built from user pain points only.
 
@@ -162,7 +184,9 @@ Tag each risk: `source: diagnose-finding-<id> | user-pain-point | both`.
 ## Step 7 — reverse-engineer concept.json
 
 Write `<vault>/concept.json` (schema: `examples/concept.json`) grounded in code first:
-- `what`: PRIMARY source = graph entry-points + reachability. SECONDARY: Q1 answer. If contradicting, record both and state which wins.
+- `what`: PRIMARY source = graph entry-points + reachability. SECONDARY: Q1 answer. If contradicting, record both
+  and state which wins — AND record the verdict STRUCTURED, not just in the `what` prose: add
+  `"q1_vs_code": {"match": true|false, "note": "<one line>"}` so the mismatch survives as data.
 - `actors`: inferred from endpoints + auth/role-check sites in code, confirmed by Q1/Q3.
 - `constraints.stack`: derived from STACK_FILE (concrete), NOT README.
 - `constraints.infra`: from user only (code cannot determine this reliably).
@@ -197,13 +221,20 @@ Create all vault paths. Failure to create any → STOP, surface error.
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 [ -n "$VAULT" ] || { echo "FATAL: vault root unresolved — run /ai-sdlc:setup or set AI_SDLC_VAULT_ROOT"; exit 1; }
-mkdir -p "$VAULT/decisions" "$VAULT/spikes" "$VAULT/slices" "$VAULT/components" "$VAULT/contracts" "$VAULT/schemas"
-# Heavy mode only — match /triage's Heavy scaffold (read/written later by /heavy-architect + /discover):
-[ "<mode>" = "heavy" ] && mkdir -p "$VAULT/actors" "$VAULT/test-plan" "$VAULT/frontend"
+MODE="<mode>"   # substitute the CONFIRMED mode (lowercase) before running — an unsubstituted placeholder inside the test below would silently no-op the Heavy scaffold
+# Thin-vault rule (matches /triage): Minimal/Standard get ONLY the thin skeleton; components/
+# contracts/schemas + actors/test-plan/frontend are Heavy-only ("the vault grows with the
+# system, not ahead of it").
+mkdir -p "$VAULT/decisions" "$VAULT/spikes" "$VAULT/slices"
+if [ "$MODE" = "heavy" ]; then
+  mkdir -p "$VAULT/components" "$VAULT/contracts" "$VAULT/schemas" "$VAULT/actors" "$VAULT/test-plan" "$VAULT/frontend"
+fi
 ```
 
 Write in order:
-1. `<vault>/triage.json` (schema: `examples/triage.json`) — records adoption, whether /diagnose ran, mode, pipeline path
+1. `<vault>/triage.json` (schema: `examples/triage.json`) — records adoption, whether /diagnose ran, mode,
+   pipeline path. This FULL write replaces the Step-3 `awaiting-annotation` stub if one exists (drop the
+   `adopt_state` field — adoption is complete)
 2. `<vault>/concept.json` — from Step 7
 3. `<vault>/risk-register.json` — from Step 6
 4. `<vault>/decisions/ADR-historical-NNN.json` — from Step 8 (if any)
@@ -288,7 +319,8 @@ Adoption complete. Vault at <vault>/:
 - risk-register.json (<N> risks: <N1> from /diagnose, <N2> from pain points)
 - triage.json (mode: <mode>, diagnose_ran: <yes/no>)
 - decisions/ADR-historical-*.json (<M> historical ADRs, firsthand-only)
-- candidates.json (<K> slice candidates) [if /diagnose ran]
+- candidates.json (<K> slice candidates from /diagnose — or the empty shell on the skip path, ready for
+  /slice-candidates / /discover to populate; the file ALWAYS exists after adoption)
 - CLAUDE.md (brownfield-aware pipeline rules)
 
 First slice candidate: <from Q4 if specific; else top entry from candidates.json>

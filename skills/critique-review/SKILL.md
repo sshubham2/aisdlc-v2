@@ -1,6 +1,6 @@
 ---
 name: critique-review
-description: "Meta-Critic (DR-1) review of the first Critic's critique.json for false positives, false negatives, and severity miscalibrations. Runs inline on the main agent thread; spawns a 'critique-review' subagent via the Agent tool. Reads mission-brief.json, design.json, critique.json, and project-frame; classifies each finding as VALID/SUSPICIOUS/SEVERITY-WRONG; surfaces missed findings; runs the structural audit; writes critique-review.json. Use AFTER /critique, BEFORE /critique Step 4.5 TRI-1."
+description: "Meta-Critic (DR-1) review of the first Critic's critique.json for false positives, false negatives, and severity miscalibrations. Runs inline on the main agent thread; spawns a 'critique-review' subagent via the Agent tool. Reads mission-brief.json, design.json, critique.json, and project-frame; classifies each finding as VALID/SUSPICIOUS/SEVERITY-WRONG; surfaces missed findings; writes critique-review.json; runs the structural audit + schema lint on the written file. Use AFTER /critique, BEFORE /critique Step 4.5 TRI-1."
 when_to_use: "Trigger phrases: /critique-review, 'meta-review the critique', 'second-pass critique', 'review the Critic', 'dual review'. Tier-driven (NOT mode-gated) — MANDATORY (CRP-1-enforced) when risk_tier=high OR critic_required is true (auth/data-model/contracts/security/methodology surface; Heavy forces it everywhere) OR first-Critic findings >=5; ADVISORY on a 3+ consecutive-clean calibration smell. See the canonical trigger table in /critique Step 3.5. Not required otherwise."
 argument-hint: "[slice-id]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent
@@ -9,8 +9,9 @@ allowed-tools: Read, Grep, Glob, Bash, Write, Agent
 # /critique-review — meta-Critic (DR-1)
 
 You are running **inline on the main agent thread**. Your job is to read slice artifacts, spawn the
-`critique-review` subagent via the Agent tool, run the structural audit, then hand off to `/critique`
-Step 4.5 TRI-1. The subagent is adversarial toward the first Critic's review, not the design itself.
+`critique-review` subagent via the Agent tool, write `critique-review.json`, validate the WRITTEN file
+(structural audit + lint), then hand off to `/critique` Step 4.5 TRI-1. The subagent is adversarial
+toward the first Critic's review, not the design itself.
 
 > Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / the git config
 > `aisdlc/vault-root`). The spawned subagent does NOT inherit the project CLAUDE.md — resolve it in context.
@@ -35,11 +36,9 @@ fi
 Read the following from the active slice folder (`<vault>/slices/slice-NNN-<name>/`):
 - `mission-brief.json` — intent, ACs, must-not-defer, out-of-scope
 - `design.json` — components touched, contracts, wiring matrix, ADR refs
-- `critique.json` — first Critic's findings (primary input; **must exist**)
+- `critique.json` — first Critic's findings (primary input; **must exist** — the missing-file case is
+  handled ONCE, at the Step-1 prerequisite check below)
 - Any `<vault>/decisions/ADR-*.json` referenced by this slice
-
-If `critique.json` does not exist: write `critique-review.json` with
-`"result":"PREREQUISITE-MISSING","message":"critique.json not found — run /critique first"` and stop.
 
 ## Project frame — run this `bash` block
 
@@ -66,7 +65,9 @@ Read `critique.json`. If it does not exist: write `critique-review.json` with
 
 If `critique.json` verdict is `clean` AND the slice `risk_tier` is `low` with no mandatory triggers
 (auth/authz, API contracts, data model, security paths, methodology surface `skills/**`/`agents/**`/`scripts/**`):
-note this to the user and proceed — the DR-1 pass still runs.
+note this to the user and proceed — the DR-1 pass still runs. (This is NOT an independent gating rule:
+the decision whether `/critique-review` runs at all lives in `/critique` Step 3.5's canonical trigger
+table — you are only invoked when a trigger held, the advisory smell fired, or the user forced it.)
 
 ### Step 2 — Spawn the meta-Critic subagent
 
@@ -95,39 +96,29 @@ Slice: slice-NNN-<name>
 
 Await the subagent's return value. On error: surface it and stop.
 
-### Step 3 — Run the structural audit
+### Step 3 — Write critique-review.json
+
+Write `<vault>/slices/slice-NNN-<name>/critique-review.json` from the subagent's returned content
+(schema: `examples/critique-review.json`; R-25 — never self-author the content).
+
+### Step 4 — validate the WRITTEN file: structural audit + lint (one block; ADR-033 / AC2)
+
+Both validators run on the file Step 3 just wrote — **the write MUST precede this step** (auditing before
+the write either bounces on `no-file` or, worse, green-lights a STALE file from a previous run). They are
+belt-and-braces, ALWAYS run together — one block so neither can be skipped alone:
+- `critique_review_audit.py` — required sections, verdict in `{accept, adjust, extend}`,
+  `reviewed_by`/`date` populated, and the **dangling-assessment cross-reference** against `critique.json`
+  (the one check the lint does not have).
+- `artifact_lint.py` — the `_schema` tag + `first_critic_verdict`/`summary`/`notes` key-presence + enum
+  enforcement the hand-maintained audit omits; auto-tracks future schema changes (drift-proof; TRI-1 m3).
 
 ```bash
-ARG="${ARGUMENTS[0]:-}"
-if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
-else
-SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only)"
-fi
-$PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py" "$SDIR"
-```
-
-The audit validates: required sections present, verdict in `{accept, adjust, extend}`, `reviewed_by` and
-`date` fields populated. If violations: surface them; do not write a malformed file.
-
-### Step 4 — Write critique-review.json
-
-Write `<vault>/slices/slice-NNN-<name>/critique-review.json`
-(schema: `examples/critique-review.json`).
-
-### Step 4.1 — lint critique-review.json (receiving-inspection; ADR-033 / AC2)
-
-After writing it, lint `critique-review.json` against its schema-by-example — run this ALONGSIDE the Step-3
-structural audit (`critique_review_audit.py`), not instead of it: the example-driven lint adds the `_schema` tag +
-`first_critic_verdict` / `summary` / `notes` key-presence + enum enforcement the hand-maintained audit omits, and
-auto-tracks future schema changes (drift-proof; TRI-1 m3). On a violation, re-prompt the meta-Critic to re-emit a
-conforming artifact (R-25 — never self-author). Do NOT hand off to TRI-1 with a malformed file.
-```bash
-VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is NOT exported -- resolve per block
 ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type critique-review "$SDIR/critique-review.json"; rc=$?
-# exit 0 = clean · 1 = schema violation (re-prompt + rewrite + re-lint) · 2 = usage/tooling error (surface, NOT a clean pass)
-[ "$rc" = 0 ] || echo "ARTIFACT-LINT: critique-review.json did not conform (rc=$rc) -- re-prompt the meta-Critic; do NOT hand off to TRI-1."
+$PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py" "$SDIR"; audit_rc=$?
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type critique-review "$SDIR/critique-review.json"; lint_rc=$?
+# each: exit 0 = clean · 1 = violations (re-prompt + rewrite + re-validate) · 2 = usage/tooling error (surface, NOT a clean pass)
+[ "$audit_rc" = 0 ] && [ "$lint_rc" = 0 ] || echo "DR-1 VALIDATION FAILED (audit rc=$audit_rc, lint rc=$lint_rc) -- re-prompt the meta-Critic to re-emit a conforming artifact (R-25, never self-author); do NOT hand off to TRI-1 with a malformed file."
 ```
 
 ### Step 5 — Update milestone.json
@@ -148,7 +139,7 @@ re-add a gate-log append here — `/critique` Step 4.5 is the single writer; a s
 ## Return
 
 Return a 3-line summary:
-1. `Verdict: <ACCEPT|ADJUST|EXTEND>`
+1. `Verdict: <accept|adjust|extend>` (the schema's lowercase vocabulary — verbatim from the artifact)
 2. `Assessments: <N valid, M suspicious, K severity-wrong>`
 3. `Missed findings: <count> — run /critique Step 4.5 TRI-1 to reconcile both passes.`
 

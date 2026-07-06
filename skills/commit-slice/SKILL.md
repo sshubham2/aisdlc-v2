@@ -1,6 +1,6 @@
 ---
 name: commit-slice
-description: "Generate an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, ADRs, shippability.json). Dispatches message rendering to a Haiku subagent (COST-1). Supports three mutually exclusive modes: --merge (solo-dev local merge + safe-delete), --push (shared rebase + push + gh-aware PR create + non-blocking auto-merge, degrading gracefully to push + printed hint), --sync-after-pr (post-PR cleanup, runnable from the main tree). No-flag default: generate and show only. Also writes a per-slice changelog.json audit record into the archived slice folder (Step 4.5); never writes to the code repo root EXCEPT the opt-in CI ship receipt (.aisdlc/receipts/, Step 4.8 — emitted only when the repo carries the aisdlc-merge-gate workflow)."
+description: "Generate an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, ADRs, shippability.json). Renders the message INLINE (the old COST-1 Haiku dispatch was removed — spawn overhead exceeded the savings). Supports three mutually exclusive modes: --merge (solo-dev local merge + safe-delete), --push (shared rebase + push + gh-aware PR create + non-blocking auto-merge, degrading gracefully to push + printed hint), --sync-after-pr (post-PR cleanup, runnable from the main tree). No-flag default: generate and show only. Also writes a per-slice changelog.json audit record into the archived slice folder (Step 4.5); never writes to the code repo root EXCEPT the opt-in CI ship receipt (.aisdlc/receipts/, Step 4.8 — emitted only when the repo carries the aisdlc-merge-gate workflow)."
 when_to_use: "Trigger phrases: /commit-slice, 'generate commit message', 'audit commit', 'slice commit message', '/commit-slice --merge', '/commit-slice --push', '/commit-slice --sync-after-pr'. Run after /reflect (which archives the slice). User-invoked only — never auto-advanced into."
 argument-hint: "[--merge | --push | --sync-after-pr]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, AskUserQuestion, Skill
@@ -33,7 +33,12 @@ If two or more flags passed: STOP — "Mode flags `--merge`, `--push`, `--sync-a
 
 Default: most recently archived slice (highest `slice-NNN` under `<vault>/slices/archive/`).
 `--sync-after-pr`: current `slice/*` branch (no archive lookup needed).
-If multiple uncommitted slices exist under `--merge`: ask user which to commit.
+
+**Multiple archived-UNCOMMITTED slices** (parallel siblings — the timestamp default has a known wrong-sibling
+failure mode): under `--merge`, ASK the user which to commit (gate). Under **no-flag and `--push`**, never
+target silently — print one line first: _"N archived-uncommitted slices exist — targeting `<slice-NNN>` (most
+recent). Say the slice id to override."_ (Detect via `stranded_slice_audit` / multiple archive folders whose
+branches still exist.)
 
 Prerequisite: archived slice folder has `reflection.json` (slice completed) — or active slice has `build-log.json` for mid-slice commits. If neither: STOP, tell user to run `/reflect` first.
 
@@ -240,7 +245,7 @@ No git operations are executed.
 2. Show message + `git status` (files to be staged) on current slice branch.
    Confirm: "Commit on `<current branch>`? (yes/no)" → yes: `git add <files_from_build-log>` + `git commit -m "..."`.
 
-2.1. **WT-clean post-commit guard**: `git status --porcelain` MUST return empty after sub-step 2. If non-empty: STOP — "WT non-empty after commit. Unexpected uncommitted files: `<list>`. Commit or discard before proceeding." Vacuous on PSQ-3 re-entry (WT already clean).
+2.1. **WT-clean post-commit guard**: `git status --porcelain` MUST return empty after sub-step 2. If non-empty: STOP — "WT non-empty after commit. Unexpected uncommitted files: `<list>`. Expected set = `build-log.json.files_changed` — a listed file means you forgot to stage it (add + amend is NOT allowed; make a follow-up commit); an UNlisted file is likely a generated artifact (inspect, then discard or .gitignore). Resolve before proceeding." Vacuous on PSQ-3 re-entry (WT already clean).
 
 2.5. **PSQ-3 rebase** (ADR-068): run the **Shared rebase section** (§ *Shared — rebase onto default*, above) to
    bring the slice branch onto `<default>`. On a clean / fast-forward rebase (or a clean A3 merge-into-branch
@@ -407,19 +412,26 @@ Run this **only when a commit was actually created** (modes `--merge` / `--push`
 `validated` in `candidates.json`; now that the code has landed, mark it `shipped` and move it to the archive so
 the live backlog stays small (Direction #3) and a `shipped` candidate ALWAYS means committed code.
 
-1. Read `<vault>/candidates.json`, find the candidate whose `slice` matches this slice; set its `status` to `"shipped"`.
-2. Append the shipped entry to `<vault>/archive/candidates.json`:
-   ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file archive/candidates.json --array candidates --content-file shipped-candidate.json
-   ```
-3. Remove it from `<vault>/candidates.json` via CAS-rewrite (scratch files in a temp dir, NEVER the repo CWD —
-   they'd be one `git add -A` from being committed):
+> **The move is TWO per-file-locked writes, not one atomic cross-file move** — an interrupt between them
+> leaves the candidate in BOTH files (the live copy reads shipped-but-live, which `candidates_top` classifies
+> `other` and silently drops from every bucket). The sequence below is SELF-HEALING: the archive append is
+> idempotent (`--unique-key id` — a re-run that finds the id already archived is the interrupted-earlier-run
+> signature, not an error), so **on any interrupt simply re-run Step 6 from the top**; `/archive`'s sweep is
+> the backstop that detects a candidate present in both files (archive wins).
+
+1. Read `<vault>/candidates.json`, take the candidate whose `slice` matches this slice, set its `status` to
+   `"shipped"` in the COPY you are about to archive (write it to `"$T/shipped-candidate.json"` — never the CWD).
+2. Append the shipped copy to the archive, then remove it from the live file (ONE block, one `$T`):
    ```bash
    # slice-026: per-run temp dir UNDER $PY's gettempdir() so a git-bash write + a Windows-Python
    # read resolve to the SAME real path (bare `mktemp -d` returns /tmp/..., which Windows-Python
    # reads at a DIFFERENT path -> CAS divergence). The SAME $PY on both sides keeps it self-consistent.
    TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
    T="$(mktemp -d "$TMPD/aisdlc-commit.XXXXXX")"
+   # (write the shipped candidate copy to "$T/shipped-candidate.json" now)
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file archive/candidates.json --array candidates --unique-key id --content-file "$T/shipped-candidate.json"; arc=$?
+   # arc=0: archived. arc=2 with a "unique-key conflict" on stderr: ALREADY archived by an
+   # interrupted earlier run -> proceed to the removal (self-healing). Any OTHER arc=2: STOP.
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file candidates.json --out-file "$T/base.bin"
    # drop the shipped candidate from candidates[], write to "$T/updated.json", then:
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file candidates.json --base-file "$T/base.bin" --content-file "$T/updated.json"
@@ -445,9 +457,11 @@ story is the keystone deliverable — it reaches the owner's phone). The `Skill`
 relayed from Remote Control — but every git state change is gated behind this skill's explicit yes/no confirmations,
 NOT a frontmatter flag.) **Do NOT remove the grant.**
 
-**Fire-and-forget — NEVER a gate (must-not-defer):**
+**Fire-and-forget — NEVER a gate (must-not-defer):** ("fire-and-forget" is the CONTRACT, not literal
+concurrency — the Skill tool runs `/slice-story` in-conversation; what the contract means is that its outcome
+can never gate, block, or roll back the already-completed commit.)
 - The commit/merge/push has ALREADY completed; the story refresh is a downstream side-effect, not part of the
-  commit. Do **NOT await** the forked narrator inside the commit flow.
+  commit.
 - If `/slice-story` errors / times out / its narrator fails: surface ONE line — _"Story refresh failed — the
   shipped story was not updated; the commit/merge/push already completed."_ — and CONTINUE. Never block, abort,
   or roll back anything on a story-refresh failure.

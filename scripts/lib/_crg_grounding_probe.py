@@ -45,8 +45,9 @@ import os
 import pathlib
 import sys
 
-# --- single-skill import bootstrap (cannot use `python -m` for a bundled script) ---
-_REPO = pathlib.Path(__file__).resolve().parents[3]  # skills/<name>/scripts/X.py -> <plugin>
+# --- plugin-root import bootstrap (PROMOTED to scripts/lib alongside grounding_verify.py,
+# review sweep 2026-07 — the pair moves together; the caller resolves this file as a SIBLING) ---
+_REPO = pathlib.Path(__file__).resolve().parents[2]  # scripts/lib/X.py -> <plugin>
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 

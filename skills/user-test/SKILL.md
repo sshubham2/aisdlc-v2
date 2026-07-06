@@ -51,6 +51,8 @@ If no argument was given, ask via `AskUserQuestion`:
 
 **slice**
 - Confirm a slice is built and runnable (`build-log.json` result: shipped).
+- **Run the build from the slice WORKTREE** (`<main-parent>/<main-name>-wt/slice-NNN-<name>`) when the slice
+  is pre-merge — the main tree does not have its code yet; testing there tests stale code, not the slice.
 - Help the user write a task script: 3–5 concrete tasks stated as goals, not instructions.
 
 ## Step 2.5 — heuristic pre-flight (OPT-IN, declinable; slice-044 / ADR-034)
@@ -84,8 +86,14 @@ substitute for the real user test.)" — options **Run pre-flight** / **Skip to 
    the echo-chamber caveat (A1.G5), and degrades a missing/empty/malformed return to a defined
    skip-with-note (AC4):
    ```bash
+   # slice-026 portable temp recipe (a literal mktemp /tmp/... diverges from what Windows-Python
+   # reads back — the ingest below is exactly such a read-back):
+   TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+   T="$(mktemp -d "$TMPD/aisdlc-preflight.XXXXXX")"
+   # (write the agent's raw JSON return to "$T/agent-return.json" via the Write tool, then:)
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/user_test_gate.py" ingest \
-       --raw <tmp-agent-return.json> --ai-generated   # prints the normalized heuristic_walkthrough section
+       --raw "$T/agent-return.json" --ai-generated   # prints the normalized heuristic_walkthrough section
+   rm -rf "$T"
    ```
 4. **Persist the screen now (must-not-defer #3 — log which sessions used the pre-flight).** Write
    `<vault>/user-tests/<test-name>.json` with `preflight_used: true`, the normalized
@@ -180,15 +188,23 @@ construct a new risk entry and append it via vault_edit (the SVW-1 safe channel)
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+# slice-026 portable temp recipe: $PY's gettempdir so git-bash writes + Windows-Python reads land
+# on the SAME real path (a literal mktemp /tmp/... diverges on Windows).
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-user-test.XXXXXX")"
+# PRE-MINT the risk id in-lock (never model-mint "next R-NN" — parallel slices collide on it):
+R="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --vault "$VAULT" --file risk-register.json --kind r)"
+# (write the risk entry JSON — with "id": "$R" — to "$T/new-risk.json" via the Write tool, then:)
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
     --vault "$VAULT" --file risk-register.json \
     --array risks \
-    --content-file <tmp-json-with-new-risk-entries>
+    --content-file "$T/new-risk.json"
+rm -rf "$T"
 ```
 
 Schema for each appended risk entry matches `examples/risk-register.json`.
-Populate: `id` (next R-NN), `title`, `likelihood`, `impact`, `reversibility`, `status: open`,
-`discovered.phase: user-test`, `discovered.at: <timestamp>`.
+Populate: `id` (the alloc'd `$R` — one `alloc` per new risk), `title`, `likelihood`, `impact`,
+`reversibility`, `status: open`, `discovered.phase: user-test`, `discovered.at: <timestamp>`.
 
 **NEVER use raw Write or Edit on risk-register.json** — it is an append/CAS-only file (SVW-1).
 

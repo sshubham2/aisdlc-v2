@@ -38,7 +38,12 @@ Bootstrap a working interpreter and hand off to `setup.py` (it streams pip/CRG o
 then prints a status report + next steps). Pass through the user's flags/args verbatim:
 ```bash
 PYX="${PY:-}"; [ -f "$PYX" ] || PYX="$(printf '%s' "${AI_SDLC_PY:-}" | tr '\134' '/')"; [ -f "$PYX" ] || PYX="$(command -v python3 || command -v python || command -v py || true)"; [ -n "$PYX" ] || { echo "FATAL: no Python 3 found — install one or set AI_SDLC_PY (forward slashes), then re-run /setup"; exit 1; }
-"$PYX" "${CLAUDE_SKILL_DIR}/scripts/setup.py" $ARGUMENTS
+# ${ARGUMENTS[@]} UNQUOTED: under ARRAY binding it expands per-element; bare $ARGUMENTS sees only
+# element 0 (so `/setup --no-mcp --no-graph` would silently drop --no-graph). Under SCALAR binding
+# the unquoted form word-splits — every flag still arrives (a quoted "${ARGUMENTS[@]}" would glue
+# them into ONE argv token there). Caveat: a repo-path arg containing spaces needs a scalar-bound
+# quoted form — pass such a path by cd'ing to it instead.
+"$PYX" "${CLAUDE_SKILL_DIR}/scripts/setup.py" ${ARGUMENTS[@]}
 ```
 
 Then:

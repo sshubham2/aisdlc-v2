@@ -52,6 +52,10 @@ Query code-review-graph for blast-radius and reachability of the modules this sl
 If `.code-review-graph/` is missing or stale: `"${CRG:-code-review-graph}" build` (or `update`). If BOTH CRG
 and the `grep_vault.py` fallback below are unavailable/fail, proceed with the advisory note
 `(blast-radius context unavailable)` — the designers work without prior-art context; never a gate.
+**Record the degradation, don't just tolerate it**: carry it to Step 5 — set
+`tournament.crg_context: "unavailable"` in `design.json` (omit the field when context was available)
+AND add `--note "crg-context:unavailable"` to the Step-5 design-tournament gate-log row, so `/pulse`
+can surface "N recent slices designed without CRG context" instead of the degradation staying silent.
 
 For conceptual matches not found by CRG keyword search, fall back to:
 ```bash
@@ -224,19 +228,16 @@ Key fields:
 - `components_touched` + `components_detail` (`name`, `responsibility`, `lives_at`, `key_interactions`)
 - `contracts` (`name`, `kind`, `auth_model`, `error_cases`, `notes`) · `data_model_deltas` · `wiring_matrix` (WIRE-1)
 - `adrs` — ADR ids locked by this slice · `auth_model` · `error_model`
-- `assumptions_proven` — **only when the claimed candidate has spiked assumptions**: the spike→design evidence
-  cross-ref, a PURE PASS-THROUGH of the candidate's assumptions where `spike_status == "proven"` — per
-  assumption `{assumption: <id>, statement: <statement>, spike_ref: <spike_ref>, verdict: <spike_verdict>,
-  constraints: <spike_constraints>}` (exact mapping: `id`→`assumption`, `statement`→`statement`,
-  `spike_ref`→`spike_ref`, `spike_verdict`→`verdict`, `spike_constraints`→`constraints`; no renames, no other
-  source — the candidate row IS the source, the spike FILE under `<vault>/spikes/` stays the full-evidence
-  authority). `verdict` is `go` or `conditional` (a `no-go` assumption never passes through); include
-  `constraints` ONLY when the verdict is `conditional` (non-empty, per the candidate's `spike_constraints` —
-  ADR-002: a CONDITIONAL spike's named constraints are design inputs, surface them where the design reads).
-  **Legacy candidate rows without `spike_verdict`**: OMIT both fields — absent = unknown, **never default-fill
-  a verdict**. **Omit the whole block** when no assumption has `spike_status == "proven"` (absent = "no spiked
-  assumptions", never an error). artifact_lint enforces the shape (verdict enum + the conditional⇒non-empty-
-  constraints co-constraint).
+- `assumptions_proven` — **only when the claimed candidate has spiked assumptions**: a PURE PASS-THROUGH of the
+  candidate's assumptions where `spike_status == "proven"`, one row per assumption —
+  `{assumption: <id>, statement, spike_ref, verdict: <spike_verdict>, constraints: <spike_constraints>}`
+  (field-for-field from the candidate row, no renames, no other source; the spike FILE under `<vault>/spikes/`
+  stays the full-evidence authority). A `no-go` assumption never passes through; a CONDITIONAL verdict's
+  constraints are design inputs (ADR-002) — surface them where the design reads. **Legacy rows without
+  `spike_verdict`**: omit `verdict`/`constraints` — absent = unknown, never default-fill. **Omit the whole
+  block** when no assumption is proven (absent = "no spiked assumptions", never an error). `artifact_lint` is
+  the shape AUTHORITY (verdict enum + the conditional⇒non-empty-constraints co-constraint) — don't re-derive
+  the co-constraints here or in downstream prose.
 - `cross_domain_transfer` — **only if the selected design imports a cross-domain pattern** (from
   `designer-crossdomain`): `source_domain`, `pattern`, `rationale`, `invariants[]` (each
   `{precondition, status: holds|must-verify|fails, evidence}`). Omit when no transfer was selected. The
@@ -244,7 +245,9 @@ Key fields:
 - `tournament` — **present on every slice** (the 3-designer tournament always runs): `tier`, `designers[]`,
   `proposals[]` (`designer`, `approach`, `selected: core|partial|none`), `channeled_experts[]`,
   `selection_rationale`, `coherence_check`, `decidable_disagreements[]`, `taste_disagreements[]`,
-  `approach_divergence[]` (3.3 — per designer-pair `{pair, divergence: identical|overlapping|disjoint}`).
+  `approach_divergence[]` (3.3 — per designer-pair `{pair, divergence: identical|overlapping|disjoint}`),
+  `crg_context: "unavailable"` **only when Step 0 degraded** (both CRG and the grep_vault fallback failed;
+  omit when blast-radius context was available — absent = available).
 - `at` — ISO-8601 timestamp
 
 **Gate-log the divergence (every slice — 3.3).** After writing design.json, append one *informational*
@@ -260,6 +263,8 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --mode <minimal|standard|heavy> --tier <low|medium|high> \
   | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
         --vault "$VAULT" --file gate-log.json --array entries --stdin
+# Add --note "crg-context:unavailable" (before the pipe) when Step 0 degraded — the row is
+# how /pulse sees that the tournament ran without blast-radius context.
 ```
 
 This row raises no findings (it is informational, not a verdict/finding gate — `/pulse` excludes it from the
@@ -271,8 +276,10 @@ explicit `exemption` with substring `"rationale:"`. build-slice treats null-exem
 ## Step 6 — Heavy mode extras
 
 Standard / Minimal: skip. Heavy only:
-- Update `<vault>/threat-model.json` if this slice changes the attack surface.
-- Update `<vault>/cost-estimation.json` if it changes the infrastructure footprint.
+- Update `<vault>/threat-model.json` if this slice changes the attack surface (schema:
+  `schemas/artifact-examples.json` → `"threat-model"`).
+- Update `<vault>/cost-estimation.json` if it changes the infrastructure footprint (schema:
+  `schemas/artifact-examples.json` → `"cost-estimation"`).
 - Update `<vault>/components/<name>.json` + `<vault>/contracts/<name>.json` for substantively changed
   components/contracts (schema: `examples/component.json`, `examples/contract.json`).
 - **Expert-lens vocabulary annotation (audit-tier toggle — roadmap Theme 7; strictly OFF the generation path).**

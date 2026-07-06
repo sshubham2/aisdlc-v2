@@ -315,13 +315,17 @@ Critic findings for slice-NNN <name>:
 
 OVERRIDDEN / DEFERRED / ESCALATED MUST carry a non-empty rationale (triage audit refuses empty).
 
+Prefer `AskUserQuestion` **structured options** (the fixed five-disposition vocabulary as options; "Other" for a
+custom disposition + rationale) over free-text transcription — transcription typos are exactly what
+`triage_audit` then bounces (`invalid-disposition` / `orphan-row`).
+
 **Anti-alert-fatigue (Theme 5) — surface the novel, batch the routine.** A gate that makes the user ratify ten
 look-alike findings one-by-one trains the rubber-stamp reflex, and a rubber-stamped gate is theater. So shape the
 presentation by signal, not by uniform list:
 - **Blockers + majors: individually**, each with its own ratify line (above). These are never batched.
 - **Minors: batched.** Present them as ONE group — *"N minors, all drafted `<disposition>` — accept all as drafted? (Enter = yes, or name any id to review/override)."* Don't force a keystroke per minor.
 - **Tag each finding NOVEL vs RECURRING.** A finding is RECURRING if this dimension+claim shape was already raised-and-accepted in a recent slice (check the injected `active_checks[]` overlay + the recent reflections' calibration — NEVER read `runs[]`; it grows unboundedly, per Step 1). **Lead with the NOVEL findings** — that is where the user's attention is worth spending; recurring ones can ride the batch.
-- **Rubber-stamp awareness.** If the user ratifies *every* draft disposition unchanged (no override / no severity change), that wholesale-accept is itself a signal — note it in the triage `notes`. It feeds `/critic-calibrate`'s lighten analysis: a model-on-model gate whose findings are always accepted-as-drafted with zero pushback over several slices is a candidate to lighten (never the reality spine). This is descriptive, not a block — the user still owns the verdict.
+- **Rubber-stamp awareness.** If the user ratifies *every* draft disposition unchanged (no override / no severity change), that wholesale-accept is itself a signal — set `"rubber_stamp": true` in the triage object (omit otherwise — structured, so `/critic-calibrate` can count it without text-mining) and note it in the triage `notes`. It feeds `/critic-calibrate`'s lighten analysis: a model-on-model gate whose findings are always accepted-as-drafted with zero pushback over several slices is a candidate to lighten (never the reality spine). This is descriptive, not a block — the user still owns the verdict.
 
 Once the user ratifies, compute **final verdict** mechanically:
 - Any `escalated` → **BLOCKED**
@@ -339,6 +343,10 @@ user knowingly building on top of an unresolved blocker — legitimate, but neve
 (`overridden` blockers need no qualifier — the user judged the finding not-real, which is what the gate-log
 precision row records.)
 
+DD-15 is enforced MECHANICALLY by `triage_audit.py` (refusal kind `deferred-blocker`), not just by this prose:
+a deferred blocker whose rationale lacks a `slice-NNN`/`SC-NNN` target, or that is missing from
+`deferred_blockers[]` (or a `deferred_blockers[]` entry that isn't actually a deferred blocker), fails the audit.
+
 Update `critique.json` — write the `"triage"` object:
 ```json
 "triage": {
@@ -347,18 +355,23 @@ Update `critique.json` — write the `"triage"` object:
   "verdict": "clean|needs-fixes|blocked",
   "dispositions": [
     { "finding": "C1", "action": "accepted-fixed", "rationale": "<ref>" }
-  ]
+  ],
+  "deferred_blockers": ["C1"],
+  "rubber_stamp": true
 }
 ```
+(`deferred_blockers` — DD-15, present only when a blocker was deferred; `rubber_stamp` — present only on a
+wholesale unchanged-accept; omit both otherwise, per the omit-empty convention.)
 
 Run triage audit:
 ```bash
 $PY "${CLAUDE_SKILL_DIR}/scripts/triage_audit.py" <active-slice-folder>
 ```
 
-Audit refusal codes: `no-section`, `missing-field`, `invalid-verdict`, `missing-row`,
-`invalid-disposition`, `missing-rationale`, `verdict-mismatch`. On any violation: surface to user,
-correct, re-run. Do NOT bypass.
+Audit refusal codes: `no-triage`, `format`, `missing-field`, `invalid-verdict`, `missing-row`,
+`orphan-row` (a disposition naming a nonexistent finding id), `invalid-disposition`,
+`missing-rationale`, `deferred-blocker` (the DD-15 qualification, enforced mechanically),
+`verdict-mismatch`. On any violation: surface to user, correct, re-run. Do NOT bypass.
 
 ### Record the gate outcome (measurement spine — Phase 0.1 + 0.2)
 
@@ -374,13 +387,21 @@ dispositions make per-gate **precision** computable (Phase 0.2): derive from the
 
 ```bash
 # mode from triage.json; tier = slice risk_tier from mission-brief.json
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+# Same safety shape as the DR-1 block below: derive VAULT (4.6.1 — the env var is NOT
+# exported) + --out/--content-file (never pipe+--stdin: the double-apply-under-contention
+# hazard vault_edit itself documents).
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-cr-row.XXXXXX")"
+"$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate critique --slice <slice-NNN-name> \
     --verdict <clean|needs-fixes|blocked> --findings-count <N> \
     --findings-real <R> --findings-noise <noise> \
-    --mode <minimal|standard|heavy> --tier <low|medium|high> \
-  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+    --mode <minimal|standard|heavy> --tier <low|medium|high> --out "$T/row.json" \
+  && "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$VAULT" --file gate-log.json --array entries --content-file "$T/row.json"; rc=$?
+[ "$rc" = 0 ] || echo "STOP: critique gate-row append failed (rc=$rc) -- surface, never fire-and-forget (must-not-defer)" >&2
+rm -rf "$T"
 ```
 
 (This row is the **first Critic's** — it counts ONLY first-Critic findings, never the meta-Critic's `M-add-*`.)

@@ -30,6 +30,15 @@ never drift. THREE responsibilities:
    counted as 0; ``kind:"miss"`` rows are recall data (excluded from precision, counted for
    recall). precision = Σreal/(Σreal+Σnoise); recall = Σreal/(Σreal+misses).
 
+4. ``gate_summary(entries, slice_id=None, recent=30)`` — the whole-file aggregation /pulse
+   consumes (2026-07 review sweep): per-gate table (verdict-row runs/raised + the
+   precision/recall from #3, reality_contact, last verdict, quiet flag) ordered high→low
+   reality-contact, with ``design-tournament`` split out (informational — divergence
+   distribution, never in the quiet math), the cross-domain validity ratio, the active
+   slice's compact rows, and a capped newest-first ``recent[]``. The gate log grows without
+   bound (multiple rows per slice, forever); /pulse reads ONLY this summary — never the
+   full file — so its token budget survives slice-100+.
+
 CLI (for the skill call-sites):
   --critique-review-args --slice-dir DIR
       prints gate_log.py flags (``--verdict V --findings-count N [--findings-real R
@@ -37,6 +46,9 @@ CLI (for the skill call-sites):
       (the M-add-1 guard) — the skill emits only when the output is non-empty.
   --gate-precision --gate G --gate-log PATH
       prints the gate_precision_recall(...) JSON for a gate.
+  --summary --gate-log PATH [--slice slice-NNN] [--recent N]
+      prints the gate_summary(...) JSON; a missing/empty log prints {"absent": true}
+      (clean sentinel, exit 0) so the consumer can omit its section.
 
 Exit 0 success · 2 usage error.
 """
@@ -184,6 +196,75 @@ def gate_precision_recall(entries, gate: str) -> dict:
     }
 
 
+# /pulse rendering aids (gate_summary). INFORMATIONAL_GATES raise no findings by design —
+# excluded from the per-gate quiet/precision table, reported separately (3.3). The pass-class
+# set for the cross-domain validity ratio is the REALITY-gate vocabulary only (go/conditional/
+# pass) — model-gate greens (clean/accept) never count as "reality confirmed the transfer".
+INFORMATIONAL_GATES = frozenset({"design-tournament"})
+_REALITY_PASS_CLASS = frozenset({"go", "conditional", "pass"})
+_RC_RANK = {"high": 0, "medium": 1, "low": 2}
+_SLICE_ROW_FIELDS = ("gate", "kind", "verdict", "findings_count", "reality_contact",
+                     "reality_proxy", "severity", "caught_by")
+
+
+def _canon_slice(value) -> str:
+    """slice-NNN-name -> slice-NNN; anything else verbatim (str-coerced)."""
+    s = str(value or "").strip()
+    parts = s.split("-")
+    if len(parts) >= 2 and parts[0] == "slice" and parts[1].isdigit():
+        return f"slice-{parts[1]}"
+    return s
+
+
+def gate_summary(entries, slice_id: str | None = None, recent: int = 30) -> dict:
+    """Whole-file gate-log aggregation for /pulse (one bounded read instead of the full log)."""
+    if not isinstance(entries, list):
+        raise TypeError("entries must be a list")
+    rows = [e for e in entries if isinstance(e, dict) and e.get("gate")]
+
+    gates_out: list[dict] = []
+    for gate in sorted({e["gate"] for e in rows} - INFORMATIONAL_GATES):
+        pr = gate_precision_recall(rows, gate)
+        verdict_rows = [e for e in rows if e.get("gate") == gate and e.get("kind") != "miss"]
+        rc = next((e.get("reality_contact") for e in reversed(verdict_rows)
+                   if e.get("reality_contact")), None)
+        last = verdict_rows[-1] if verdict_rows else None
+        gates_out.append({
+            **pr,
+            "reality_contact": rc,
+            "last": ({"verdict": last.get("verdict"), "slice": last.get("slice")}
+                     if last else None),
+            "quiet": pr["runs"] >= 5 and pr["raised"] == 0,
+        })
+    gates_out.sort(key=lambda g: (_RC_RANK.get(g["reality_contact"], 3), g["gate"]))
+
+    dt_rows = [e for e in rows if e.get("gate") in INFORMATIONAL_GATES]
+    divergence: dict[str, int] = {}
+    for e in dt_rows:
+        v = str(e.get("approach_divergence", "")).strip()
+        if v:
+            divergence[v] = divergence.get(v, 0) + 1
+
+    xd = [e for e in rows if e.get("cross_domain") is True and e.get("kind") != "miss"
+          and e.get("reality_contact") in ("high", "medium")]
+    xd_held = sum(1 for e in xd if str(e.get("verdict", "")).strip() in _REALITY_PASS_CLASS)
+
+    out: dict = {
+        "gates": gates_out,
+        "design_tournament": {"runs": len(dt_rows), "divergence": divergence},
+        "cross_domain": {"held": xd_held, "total": len(xd)},
+        "recent": [{k: e[k] for k in _SLICE_ROW_FIELDS if k in e} | {"slice": e.get("slice")}
+                   for e in rows[-max(recent, 0):]][::-1],
+        "total_entries": len(rows),
+    }
+    if slice_id:
+        want = _canon_slice(slice_id)
+        out["slice"] = want
+        out["slice_rows"] = [{k: e[k] for k in _SLICE_ROW_FIELDS if k in e}
+                             for e in rows if _canon_slice(e.get("slice")) == want]
+    return out
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="triage_precision",
@@ -193,9 +274,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         "the meta-Critic did not run (M-add-1 guard)")
     p.add_argument("--gate-precision", action="store_true",
                    help="print gate_precision_recall(...) JSON for --gate over --gate-log")
+    p.add_argument("--summary", action="store_true",
+                   help="print gate_summary(...) JSON over --gate-log; missing/empty log -> "
+                        "{\"absent\": true} (exit 0)")
     p.add_argument("--slice-dir", help="(--critique-review-args) the slice folder")
     p.add_argument("--gate", help="(--gate-precision) gate name")
-    p.add_argument("--gate-log", help="(--gate-precision) path to gate-log.json")
+    p.add_argument("--gate-log", help="(--gate-precision/--summary) path to gate-log.json")
+    p.add_argument("--slice", help="(--summary) canonical slice id for the per-slice rows")
+    p.add_argument("--recent", type=int, default=30,
+                   help="(--summary) newest-first recent[] cap (default 30)")
     return p
 
 
@@ -230,7 +317,28 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(gate_precision_recall(entries, args.gate), ensure_ascii=False))
         return 0
 
-    sys.stderr.write("triage_precision: pass --critique-review-args or --gate-precision\n")
+    if args.summary:
+        if not args.gate_log:
+            sys.stderr.write("triage_precision: --summary requires --gate-log\n")
+            return 2
+        log_path = Path(args.gate_log)
+        if not log_path.is_file():
+            print(json.dumps({"absent": True}))  # clean sentinel: consumer omits its section
+            return 0
+        try:
+            data = _read_json(log_path)
+        except (ValueError, OSError) as exc:
+            sys.stderr.write(f"triage_precision: cannot read --gate-log {args.gate_log}: {exc}\n")
+            return 2
+        entries = data.get("entries", []) if isinstance(data, dict) else []
+        if not entries:
+            print(json.dumps({"absent": True}))
+            return 0
+        print(json.dumps(gate_summary(entries, slice_id=args.slice, recent=args.recent),
+                         ensure_ascii=False))
+        return 0
+
+    sys.stderr.write("triage_precision: pass --critique-review-args, --gate-precision, or --summary\n")
     return 2
 
 

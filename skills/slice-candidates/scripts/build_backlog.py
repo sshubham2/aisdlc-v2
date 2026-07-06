@@ -488,6 +488,14 @@ def cmd_build(args: argparse.Namespace) -> int:
 
         result["appended"] = [c["id"] for c in new_cands]
         result["skipped"] = sum(1 for i in ordered_idx if i not in assigned)
+        # Review sweep 2026-07: WHICH findings were skipped (already candidates), not just how
+        # many — an owner re-running after a partial annotation round needs to see what was
+        # deduped vs what never made it in. finding id + the SC id it already maps to (if known).
+        result["skipped_ids"] = [
+            {"finding": protos[i]["finding_id"],
+             "existing_candidate": fid_to_sc.get(protos[i]["finding_id"])}
+            for i in ordered_idx if i not in assigned
+        ]
         result["clusters"] = [
             sorted(fid_to_sc.get(protos[j]["finding_id"]) for j in cl
                    if fid_to_sc.get(protos[j]["finding_id"]))
@@ -526,6 +534,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         "appended": len(result["appended"]),
         "appended_ids": result["appended"],
         "skipped_existing": result["skipped"],
+        "skipped_existing_ids": result["skipped_ids"],
         "clusters": result["clusters"],
         "merge_recommendations": result["merge_recommendations"],
         "crg": crg_state["mode"],

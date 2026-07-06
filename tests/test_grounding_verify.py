@@ -1,4 +1,4 @@
-"""skills/release/scripts/grounding_verify.py + _crg_grounding_probe.py
+"""scripts/lib/grounding_verify.py + _crg_grounding_probe.py (promoted from skills/release/scripts)
 — independently verify /release's self-attested grounding tokens against
 reality before doc-manifest.json records them (slice-015).
 
@@ -29,7 +29,9 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-VERIFY = REPO / "skills" / "release" / "scripts" / "grounding_verify.py"
+# review sweep 2026-07: the grounding-verify pair was PROMOTED to scripts/lib
+# (shared by /release + /drift-check; cross-skill reach forbidden).
+VERIFY = REPO / "scripts" / "lib" / "grounding_verify.py"
 PY = sys.executable
 _BASE_GIT = {
     "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e",
@@ -271,7 +273,7 @@ def test_vault_root_unresolved_source_unavailable(tmp_path):
 #   M-add-2: a pure file-stem match (no symbol of that name) still verifies (the union is required).
 # ============================================================================
 
-PROBE = REPO / "skills" / "release" / "scripts" / "_crg_grounding_probe.py"
+PROBE = REPO / "scripts" / "lib" / "_crg_grounding_probe.py"
 
 
 def _run_ps(public_surface, repo_root, grounding=None, env=None):
@@ -457,7 +459,7 @@ def test_public_surface_endpoints_not_verified(built_repo):
 
 # in-process import of both scripts (their own bootstrap adds the plugin root to sys.path for
 # scripts.lib._stdout; inserting the scripts dir lets us import the modules by bare name).
-_SCRIPTS = REPO / "skills" / "release" / "scripts"
+_SCRIPTS = REPO / "scripts" / "lib"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 import grounding_verify as gv          # noqa: E402

@@ -41,14 +41,17 @@ This skill is a **diagnostic deliverable**. It never modifies source files in th
 
 Parse args. **Skill args arrive as the Claude Code `$ARGUMENTS` substitution (0-based `${ARGUMENTS[N]}` / `$N`),
 NOT shell positionals** — `"$@"` / `$1` do NOT carry skill args. Shell vars also do NOT persist across separate
-```bash blocks, so every block below re-derives `TARGET`/`OUT` from `$ARGUMENTS`. The first non-flag token is
-the repo path (so a flag-shaped token never becomes the path); `--parallel` toggles dispatch mode:
+```bash blocks, so every block below re-derives `TARGET`/`OUT` from the args. **Scan with unquoted
+`${ARGUMENTS[@]}`** — it iterates every element under an ARRAY binding AND word-splits under a SCALAR binding;
+bare `$ARGUMENTS` sees only element 0 of an array, so `/diagnose <path> --parallel` would silently never opt in.
+The first non-flag token is the repo path (so a flag-shaped token never becomes the path); `--parallel` toggles
+dispatch mode:
 
 ```bash
-TARGET="$PWD"
-for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+TARGET=""; PARALLEL=0
+for a in ${ARGUMENTS[@]}; do case "$a" in --parallel) PARALLEL=1 ;; --*) ;; *) [ -z "$TARGET" ] && TARGET="$a" ;; esac; done
+[ -z "$TARGET" ] && TARGET="$PWD"
 OUT="$TARGET/diagnose-out"
-case " $ARGUMENTS " in *" --parallel "*) PARALLEL=1 ;; *) PARALLEL=0 ;; esac
 echo "TARGET=$TARGET"
 echo "OUT=$OUT"
 echo "PARALLEL=$PARALLEL  (0 = sequential, default; 1 = legacy single-message parallel dispatch)"
@@ -62,7 +65,7 @@ message if not.
 
 ```bash
 TARGET="$PWD"
-for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done   # ${ARGUMENTS[@]} unquoted: array-safe AND scalar-safe (bare $ARGUMENTS sees only element 0 of an array)
 TARGET_REAL=$(cd "$TARGET" 2>/dev/null && pwd) || { echo "TARGET does not exist: $TARGET"; exit 1; }
 if [ "$TARGET_REAL" != "$(pwd)" ]; then
   echo "WARNING: TARGET ($TARGET_REAL) != PWD ($(pwd))."
@@ -95,7 +98,7 @@ Build the CRG graph:
 
 ```bash
 TARGET="$PWD"
-for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done   # ${ARGUMENTS[@]} unquoted: array-safe AND scalar-safe (bare $ARGUMENTS sees only element 0 of an array)
 OUT="$TARGET/diagnose-out"
 # Isolate diagnose's throwaway graph in $OUT via the CRG_DATA_DIR env var — it mutates NO global CRG
 # registry state (slice-006 / ADR-004). get_data_dir resolves registry > CRG_DATA_DIR > default, so guard
@@ -164,6 +167,11 @@ Per **COST-1.1**, each pass uses a model matched to its cognitive shape:
 
 Spawn each as **`Agent` with `subagent_type: general-purpose`** and `model: <opus|sonnet>` from the table.
 
+(The `opus`/`sonnet` labels track Claude MODEL FAMILIES — the deeper-reasoning tier for synthesis-shaped
+passes vs the faster tier for enumeration-shaped ones — not pinned model ids. If a family is renamed in a
+future harness, map each label to the nearest same-tier family rather than dropping the split; when a label
+no longer resolves at spawn time, fall back to omitting `model:` (inherit the session model) and note it.)
+
 ### Subagent prompt structure
 
 Embed into each subagent's prompt:
@@ -206,7 +214,7 @@ For each completed pass (immediately in sequential mode; as they finish in paral
 2. Run:
    ```bash
    TARGET="$PWD"
-   for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+   for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done   # ${ARGUMENTS[@]} unquoted: array-safe AND scalar-safe (bare $ARGUMENTS sees only element 0 of an array)
    OUT="$TARGET/diagnose-out"
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/write_pass.py" \
        --pass <pass-name> \
@@ -227,7 +235,7 @@ After all 10 passes have written (or been marked degraded), verify outputs:
 
 ```bash
 TARGET="$PWD"
-for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done   # ${ARGUMENTS[@]} unquoted: array-safe AND scalar-safe (bare $ARGUMENTS sees only element 0 of an array)
 OUT="$TARGET/diagnose-out"
 ls "$OUT/sections" "$OUT/findings" "$OUT/summary"
 ```
@@ -251,12 +259,12 @@ After it returns, run (re-deriving `OUT` — shell state does not persist across
 
 ```bash
 TARGET="$PWD"
-for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done   # ${ARGUMENTS[@]} unquoted: array-safe AND scalar-safe (bare $ARGUMENTS sees only element 0 of an array)
 OUT="$TARGET/diagnose-out"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/write_pass.py" --pass 04-ai-bloat --out "$OUT" --raw-file "$OUT/.tmp/04-ai-bloat.raw"
 ```
 
-with the same 3-attempt cap. Verify all three `04-ai-bloat` outputs (`sections/04-ai-bloat.md`, `findings/04-ai-bloat.yaml`, `summaries/04-ai-bloat.md`) exist before continuing.
+with the same 3-attempt cap. Verify all three `04-ai-bloat` outputs (`sections/04-ai-bloat.md`, `findings/04-ai-bloat.yaml`, `summary/04-ai-bloat.md` — the dir is `summary/`, singular, per the Step-2 structure) exist before continuing.
 
 ## Step 6.5 — Narrative synthesis: diagnose-narrator
 
@@ -291,7 +299,7 @@ continue — `assemble.py` falls back to per-pass summary stitching (degraded bu
 
 ```bash
 TARGET="$PWD"
-for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done   # ${ARGUMENTS[@]} unquoted: array-safe AND scalar-safe (bare $ARGUMENTS sees only element 0 of an array)
 OUT="$TARGET/diagnose-out"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/assemble.py" --out "$OUT"
 ```
@@ -325,7 +333,9 @@ Tell the user:
   2. Owner opens it in any browser, fills `Confirmed` (yes/no/defer) + `Notes` per finding.
   3. Owner clicks "Save annotated HTML" — JS bakes annotations into the embedded JSON and downloads a copy.
   4. Owner sends the downloaded file back.
-  5. Place that file at `$OUT/diagnosis.html` (replacing the original).
+  5. Rotate first, then place: move the current `$OUT/diagnosis.html` to `$OUT/diagnosis.prev.html`
+     (the same rotation `assemble.py` performs on re-runs — keeps the un-annotated original as the audit
+     trail), then save the returned file at `$OUT/diagnosis.html`.
 - Do not mention `/slice-candidates` unless the user asks "what now?". It is the natural successor once the annotated file is returned, but let the user decide when to invoke it.
 
 ## Anti-patterns

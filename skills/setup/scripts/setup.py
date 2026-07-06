@@ -65,19 +65,29 @@ def _stream(cmd: list[str]) -> int:
 def hook_health() -> tuple[bool, list[str]]:
     """Diagnose whether the SessionStart hook set its env vars cleanly THIS session.
     A skill cannot write $CLAUDE_ENV_FILE (it is handed only to hooks), so /setup can
-    only DIAGNOSE these -- repairing them needs the hook to re-run, i.e. a restart."""
+    only DIAGNOSE these -- repairing them needs the hook to re-run, i.e. a restart.
+
+    4.6.1: the hook exports ONLY PY + CRG. AI_SDLC_VAULT_ROOT is deliberately NOT
+    exported (skills resolve the vault per-invocation), so UNSET is the healthy norm --
+    flagging it made every healthy install read DEGRADED (2026-07 review sweep). Only a
+    set-but-BOM'd legacy value is an issue."""
     issues = []
     py = os.environ.get("PY", "")
-    if not py:
-        issues.append("PY unset -- every skill that calls $PY will fail")
-    elif not os.path.isfile(py):
-        issues.append(f"PY is not a valid file ({py!r}) -- a mangled path (old-hook bug, fixed 2.5.1)")
-    if not os.environ.get("CRG"):
-        issues.append("CRG unset -- CRG calls fall back to a bare PATH lookup (works only if on PATH)")
-    vault = os.environ.get("AI_SDLC_VAULT_ROOT", "")
-    if not vault:
-        issues.append("AI_SDLC_VAULT_ROOT unset -- skills resolve the vault per-call (slower, still external)")
-    elif vault.startswith("\ufeff"):
+    crg = os.environ.get("CRG", "")
+    if not py and not crg:
+        # Name the root cause, not just the symptoms: both hook-exported vars missing
+        # means the hook itself never ran.
+        issues.append("SessionStart hook did NOT fire this session (PY and CRG both unset) -- "
+                      "every skill that calls $PY will fail. Check the plugin's hooks/hooks.json "
+                      "is installed, then RESTART Claude Code; /setup cannot re-fire the hook")
+    else:
+        if not py:
+            issues.append("PY unset -- every skill that calls $PY will fail")
+        elif not os.path.isfile(py):
+            issues.append(f"PY is not a valid file ({py!r}) -- a mangled path (old-hook bug, fixed 2.5.1)")
+        if not crg:
+            issues.append("CRG unset -- CRG calls fall back to a bare PATH lookup (works only if on PATH)")
+    if os.environ.get("AI_SDLC_VAULT_ROOT", "").startswith("\ufeff"):
         issues.append("AI_SDLC_VAULT_ROOT has a leading BOM -- old-hook bug (fixed 2.5.1)")
     return (not issues, issues)
 
@@ -94,7 +104,7 @@ def do_check(repo: str) -> int:
     print(f"graph       : {'built (./.code-review-graph)' if (Path(repo) / '.code-review-graph').is_dir() else 'NOT built'}")
     print(f"git         : {'repo' if _is_git(repo) else 'NOT a git repo'}")
     ok, issues = hook_health()
-    print(f"hook env    : {'OK (PY/CRG/VAULT all set by the hook)' if ok else 'DEGRADED'}")
+    print(f"hook env    : {'OK (hook fired: PY + CRG set; vault resolves per-invocation by design)' if ok else 'DEGRADED'}")
     for i in issues:
         print(f"  ! {i}")
     return 0

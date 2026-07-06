@@ -43,6 +43,19 @@ def test_build_checks_row_via_cli(run_script):
     assert row["slice"] == "slice-007"  # canonicalized
 
 
+def test_note_written_only_when_passed(run_script):
+    # --note records a degraded-input marker (e.g. design ran without CRG context);
+    # omitted -> the key is absent (omit-empty convention), passed -> carried verbatim.
+    base = ["--gate", "design-tournament", "--slice", "slice-009",
+            "--verdict", "disjoint", "--findings-count", "0"]
+    r = run_script("scripts/lib/gate_log.py", base)
+    assert r.returncode == 0, r.stderr
+    assert "note" not in json.loads(r.stdout.strip())
+    r = run_script("scripts/lib/gate_log.py", base + ["--note", "crg-context:unavailable"])
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout.strip())["note"] == "crg-context:unavailable"
+
+
 def test_unknown_gate_exit2(run_script):
     r = run_script("scripts/lib/gate_log.py",
                    ["--gate", "bogus-gate", "--slice", "slice-001",

@@ -30,18 +30,31 @@ strict mode, with the attested `--ack-critical` ids (deduplicates the old double
 Usage (run from the slice worktree):
     python pre_finish_gate.py --slice <slice-folder> --worktree <wt> \
         [--changed-files a.py b.ts ...] [--changed-test-files t_a.py ...] \
+        [--changed-from-git <base>] \
         [--ack-critical BC-PROJ-1,BC-PROJ-3] [--seam-allowlist <path>] \
         [--test-first] [--strict] [--json]
+
+An INVALID --worktree is a HARD exit-2 usage error — the gate REFUSES to audit
+anything else (it used to silently fall back to cwd, which could green-light a
+main-tree audit of the wrong tree; the guard now lives in the script itself, not
+just the SKILL's bash prose).
+
+--changed-from-git <base> derives --changed-files / --changed-test-files INSIDE the
+gate (``git -C <worktree> diff --name-only <base>`` + untracked), removing the
+cross-bash-block model-memory transcription of the changed list ("the gate's
+coverage is exactly as good as this list"). Mutually exclusive with passing the
+lists explicitly.
 
 Exit codes:
     0  gate PASS (every non-skipped check passed)
     1  gate FAIL (>=1 check failed)
-    2  usage error
+    2  usage error (incl. an invalid --worktree / a failed --changed-from-git derivation)
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -111,10 +124,45 @@ def _split_ack_critical(raw: str | None) -> list[str]:
     return (raw or "").replace(",", " ").split()
 
 
+# The project test layout the SKILL documents for --changed-test-files:
+# tests/** (any tests/ or test/ path segment), *_test.*, *.test.*, test_*.py-style names.
+_TEST_FILE_RE = re.compile(
+    r"(^|/)tests?/|_test\.[^/]*$|\.test\.[^/]*$|(^|/)test_[^/]*$"
+)
+
+
+def _derive_changed(worktree: Path, base: str) -> tuple[list[str], list[str]]:
+    """Derive (changed_files, changed_test_files) from git inside the gate
+    (--changed-from-git): committed diff vs ``base`` plus untracked files.
+    Raises ValueError on any git failure — fail-visible, never a silent empty list
+    (an empty list would SKIP LINT-MOCK and blind BC-1's scoping)."""
+    def _git(*a: str) -> list[str]:
+        cp = subprocess.run(
+            ["git", "-C", str(worktree), *a], capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+        )
+        if cp.returncode != 0:
+            raise ValueError(
+                f"--changed-from-git: `git {' '.join(a)}` failed in {worktree}: "
+                f"{(cp.stderr or '').strip()}")
+        return [ln.strip() for ln in cp.stdout.splitlines() if ln.strip()]
+
+    changed = sorted(set(_git("diff", "--name-only", base)
+                         + _git("ls-files", "--others", "--exclude-standard")))
+    tests = [f for f in changed if _TEST_FILE_RE.search(f.replace("\\", "/"))]
+    return changed, tests
+
+
 def run_gate(args: argparse.Namespace) -> tuple[str, list[CheckResult]]:
     slice_folder = str(Path(args.slice).resolve())
     worktree = str(Path(args.worktree).resolve())
-    cwd = Path(worktree) if Path(worktree).is_dir() else Path.cwd()
+    # Guard IN THE SCRIPT, not just the SKILL's bash prose: a nonexistent worktree used
+    # to silently fall back to cwd — a green gate that audited the WRONG tree. main()
+    # validates before calling here; this assert is the belt for direct API callers.
+    if not Path(worktree).is_dir():
+        raise ValueError(f"--worktree {worktree!r} is not a directory — refusing to "
+                         f"audit anything else (no cwd fallback)")
+    cwd = Path(worktree)
     results: list[CheckResult] = []
 
     # WT-ROOT-1
@@ -244,6 +292,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="files this slice changed (for BC-1)")
     parser.add_argument("--changed-test-files", nargs="*", default=[],
                         help="changed test files (for LINT-MOCK; skipped if empty)")
+    parser.add_argument("--changed-from-git", default=None, metavar="BASE",
+                        help="derive --changed-files/--changed-test-files INSIDE the gate: "
+                             "git diff --name-only BASE + untracked, run in --worktree "
+                             "(mutually exclusive with passing the lists explicitly)")
     parser.add_argument("--ack-critical", default="",
                         help="attested BC-1 Critical-rule ids (comma/space list)")
     parser.add_argument("--seam-allowlist", default=None,
@@ -255,7 +307,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="emit JSON verdict")
     args = parser.parse_args(argv)
 
-    gate, results = run_gate(args)
+    wt = Path(args.worktree).resolve()
+    if not wt.is_dir():
+        sys.stderr.write(
+            f"pre_finish_gate: --worktree {args.worktree!r} does not exist or is not a "
+            f"directory — refusing to run the gate (no cwd fallback: a silent main-tree "
+            f"audit is a green gate on the WRONG tree).\n")
+        return 2
+
+    if args.changed_from_git:
+        if args.changed_files or args.changed_test_files:
+            sys.stderr.write(
+                "pre_finish_gate: --changed-from-git is mutually exclusive with "
+                "--changed-files/--changed-test-files — pass one or the other.\n")
+            return 2
+        try:
+            args.changed_files, args.changed_test_files = _derive_changed(
+                wt, args.changed_from_git)
+        except ValueError as exc:
+            sys.stderr.write(f"pre_finish_gate: {exc}\n")
+            return 2
+
+    try:
+        gate, results = run_gate(args)
+    except ValueError as exc:
+        sys.stderr.write(f"pre_finish_gate: {exc}\n")
+        return 2
 
     if args.json:
         print(json.dumps({

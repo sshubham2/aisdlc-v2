@@ -26,6 +26,7 @@ accepted iff it lands under the root, a ``..``-escape is a usage error):
       stdout as a pretty JSON list.
 
   append  --file F [--array A] (--json S | --content-file C | --stdin) [--allow-duplicate]
+          [--unique-key K ...]
       SVW-1 LOCKED read-modify-write: append the element to array ``A`` (auto-
       detected when the doc has exactly one list field). A list element EXTENDS;
       an object/scalar APPENDS. Creates the file/array when absent.
@@ -36,6 +37,28 @@ accepted iff it lands under the root, a ``..``-escape is a usage error):
       "array":…,"count":…}`` line on stdout (a normal append prints nothing to stdout)
       + a ``DUPLICATE_SUPPRESSED`` note on stderr. ``--json``/``--content-file`` are
       never deduped; ``--allow-duplicate`` forces a genuine immediate duplicate through.
+      UNIQUE-KEY guard: each repeatable ``--unique-key K`` names a payload field; if an
+      existing element matches the payload on ALL named keys, the append is REFUSED
+      (exit 2, fail-visible) — the mechanical dedup for keyed overlays (e.g. one
+      gate_skips entry per target_gate). Dict payloads only.
+
+  remove  --file F --array A --id ID [--id-key K]
+      SVW-1 LOCKED read-modify-write: remove EXACTLY ONE element of ``A`` whose
+      ``--id-key`` (default ``id``) == ``ID``. Fail-visible when no such element
+      exists. REFUSED on a managed-kind array (candidates/shippability rows have
+      their own lifecycle — archive-move, never in-place delete). This is the wired
+      mechanism for retiring an overlay element (e.g. a FALSE-ALARM active_check).
+
+  set     --file F --path .a.b.c (--json S | --value V)
+      SVW-1 LOCKED read-modify-write: set the value at the dotted ``--path``
+      (``[N]`` index segments must already exist; missing intermediate OBJECT keys
+      are created, mkdir -p style; traversing through a non-object is refused).
+      ``--json`` parses strictly; ``--value`` parses as JSON, else a string. This
+      is the wired mechanism for a nested-field mutation on a NON-array target —
+      e.g. /validate-slice's main-thread deferral write
+      (``--path .shippability_regression.deferral``). Refused when the path's
+      first segment is a managed array of this file (managed rows mutate only via
+      update/append — ids stay allocator-minted).
 
   update  --file F --array A --id ID [--id-key K] [--assumption AID]
           (--set k=v ...) [--append FIELD JSON ...]
@@ -108,6 +131,13 @@ _JSON_DUMP = {"indent": 2, "ensure_ascii": False, "sort_keys": False}
 _MANAGED_KIND = {
     ("candidates.json", "candidates"): "sc",
     ("shippability.json", "rows"): "ship",
+    # review sweep 2026-07: /reflect's BC-PROJ promotion used to hand-mint the id against
+    # this file's own conventions (two parallel reflects could collide) — now allocator-minted.
+    ("build-checks.json", "rules"): "bc",
+    # NOTE (review sweep 2026-07, /user-test pass): risk-register risks[] deliberately does
+    # NOT mint-on-append — risk appenders cross-reference the new R-N (e.g. a candidate's
+    # source ref), so they PRE-mint via `alloc --kind r` and carry the id in the payload
+    # (the cc/cn/gs pattern), which mint-on-append would reject.
 }
 
 # slice-050 / SC-041 (ADR-040 + ADR-043): the bounded, --stdin-scoped duplicate-append guard.
@@ -383,6 +413,24 @@ def _cmd_append(args: argparse.Namespace) -> int:
         arr = data.setdefault(key, [])
         if not isinstance(arr, list):
             raise ValueError(f"target field {key!r} is not a JSON array")
+        # --unique-key guard (keyed-overlay dedup): refuse the append when an existing
+        # element matches the payload on ALL named keys. Fail-VISIBLE (exit 2), never a
+        # silent no-op — the caller should update/remove the existing element instead.
+        if getattr(args, "unique_key", None):
+            if not isinstance(element, dict):
+                raise ValueError("--unique-key requires a single JSON-object payload "
+                                 "(append one element at a time)")
+            missing = [k for k in args.unique_key if k not in element]
+            if missing:
+                raise ValueError(f"--unique-key field(s) missing from the payload: "
+                                 f"{', '.join(missing)}")
+            clash = next((e for e in arr if isinstance(e, dict)
+                          and all(e.get(k) == element.get(k) for k in args.unique_key)), None)
+            if clash is not None:
+                keys = ", ".join(f"{k}={element.get(k)!r}" for k in args.unique_key)
+                raise ValueError(
+                    f"append --unique-key conflict: {key!r} already has an element with "
+                    f"{keys} — update or remove it instead of appending a duplicate")
         # slice-019 / AC2: a managed-kind array (candidates -> SC, rows -> SHIP) mints its id
         # IN-LOCK and REJECTS any caller-supplied id (the no-explicit-PK guard). The seed floor is
         # computed once from live ∪ archive; the persisted counter is authoritative thereafter.
@@ -485,6 +533,112 @@ def _cmd_update(args: argparse.Namespace) -> int:
             if not isinstance(lst, list):
                 raise ValueError(f"--append target {field!r} is not a JSON array")
             lst.append(elem)
+        return _dump(data)
+
+    return _run_mutate(target, mutate)
+
+
+def _cmd_remove(args: argparse.Namespace) -> int:
+    """Remove EXACTLY ONE element by id — the wired 'retire' mechanism for overlay
+    arrays (e.g. a FALSE-ALARM active_check in critic-calibration-log.json). Managed
+    arrays refuse: candidate/shippability rows are moved to archive, never deleted."""
+    try:
+        target = _resolve_in_vault(_root(args), args.file)
+    except ValueError as exc:
+        _err(str(exc)); return 2
+
+    def mutate(text: str) -> str:
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{target} is not valid JSON: {exc}") from exc
+        arr = data.get(args.array) if isinstance(data, dict) else None
+        if not isinstance(arr, list):
+            raise ValueError(f"{args.array!r} is not a JSON array in {target}")
+        if _managed_kind_for(_root(args), target, args.array) is not None:
+            rel = _vault_rel_key(_root(args), target)
+            raise ValueError(
+                f"vault_edit remove: refusing to delete from the managed {rel}/{args.array} "
+                f"array — managed records have their own lifecycle (archive-move on "
+                f"ship/reject), never an in-place delete.")
+        rec = _find_by_id(arr, args.id, id_key=args.id_key)
+        if rec is None:
+            raise ValueError(
+                f"no {args.array} record with {args.id_key}={args.id!r} to remove "
+                f"(fail-visible per R-7; nothing was changed)")
+        arr.remove(rec)
+        return _dump(data)
+
+    return _run_mutate(target, mutate)
+
+
+def _cmd_set(args: argparse.Namespace) -> int:
+    """Set a nested value at a dotted --path — the wired mechanism for non-array
+    field mutations (e.g. validation.json's shippability_regression.deferral)."""
+    try:
+        target = _resolve_in_vault(_root(args), args.file)
+    except ValueError as exc:
+        _err(str(exc)); return 2
+    if args.json is not None:
+        try:
+            value = json.loads(args.json)
+        except json.JSONDecodeError as exc:
+            _err(f"--json is not valid JSON: {exc}"); return 2
+    else:
+        value = _set_value(args.value)
+
+    p = (args.path or "").strip()
+    if p.startswith("."):
+        p = p[1:]
+    segs: list[tuple[str, str | None]] = []
+    for raw in p.split(".") if p else []:
+        m = _SEG.match(raw)
+        if not m:
+            _err(f"set: bad --path segment {raw!r}"); return 2
+        segs.append((m.group(1), m.group(2)))
+    if not segs:
+        _err("set: --path must name at least one key (e.g. .shippability_regression.deferral)")
+        return 2
+
+    def mutate(text: str) -> str:
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{target} is not valid JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"{target} top-level is not a JSON object")
+        if _managed_kind_for(_root(args), target, segs[0][0]) is not None:
+            rel = _vault_rel_key(_root(args), target)
+            raise ValueError(
+                f"vault_edit set: refusing --path into the managed {rel}/{segs[0][0]} "
+                f"array — managed rows mutate only via update/append (ids stay "
+                f"allocator-minted).")
+        cur: Any = data
+        for i, (key, idx) in enumerate(segs):
+            last = i == len(segs) - 1
+            if not isinstance(cur, dict):
+                raise ValueError(f"set: cannot descend into {key!r} — parent is not a JSON object")
+            if idx is None:
+                if last:
+                    cur[key] = value
+                else:
+                    nxt = cur.get(key)
+                    if nxt is None:
+                        nxt = cur[key] = {}  # create missing intermediate OBJECTS only
+                    cur = nxt
+            else:
+                lst = cur.get(key)
+                if not isinstance(lst, list):
+                    raise ValueError(f"set: {key!r} is not a JSON array (needed for [{idx}])")
+                n = int(idx)
+                if n >= len(lst):
+                    raise ValueError(
+                        f"set: index [{n}] out of range for {key!r} (len {len(lst)}) — "
+                        f"list slots are never created, only objects")
+                if last:
+                    lst[n] = value
+                else:
+                    cur = lst[n]
         return _dump(data)
 
     return _run_mutate(target, mutate)
@@ -631,8 +785,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="vault_edit",
         description="v2 JSON-native vault-write CLI (SVW-1): read/get/query/append/"
-                    "update/rewrite/move/list/count under VAULT_ROOT via the "
-                    "_vault_write lock (R-32).",
+                    "remove/update/rewrite/move/list/count/alloc under VAULT_ROOT via "
+                    "the _vault_write lock (R-32).",
     )
     p.add_argument(
         "--vault", default=None,
@@ -665,6 +819,29 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--allow-duplicate", action="store_true",
                     help="bypass the bounded --stdin duplicate guard (force a genuine "
                          "immediate duplicate through; SC-041 / ADR-043)")
+    ap.add_argument("--unique-key", action="append", metavar="KEY",
+                    help="refuse the append (exit 2) when an existing element matches the "
+                         "payload on ALL named keys (repeatable; keyed-overlay dedup, e.g. "
+                         "one gate_skips entry per target_gate)")
+
+    rm = sub.add_parser("remove", parents=[common],
+                        help="SVW-1 locked one-element removal by id (retire an overlay "
+                             "element; refused on managed arrays)")
+    rm.add_argument("--file", required=True)
+    rm.add_argument("--array", required=True)
+    rm.add_argument("--id", required=True)
+    rm.add_argument("--id-key", default="id", help="match key (default: id)")
+
+    st = sub.add_parser("set", parents=[common],
+                        help="SVW-1 locked nested-path set (e.g. --path "
+                             ".shippability_regression.deferral)")
+    st.add_argument("--file", required=True)
+    st.add_argument("--path", required=True,
+                    help="dotted path, e.g. .shippability_regression.deferral or .a.b[0].c "
+                         "([N] must exist; missing intermediate object keys are created)")
+    gst = st.add_mutually_exclusive_group(required=True)
+    gst.add_argument("--json", default=None, help="the value as strict JSON")
+    gst.add_argument("--value", default=None, help="the value (parsed as JSON, else a string)")
 
     up = sub.add_parser("update", parents=[common], help="SVW-1 locked record update")
     up.add_argument("--file", required=True)
@@ -700,19 +877,24 @@ def _build_parser() -> argparse.ArgumentParser:
     ac = sub.add_parser("alloc", parents=[common],
                         help="mint the next id of --kind in-lock (bumps counters), print it")
     ac.add_argument("--file", required=True)
-    ac.add_argument("--kind", required=True, choices=["adr"],
-                    help="managed id kind to mint OUT-OF-ARRAY via this CLI — only 'adr' is wired "
-                         "(ADR files are raw-written one-per-id under decisions/). sc/ship/slice are "
-                         "minted in-lock by their own append/claim path and must NEVER be alloc'd here "
-                         "(slice-019/CR2: alloc --kind slice would burn a slice number out of band)")
+    ac.add_argument("--kind", required=True, choices=["adr", "cc", "cn", "gs", "r"],
+                    help="managed id kind to mint OUT-OF-ARRAY via this CLI: 'adr' (ADR files are "
+                         "raw-written one-per-id under decisions/), the calibration-overlay kinds "
+                         "'cc'/'cn'/'gs' (CC-/CN-/GS- ids for critic-calibration-log.json — minted "
+                         "here, then carried in the append payload), and 'r' (R-N risk ids for "
+                         "risk-register.json — pre-minted so the appender can cross-reference the new "
+                         "risk; replaces the collision-prone model-minted 'next R-NN'). sc/ship/slice "
+                         "are minted in-lock "
+                         "by their own append/claim path and must NEVER be alloc'd here (slice-019/CR2: "
+                         "alloc --kind slice would burn a slice number out of band)")
 
     return p
 
 
 _DISPATCH = {
     "read": _cmd_read, "get": _cmd_get, "query": _cmd_query, "append": _cmd_append,
-    "update": _cmd_update, "rewrite": _cmd_rewrite, "move": _cmd_move,
-    "list": _cmd_list, "count": _cmd_count, "alloc": _cmd_alloc,
+    "remove": _cmd_remove, "set": _cmd_set, "update": _cmd_update, "rewrite": _cmd_rewrite,
+    "move": _cmd_move, "list": _cmd_list, "count": _cmd_count, "alloc": _cmd_alloc,
 }
 
 

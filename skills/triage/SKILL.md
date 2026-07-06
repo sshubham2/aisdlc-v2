@@ -56,7 +56,13 @@ test -n "$PY" && test -f "$PY"                          && echo "venv: OK"   || 
 "${CRG:-code-review-graph}" --version >/dev/null 2>&1   && echo "crg: OK"    || echo "crg: MISSING (optional)"
 test -f "${CLAUDE_SKILL_DIR}/../../agents/critique.md"  && echo "agents: OK" || echo "agents: MISSING"
 test -f "${CLAUDE_SKILL_DIR}/../slice/SKILL.md"         && echo "skills: OK" || echo "skills: MISSING"
+# Greenfield-guard probe (evidence, not vibes): LOC of tracked source files. >500 -> route to /adopt.
+loc=$(git ls-files -- '*.py' '*.ts' '*.tsx' '*.js' '*.jsx' '*.go' '*.java' '*.rb' '*.rs' '*.c' '*.cpp' '*.cs' '*.php' '*.swift' '*.kt' 2>/dev/null | tr '\n' '\0' | xargs -0 -r cat 2>/dev/null | wc -l)
+echo "existing tracked source LOC: ${loc:-0}"
 ```
+
+If the LOC probe reports **>500**, STOP and suggest `/adopt` instead (the Critical-rules greenfield guard,
+now measured rather than guessed; a non-git dir reports 0 and proceeds — Step 0.5 handles git).
 
 If `venv`, `agents`, or `skills` are MISSING — **STOP**. Tell the user the prerequisite is missing and point
 them to the install docs. Do NOT proceed with missing prerequisites.
@@ -106,11 +112,17 @@ Re-evaluate FRESH vs RE_TRIAGE (Step 1) against THIS re-resolved `$VAULT`, not t
 
 ## Step 1 — Detect re-triage
 
-If the injected `triage.json` is NOT `"NOT_FOUND"`: this is a **re-triage**. Read the existing mode and
-risks. Ask: "What changed? Does this require a mode change?" Only update what's different; append a new
-`history` entry. Skip Step 2 mode logic if mode is unchanged.
+Branch on the UX-2 injection's three-state signal (or the Step-0.5 B1 re-resolution when `git init` just ran —
+that value supersedes the load-time injection):
 
-If `"NOT_FOUND"`: fresh project — continue to Step 2.
+- **`RE_TRIAGE (…)`** → this is a **re-triage**. Read the existing mode and risks (the injection printed
+  `triage.json`). Ask: "What changed? Does this require a mode change?" Only update what's different; append a
+  new `history` entry (Step 5a re-triage path). Skip Step 2 mode logic if mode is unchanged.
+- **`FRESH (…)`** → genuinely new project — continue to Step 2.
+- **`VAULT_UNRESOLVED`** → you already STOPped at the UX-2 rule above (never guess; point at `/ai-sdlc:setup`).
+
+(There is no `"NOT_FOUND"` sentinel anymore — that was the pre-3.19.7 bare-`cat` behavior whose false-fresh
+signal caused the data-loss incident the UX-2 block documents.)
 
 ## Step 2 — Parse explicit mode argument
 
@@ -183,15 +195,13 @@ From the conversation, identify risks. For each risk tag reversibility:
 
 Compute score = likelihood × impact (low=1 / med=2 / high=3 → 1..9).
 Band: 1–2 = low, 3–4 = medium, 6–9 = high.
+(`risk_register_audit.py` is the ENFORCEMENT authority for this rubric — the restatement here is orientation
+for writing correct values; if this prose and the audit ever disagree, the audit wins.)
 
 For each HIGH-band risk, decide whether a `/risk-spike` is warranted; note it in `mitigation`.
 
-After writing, validate with:
-```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py"
-```
-Exit 0 = scores/bands/statuses are valid. Non-zero = fix the flagged entries and re-run before continuing
-(score must equal likelihood×impact; band must match; status/id/required-fields must be well-formed).
+(The register is validated by the audit at the END of Step 5a, after the file is actually written —
+not here; there is nothing on disk to audit yet.)
 
 ## Step 5 — Write vault skeleton
 
@@ -227,8 +237,17 @@ have: `id`, `title`, `likelihood`, `impact`, `status`, `reversibility`, `score`,
 or the audit will reject. These are project-open single-shot writes (no parallel-append hazard).
 
 On **re-triage**: append a new `history` entry to `triage.json` via
-`$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" --file triage.json --array history --json '<entry>'`.
-Update `risk-register.json` via `scripts.lib.vault_edit update --file risk-register.json --array risks --id <R-NN> --set ...` (or `append` for a new risk) for any changed/new risks.
+`$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file triage.json --array history --json '<entry>'`
+(no `--vault` flag — 4.6.1: the env var is not exported; `vault_edit` resolves internally at call time, which
+equals the B1 post-init re-resolution).
+Update `risk-register.json` via `scripts.lib.vault_edit update --file risk-register.json --array risks --id <R-NN> --set ...` (or `append` for a new risk — pre-mint its id via `vault_edit alloc --file risk-register.json --kind r`, never model-mint "next R-NN") for any changed/new risks.
+
+**Validate the register (moved here from Step 4 — it audits the file you JUST wrote):**
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py"
+```
+Exit 0 = scores/bands/statuses are valid. Non-zero = fix the flagged entries and re-run before continuing
+(score must equal likelihood×impact; band must match; status/id/required-fields must be well-formed).
 
 **Pin the vault (4.7, FRESH only).** After the FRESH writes, record the tier-2 git-common-dir pin so a later
 repo move/rename does NOT orphan this vault (the pin survives a rename; `_vault_paths` reads it at tier 2).
@@ -353,7 +372,9 @@ its assumptions.
 2. `/heavy-architect` (comprehensive upfront vault: components, contracts, threat model, cost)
 3. `/user-test` if B2C
 4. `/slice` to start the build loop
-5. Periodic: `/sync` every 5–10 slices; `/reduce` every 5 slices
+5. Periodic: `/sync` every 5–10 slices; `/reduce` every 5 slices — also STAMP these into `triage.json` as
+   `"cadences": {"sync_every_slices": "5-10", "reduce_every_slices": 5}` (this checklist is otherwise the only
+   place the cadences exist; the stamp lets `/pulse` nag from data instead of prose)
 
 Remind: "I created/updated `./CLAUDE.md` (~20 lines) with the hard rule and vault discipline. It keeps
 me on the pipeline across sessions. If you ever want me to bypass, say so explicitly."

@@ -4,6 +4,7 @@
   "runs": [
     {
       "at": "<ts>",
+      "mode": "full",
       "regenerated": [
         "components/orders.json",
         "contracts/webhook.json"
@@ -14,7 +15,14 @@
           "reality": "only simple case retired",
           "action": "updated risk-register"
         }
-      ]
+      ],
+      "csp1": {
+        "violations": 1,
+        "resolved": 1,
+        "kinds": [
+          "missing-ref"
+        ]
+      }
     }
   ]
 }

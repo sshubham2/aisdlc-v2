@@ -14,9 +14,13 @@ The cure for spec rot: structured vault updates at every slice boundary so the v
 > SVW-1: shared aggregate files (`risk-register.json`, `lessons-learned.json`, `shippability.json`,
 > `build-checks.json`, `_index.json`) mutate ONLY through `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py"` (append or CAS-rewrite).
 > NEVER raw-Write or Edit these files directly.
-> **Scratch files**: every `--out-file` / `--content-file` below (`base.bin`, `edited.json`, `lesson-entry.json`,
-> `bc-rule.json`, `ship-row.json`, `regen.json`, …) goes in a TEMP dir — `T="$(mktemp -d)"` then `"$T/base.bin"`
-> etc., `rm -rf "$T"` when done — NEVER in the project CWD (one `git add -A` away from being committed).
+> **Scratch files**: every `--out-file` / `--content-file` below (`base.bin`, `lesson-entry.json`,
+> `bc-rule.json`, `ship-row.json`, …) goes in a PORTABLE temp dir, re-derived per bash block (vars don't
+> persist): `TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')"` then
+> `T="$(mktemp -d "$TMPD/aisdlc-reflect.XXXXXX")"`, use `"$T/<file>"`, `rm -rf "$T"` when done.
+> **NEVER a bare `mktemp -d`** — on Windows git-bash it returns `/tmp/…`, which the Windows-Python
+> `vault_edit` resolves as a nonexistent `C:\tmp\…` (the slice-063 incident) — and NEVER the project CWD
+> (one `git add -A` away from being committed). Step 6.2 shows the pattern in full.
 
 ## Step 0 — resolve the active slice (run this FIRST)
 
@@ -31,6 +35,9 @@ ARG="${ARGUMENTS[0]:-}"
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --json)"; else AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --json)"; fi   # SC-064: resolution moved from a `!`-injection to this BODY step so $ARG binds. No-arg keeps --repo-root . so the slice-014 exit-4 AMBIGUOUS HALT surfaces (NO 2>/dev/null); capturing into AS then emitting degrades it to a VISIBLE note, never a launch-abort.
 if printf '%s' "$AS" | grep -q 'by-id-archive'; then echo "(M3: $ARG is already shipped/archived -- /reflect runs on the ACTIVE slice, not an archived one; nothing to reflect.)"; else printf '%s\n' "$AS"; fi
 ```
+
+If the block printed the M3 archived note: **STOP here** — do not proceed to Step 1 against an archived folder
+(there is nothing to reflect; a re-run would double-append lessons/shippability rows).
 
 Read all of the following before proceeding (stop if `validation.json` is missing — run `/validate-slice` first):
 
@@ -68,16 +75,22 @@ Read all slice files above. Produce one finding per item; be honest, not promoti
 For each **Corrected** item:
 
 - **Decision wrong** → supersede: mark original ADR `status: superseded` + `superseded_by: ADR-NNN`; create new ADR with `supersedes: ADR-NNN`. Never edit original ADR content (append-only).
-- **Risk claim wrong** → CAS-rewrite `<vault>/risk-register.json`:
+- **Risk claim wrong** → one locked field update (retry-free; no CAS ladder needed for a per-risk field):
   ```bash
-  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read   --file risk-register.json --out-file base.bin
-  # edit a copy, then:
-  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file risk-register.json --base-file base.bin --content-file edited.json
-  # exit 3 = parallel write conflict → re-read + re-apply + retry (max 5, then STOP)
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --file risk-register.json \
+      --array risks --id <R-NN> --set status=<...> --set notes="<what reality showed>"
   ```
-  A **new** risk entry is an append, not a rewrite:
+  (A genuinely STRUCTURAL rewrite — reordering/removing risks — still uses the read → edit → `rewrite
+  --base-file` CAS path with exit-3 retry, scratch files under `$T/` per the preamble.)
+  A **new** risk entry is an append, not a rewrite — PRE-MINT its id in-lock (never model-mint
+  "next R-NN"; parallel slices collide on it):
   ```bash
-  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file risk-register.json --array risks --content-file new-risk.json
+  TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-reflect.XXXXXX")"
+  R="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --file risk-register.json --kind r)"
+  # (write the entry — with "id": "$R" — to "$T/new-risk.json", then:)
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file risk-register.json --array risks --content-file "$T/new-risk.json"
+  rm -rf "$T"
   ```
 - **Concept assumption wrong** → raw-Write `<vault>/concept.json` (created_by skill, single owner).
 - **Slice design wrong** → Edit `<vault>/slices/slice-NNN/design.json`; note the deviation in `build-log.json`.
@@ -103,7 +116,11 @@ For every finding in `critique.json`, score its outcome using build/validate evi
 | `NOT-YET` | Deferred; re-score in the future slice that addresses it |
 | `MISSED` | Surfaced during build/validate, absent from Critic findings entirely |
 
-Pattern observations feed `/critic-calibrate` every 10–20 slices.
+Pattern observations feed `/critic-calibrate` every 10–20 slices. **Record the verdicts STRUCTURED, not just
+prose**: write a `calibration[]` array into `reflection.json` (Step 4) — one `{"finding": "<id>", "verdict":
+"<VALIDATED|FALSE-ALARM|OVERRIDE-MISJUDGED|NOT-YET|MISSED>", "note": "<one line>"}` row per scored finding — so
+`/critic-calibrate` counts them without text-mining reflection prose (its 1h user-override signal reads exactly
+these rows).
 
 ---
 
@@ -129,14 +146,18 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" --kind miss \
 
 ## Step 4 — Write reflection.json
 
-Write `<vault>/slices/slice-NNN/reflection.json` (schema: `examples/reflection.json`).
+Write `<vault>/slices/slice-NNN/reflection.json` (schema: `examples/reflection.json`), including the Step-3
+structured `calibration[]` rows when the Critic ran (omit the array when the Critic was skipped).
 
 ---
 
 ## Step 5 — Append to lessons-learned.json (SVW-1)
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file lessons-learned.json --array entries --content-file lesson-entry.json
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-reflect.XXXXXX")"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file lessons-learned.json --array entries --content-file "$T/lesson-entry.json"
+rm -rf "$T"
 ```
 
 Schema by example: `examples/lessons-learned.json`. One entry per slice: `{ "slice", "at", "lesson" }`.
@@ -152,11 +173,17 @@ Ask the user:
 > Promote: "Image uploads need EXIF orientation normalization" — third time this slice hit it.
 > Do NOT promote: one-off typo fixes, library version bumps, endpoint-specific bugs.
 
-If yes, gather: **title** (imperative), **severity** (`critical`/`important`), **applies_when** (glob or `always:true`), **rule** (actionable check), **rationale**, **validation_hint**. Assign next `BC-PROJ-NNN` id.
+If yes, gather: **title** (imperative), **severity** (`critical`/`important`), **applies_when** (glob or `always:true`), **rule** (actionable check), **rationale**, **validation_hint**. Build `bc-rule.json` **WITHOUT an `id`** —
+`build-checks.json`/`rules` is a MANAGED array (review sweep 2026-07): the allocator mints `BC-PROJ-N` in-lock and
+a caller-supplied id is rejected, so two parallel reflects can never collide on an id (the same slice-019/ADR-013
+convention as candidates/shippability).
 
 Append the rule to `<vault>/build-checks.json` under `rules[]` via:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file build-checks.json --array rules --content-file bc-rule.json
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-reflect.XXXXXX")"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file build-checks.json --array rules --content-file "$T/bc-rule.json"
+rm -rf "$T"
 ```
 Schema by example: `examples/build-checks.json`.
 
@@ -171,7 +198,10 @@ in CI against the plugin's own fixtures — it is NOT a per-project step and ref
 One critical-path test per slice: "If this slice silently broke later, what is THE one test that would catch it first?"
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file shippability.json --array rows --content-file ship-row.json
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-reflect.XXXXXX")"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file shippability.json --array rows --content-file "$T/ship-row.json"
+rm -rf "$T"
 ```
 
 Schema by example: `examples/shippability.json`. Build `ship-row.json` WITHOUT an `id` — the allocator mints `SHIP-NNN` in-lock (`vault_edit append` on `shippability.json`/`rows` rejects a supplied id). The `machine_cmd` must be runnable from project root; runtime < 10 s.
@@ -214,7 +244,7 @@ After `reflection.json` is written and `milestone.json` is complete:
    ```
    Refuses if `slices/archive/slice-NNN` already exists (no-overwrite).
 
-2. **Regenerate BOTH index files from the slice folders** (deterministic full recompute -> CAS-rewrite; ADR-020/SC-008). Step 1 already moved this slice into `slices/archive/`, so `slice_index_regen.py` picks it up automatically -- it drops out of `active[]` and joins the catalog. Do NOT hand-edit `active[]`/`recent[]`/`slices[]`; the generator is the single source of both indexes' SHAPE + CONTENT. Pass ONE `--updated` stamp to both emits (the only non-deterministic field -- keeps re-runs byte-identical):
+2. **Regenerate BOTH index files from the slice folders** (deterministic full recompute -> CAS-rewrite; ADR-020/SC-008; same regen + CAS recipe as `/archive` Step 3 -- a regen/CAS bug fixed here must be fixed there too). Step 1 already moved this slice into `slices/archive/`, so `slice_index_regen.py` picks it up automatically -- it drops out of `active[]` and joins the catalog. Do NOT hand-edit `active[]`/`recent[]`/`slices[]`; the generator is the single source of both indexes' SHAPE + CONTENT. Pass ONE `--updated` stamp to both emits (the only non-deterministic field -- keeps re-runs byte-identical):
    ```bash
    TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
    T="$(mktemp -d "$TMPD/aisdlc-reflect-idx.XXXXXX")"; TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -238,14 +268,14 @@ is **not `shipped` here; it is `validated`.** Set its status to `validated` in t
 `candidates.json`. `/commit-slice` is what marks it `shipped` and moves it to `archive/candidates.json` once the
 code actually lands (so a `shipped` candidate always means the code is committed — "shipped" means shipped).
 
-1. Read `<vault>/candidates.json`, find the candidate whose `slice` field matches `slice-NNN`.
-2. Set its `status` to `"validated"` via CAS-rewrite (do NOT archive it here):
-   ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file candidates.json --out-file base.bin
-   # set the matching candidate's status to "validated", then:
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file candidates.json --base-file base.bin --content-file updated.json
-   # exit 3 → re-read + re-apply + retry (max 5)
-   ```
+Set the matching candidate's `status` to `"validated"` in ONE locked, retry-free call — `--id-key slice`
+matches on the candidate's `slice` field (do NOT archive it here; no CAS read/rewrite ladder needed for a
+single-field update):
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update \
+    --file candidates.json --array candidates --id-key slice --id slice-NNN \
+    --set status=validated
+```
 
 Schema by example: `examples/slice-candidates.json`. (The `validated → shipped` move to
 `archive/candidates.json` happens at `/commit-slice`, after the commit lands.)
@@ -254,7 +284,11 @@ Schema by example: `examples/slice-candidates.json`. (The `validated → shipped
 
 ## Step 7 — Preview next-slice candidates
 
-Surface 2–3 top candidates from Discovered, Deferred, active high risks in `candidates.json`. Keep it brief — `/slice` does full scoring. Example:
+Run the SAME ranking `/slice` will show (consistency — don't hand-rank a miniature duplicate):
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../slice/scripts/candidates_top.py" --top 3
+```
+Present its output briefly, noting any entry that came from THIS slice's Discovered/Deferred items. Example:
 
 ```
 Next-slice candidates (preview — run /slice for full ranking):

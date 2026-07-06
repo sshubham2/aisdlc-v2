@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Render a slice's DESIGN TOURNAMENT into one self-contained tournament.html.
+"""Render a slice's DESIGN TOURNAMENT view — a LIVE LIBRARY for render_story.py, not dead code.
+
+Status (read this first): since slice-043 (ADR-030) this module's primary role is as the
+imported library `render_story.py` composes the tournament region from (`render_body()` +
+`scoped_css()`); its standalone CLI is retained only for back-compat + characterization
+tests. Details in the slice-043 paragraph below.
 
 slice-039. The design tournament (`/design-slice`) runs three blind designers and persists their FULL
 proposals verbatim to `<slice>/design-proposals.json`, but `design.json` keeps only a one-line summary +

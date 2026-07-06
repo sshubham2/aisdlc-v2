@@ -48,31 +48,50 @@ NOT the main tree (HEAD = default there → an empty diff). The build leaves cha
 # skill-LOAD before ${ARGUMENTS} binds (SC-064/ADR-022), so the named-from-main diff would target the wrong slice.
 # Run this block FIRST: it fetches the diff you review.
 repo_root="$(git rev-parse --show-toplevel)"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is NOT exported -- resolve per block
 ARG="${ARGUMENTS[0]:-}"
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --folder-only)"
 else
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
 wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
-paths=('src/**' 'skills/**' 'agents/**' 'scripts/**' 'tests/**')   # slice-056/ADR-050: a QUOTED bash array (elements quoted at assignment) expanded as "${paths[@]}" so git receives LITERAL pathspecs. The old unquoted `$paths` string was pathname-expanded by bash against the MAIN-tree cwd before git ran, silently dropping branch-only top-level files (e.g. tests/foo.py). NOT set -f (global noglob leaks on an early-abort path); NOT bare-dir (would change the pathspec strings).
 base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"   # SC-043: fork point vs the LOCAL integration branch (never origin/HEAD); always non-empty (HEAD fallback when no remote -- WT-ROOT-1)
-git -C "$wt" diff "$base" -- "${paths[@]}" 2>/dev/null | head -1200    # committed + uncommitted since fork (base is a ref or the HEAD fallback)
-git -C "$wt" ls-files --others --exclude-standard -- "${paths[@]}" 2>/dev/null | sed 's/^/NEW-UNTRACKED: /'
+# NO pathspec (review sweep 2026-07; supersedes the slice-056/ADR-050 quoted array): the old hardcoded
+# list ('src/**' 'skills/**' 'agents/**' 'scripts/**' 'tests/**') was THIS PLUGIN'S OWN layout -- on any
+# host project shaped differently (app/, lib/, packages/, cmd/, a Django root, ...) it produced an EMPTY
+# diff -> a confident false NO-CODE-CHANGES review of a slice that changed plenty. The worktree diff vs
+# the fork-point base IS the slice's change: .gitignore already excludes build noise and the vault lives
+# OUTSIDE the repo. No pathspec also retires the SC-087 pathname-expansion trap the array existed to dodge.
+git -C "$wt" diff "$base" 2>/dev/null | head -1200    # committed + uncommitted since fork (base is a ref or the HEAD fallback)
+d_lines=$(git -C "$wt" diff "$base" 2>/dev/null | wc -l)
+[ "$d_lines" -gt 1200 ] && echo "DIFF-TRUNCATED: showing 1200 of $d_lines diff lines -- reviewed input is PARTIAL; see the truncation rule below"
+git -C "$wt" ls-files --others --exclude-standard 2>/dev/null | sed 's/^/NEW-UNTRACKED: /'
 ```
 
-If the diff AND the untracked list are both empty → write a **schema-complete** `code-review.json` and stop. It
-MUST carry every required key, so the Step-4b self-check below and `/validate-slice`'s deterministic gate (ADR-033)
-never false-fail a legitimately empty review (M2):
+**If `DIFF-TRUNCATED` printed, the reviewed input was PARTIAL — never report full coverage over it.**
+List the changed files (`git -C "$wt" diff --name-only "$base"`), pull a targeted per-file diff
+(`git -C "$wt" diff "$base" -- <path>`) for every file whose hunks were cut, review those too, and set
+`"diff_truncated": true` as a top-level key in `code-review.json` so the artifact records that the input
+needed reassembly (absence of the key = the diff fit whole).
+
+If the diff AND the untracked list are both empty → **cross-check before concluding**: run
+`git -C "$wt" status --porcelain`. Non-empty status output means the diff pipeline is broken (wrong
+base/worktree resolution), NOT an empty slice — **STOP fail-visible** and surface the mismatch; do NOT
+write NO-CODE-CHANGES over it. Only when the status is ALSO clean, write a **schema-complete**
+`code-review.json` and stop. It MUST carry every required key, so the Step-4b self-check below and
+`/validate-slice`'s deterministic gate (ADR-033) never false-fail a legitimately empty review (M2):
 `{ "_schema":"aisdlc/code-review@1", "slice":"slice-NNN", "reviewed_by":"code-review agent", "result":"NO-CODE-CHANGES", "findings":[], "dimensions_checked":[], "triage":null }`.
 Read any `NEW-UNTRACKED:` files from `"$wt/<path>"` for review (new files aren't in `git diff`).
 
 ## Task
 1. Read the slice artifacts above.
-2. Review the diff along your **9 dimensions, in order**. Every finding cites `path/to/file:line`. A dimension with
+2. Review the diff along your **9 dimensions, in order** (their definitions live in `agents/code-review.md` —
+   your system prompt; do not re-derive them here). Every finding cites `path/to/file:line`. A dimension with
    nothing wrong gets an explicit "none: <reason>" — never manufacture findings.
-3. Optional code-graph cross-check: use the `code-review-graph` MCP tools (impact-radius / search) for blast-radius
-   and INFERRED edges the new code depends on.
+3. Optional code-graph cross-check: use the code-review-graph **MCP tools**
+   `mcp__code-review-graph__get_impact_radius_tool` / `mcp__code-review-graph__semantic_search_nodes_tool`
+   (CRG 2.3.x has no `impact-radius`/`search` CLI verb) for blast-radius and INFERRED edges the new code depends on.
 4. Write `<vault>/slices/slice-NNN-<name>/code-review.json` (schema by example: `examples/code-review.json`). Include `"triage": null` — the per-blocker dispositions are filled by the MAIN thread after you return (you are forked and cannot run the interactive disposition gate).
 4b. **Self-check the artifact you just wrote — in-fork BEST-EFFORT lint (ADR-033 / AC1).** Run the schema-by-example
    linter on the `code-review.json` you just wrote (source inspection at the producing station). This is
@@ -82,11 +101,12 @@ Read any `NEW-UNTRACKED:` files from `"$wt/<path>"` for review (new files aren't
    (at most twice); if it still violates, **surface the violations in your Return** — do NOT report a clean verdict.
    ```bash
    repo_root="$(git rev-parse --show-toplevel)"
+   VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per block
    ARG="${ARGUMENTS[0]:-}"
    if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
-     sf="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
+     sf="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"
    else
-     sf="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"
+     sf="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root "$repo_root" --path-only)"
    fi
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type code-review "$sf/code-review.json"; rc=$?
    # exit 0 = clean (proceed) · 1 = schema violation (fix the key + re-lint; surface in Return if still failing) · 2 = usage/tooling error (surface as a tool error, NOT a clean pass)
@@ -99,11 +119,18 @@ Read any `NEW-UNTRACKED:` files from `"$wt/<path>"` for review (new files aren't
 
 ```bash
 # verdict: no-code-changes | clean (0 findings) | findings (>=1); findings-count = blocker+major+minor
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+# Gold-standard append shape: derive VAULT (4.6.1) + --out/--content-file (never pipe+--stdin:
+# the double-apply-under-contention hazard), rc-checked fail-visible.
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-crv-row.XXXXXX")"
+"$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate code-review --slice <slice-NNN-name> \
-    --verdict <no-code-changes|clean|findings> --findings-count <N> \
-  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+    --verdict <no-code-changes|clean|findings> --findings-count <N> --out "$T/row.json" \
+  && "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$VAULT" --file gate-log.json --array entries --content-file "$T/row.json"; rc=$?
+[ "$rc" = 0 ] || echo "STOP: code-review gate-row append failed (rc=$rc) -- surface, never fire-and-forget (must-not-defer)" >&2
+rm -rf "$T"
 ```
 
 ## Return

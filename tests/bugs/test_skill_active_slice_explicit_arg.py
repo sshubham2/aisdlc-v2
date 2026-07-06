@@ -75,7 +75,10 @@ RE_GUARD = re.compile(r'\[\s*-n\s*' + _ARG + r'\s*\]|grep\s+-q[A-Za-z]*\s+\S*\^?
 # `active_slice.py` (e.g. risk-spike:240, reflect:191) never matches (the M1/slice-031 lesson). `(?:_brief)?`
 # also matches active_slice_brief.py (design-slice's exit-0 resolver).
 RE_INV = re.compile(r"scripts/lib/active_slice(?:_brief)?\.py")
-RE_TOKEN_SCAN = re.compile(r"for\s+\w+\s+in\s+\$ARGUMENTS")
+# The scan must use the array-safe idiom ${ARGUMENTS[@]} (unquoted): it iterates every
+# element under an ARRAY binding AND word-splits under a SCALAR binding. Bare $ARGUMENTS
+# sees only element 0 of an array — the exact case the scan exists for (review sweep 2026-07).
+RE_TOKEN_SCAN = re.compile(r"for\s+\w+\s+in\s+\$\{ARGUMENTS\[@\]\}")
 RE_ARG_HINT = re.compile(r"^argument-hint:.*slice", re.MULTILINE | re.IGNORECASE)
 
 FENCE = re.compile(r"^\s*```(.*)$")                        # opening/closing fence; group(1) = info string
@@ -212,25 +215,35 @@ def test_exit4_repo_root_fallback_body_sited(skill: str) -> None:
 
 
 def test_slice_story_write_target_block_has_no_repo_root() -> None:
-    """M2 (slice-034 code-review): slice-story's WRITE-TARGET resolver — the archive-aware `--slice` block that
-    assigns TARGET (used for the /commit-slice on-ship auto-emit, which can target an ALREADY-ARCHIVED slice) —
-    must NEVER gain a `--repo-root .` fallback. resolve_active_slice (--repo-root) EXCLUDES archive/, so
-    --repo-root there would silently break the archived on-ship path; the no-arg authority is the Step-0
-    active_slice_dir. (The SEPARATE Step-0 section-select block legitimately uses --repo-root for the no-arg
-    ACTIVE slice — this guard targets ONLY the TARGET= write-target block, closing the M2 regression hole.)"""
-    target_blocks = [b for b in _blocks("slice-story")
-                     if b["phase"] == "body" and "TARGET=" in b["text"] and RE_SLICE_ARG.search(b["text"])]
-    assert target_blocks, ("slice-story has no archive-aware write-target body block (a TARGET= bash body "
-                           "threading --slice \"$ARG\") — the M2 carve-out cannot be checked.")
-    for b in target_blocks:
-        # Strip inline bash comments first — the block's own comment literally says "NEVER --repo-root"
-        # (documentation, not a flag); no `#` appears inside the resolution literals, so this is safe.
+    """M2 (slice-034 code-review; RE-ANCHORED after the 2026-07 review sweep merged the separate
+    Step-0b TARGET= block into the single Step-0 resolver — one authoritative <target-slice>, no
+    precedence rule for the model to remember): the EXPLICIT-arg branch of slice-story's target
+    resolution must thread the archive-aware `--slice "$ARG"` and must NEVER carry a `--repo-root`
+    fallback — `--repo-root` EXCLUDES archive/, silently breaking the /commit-slice on-ship
+    auto-emit against an already-archived slice. The no-arg (else) branch legitimately uses
+    `--repo-root` (the ACTIVE-slice authority), so the guard checks at BRANCH granularity."""
+    resolver_blocks = [b for b in _blocks("slice-story")
+                       if b["phase"] == "body" and RE_SLICE_ARG.search(b["text"])]
+    assert resolver_blocks, ("slice-story has no body block threading --slice \"$ARG\" — the M2 "
+                             "archive-aware target resolution cannot be checked.")
+    checked = 0
+    for b in resolver_blocks:
+        # Strip inline bash comments first — prose comments may mention --repo-root as documentation.
         code = "\n".join(ln.split("#", 1)[0] for ln in b["text"].splitlines())
-        assert not RE_REPO_ROOT.search(code), (
-            f"slice-story's write-target block (line {b['start']}) carries an actual --repo-root flag — that "
-            f"EXCLUDES archive/, breaking the /commit-slice on-ship auto-emit on an already-archived slice (M2). "
-            f"Keep archive-aware --slice; the no-arg authority is the Step-0 active_slice_dir."
-        )
+        for m in re.finditer(
+                r'if\s+\[\s*-n\s*"\$ARG"\s*\];\s*then(?P<then>.*?)(?:;\s*else(?P<els>.*?))?;?\s*fi',
+                code, re.DOTALL):
+            then_part = m.group("then") or ""
+            if not RE_SLICE_ARG.search(then_part):
+                continue
+            checked += 1
+            assert not RE_REPO_ROOT.search(then_part), (
+                f"slice-story resolver (block at line {b['start']}): the EXPLICIT-arg branch carries "
+                f"--repo-root — that EXCLUDES archive/, breaking the /commit-slice on-ship auto-emit "
+                f"on an already-archived slice (M2). The arg branch must resolve via --slice only."
+            )
+    assert checked, ("slice-story: no guarded `if [ -n \"$ARG\" ]` branch threading --slice \"$ARG\" "
+                     "was found — the archive-aware explicit-arg resolution is missing.")
 
 
 def test_critique_review_resolver_precedes_agent_spawn() -> None:
@@ -255,10 +268,12 @@ def test_critique_review_resolver_precedes_agent_spawn() -> None:
 @pytest.mark.parametrize("skill", SCAN_REQUIRED)
 def test_skill_scans_positionals_for_slice_id(skill: str) -> None:
     """m2 (slice-031): risk-spike's slice id can appear at any positional (arg0 is often --mode), so its
-    guard must derive ARG by SCANNING $ARGUMENTS, not ${ARGUMENTS[0]} alone."""
+    guard must derive ARG by SCANNING the argument list — with the array-safe unquoted
+    ${ARGUMENTS[@]} (bare $ARGUMENTS scans only element 0 under an array binding)."""
     assert RE_TOKEN_SCAN.search(_read(skill)), (
-        f"{skill}/SKILL.md must derive the explicit slice arg by SCANNING $ARGUMENTS "
-        f"(for a in $ARGUMENTS ...), not ${{ARGUMENTS[0]}} alone -- a flag may precede the slice id."
+        f"{skill}/SKILL.md must derive the explicit slice arg by SCANNING the args "
+        f"(for a in ${{ARGUMENTS[@]}} ...), not ${{ARGUMENTS[0]}} or bare $ARGUMENTS -- "
+        f"a flag may precede the slice id, and an array binding hides tokens past element 0."
     )
 
 

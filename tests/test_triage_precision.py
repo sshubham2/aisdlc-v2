@@ -174,3 +174,76 @@ def test_gate_precision_recall_all_legacy_is_unknown_not_zero():
     r = gate_precision_recall(entries, "critique-review")
     assert r["runs"] == 2
     assert r["precision"] is None   # UNKNOWN — never reported as 0
+
+
+# ---- gate_summary: the bounded whole-file aggregation /pulse consumes (2026-07 review sweep) ----
+
+def _summary_entries():
+    return [
+        {"gate": "risk-spike", "slice": "slice-050", "verdict": "go", "findings_count": 0,
+         "reality_contact": "high", "cross_domain": True},
+        {"gate": "risk-spike", "slice": "slice-051", "verdict": "no-go", "findings_count": 1,
+         "reality_contact": "high", "cross_domain": True},
+        {"gate": "validate-slice", "slice": "slice-050", "verdict": "pass", "findings_count": 0,
+         "reality_contact": "high", "reality_proxy": "simulator"},
+        {"gate": "critique", "slice": "slice-050", "verdict": "clean", "findings_count": 0,
+         "reality_contact": "low"},
+        {"gate": "critique", "slice": "slice-051", "verdict": "needs-fixes", "findings_count": 3,
+         "findings_real": 2, "findings_noise": 1, "reality_contact": "low"},
+        {"gate": "critique", "slice": "slice-051", "kind": "miss", "severity": "major",
+         "caught_by": "validate-slice"},
+        {"gate": "design-tournament", "slice": "slice-050", "approach_divergence": "overlapping"},
+        {"gate": "design-tournament", "slice": "slice-051", "approach_divergence": "identical"},
+    ]
+
+
+def test_gate_summary_orders_by_reality_contact_and_excludes_informational():
+    from scripts.lib.triage_precision import gate_summary
+    s = gate_summary(_summary_entries())
+    names = [g["gate"] for g in s["gates"]]
+    assert "design-tournament" not in names          # informational — never in the quiet math
+    assert names.index("risk-spike") < names.index("critique")   # high before low
+    crit = next(g for g in s["gates"] if g["gate"] == "critique")
+    assert crit["runs"] == 2 and crit["misses"] == 1
+    assert crit["last"] == {"verdict": "needs-fixes", "slice": "slice-051"}
+    assert s["design_tournament"] == {"runs": 2,
+                                      "divergence": {"overlapping": 1, "identical": 1}}
+
+
+def test_gate_summary_cross_domain_reality_pass_class_only():
+    from scripts.lib.triage_precision import gate_summary
+    s = gate_summary(_summary_entries())
+    # two cross_domain rows at high contact: go (held) + no-go (not held)
+    assert s["cross_domain"] == {"held": 1, "total": 2}
+
+
+def test_gate_summary_slice_rows_match_canonical_prefix():
+    from scripts.lib.triage_precision import gate_summary
+    entries = _summary_entries()
+    entries.append({"gate": "code-review", "slice": "slice-050-some-name", "verdict": "clean",
+                    "findings_count": 0, "reality_contact": "low"})
+    s = gate_summary(entries, slice_id="slice-050")
+    gates = sorted(r["gate"] for r in s["slice_rows"])
+    # folder-form slice id folds onto the canonical row set
+    assert gates == ["code-review", "critique", "design-tournament", "risk-spike",
+                     "validate-slice"]
+    vs = next(r for r in s["slice_rows"] if r["gate"] == "validate-slice")
+    assert vs["reality_proxy"] == "simulator"        # proxies survive into the compact rows
+
+
+def test_gate_summary_recent_is_capped_and_newest_first():
+    from scripts.lib.triage_precision import gate_summary
+    s = gate_summary(_summary_entries(), recent=3)
+    assert len(s["recent"]) == 3
+    assert s["recent"][0]["gate"] == "design-tournament"   # last appended row comes first
+    assert s["total_entries"] == 8
+
+
+def test_gate_summary_quiet_flag_needs_five_runs_and_zero_raised():
+    from scripts.lib.triage_precision import gate_summary
+    entries = [{"gate": "drift-check", "slice": f"slice-{i:03d}", "verdict": "clean",
+                "findings_count": 0, "reality_contact": "medium"} for i in range(5)]
+    s = gate_summary(entries)
+    assert s["gates"][0]["quiet"] is True
+    s4 = gate_summary(entries[:4])
+    assert s4["gates"][0]["quiet"] is False

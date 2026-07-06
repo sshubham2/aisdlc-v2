@@ -22,7 +22,7 @@ Skip when: adding a feature on top of a shipped slice (normal new slice); fixing
 
 Active slice (latest):
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --folder-only   # slice-014: no 2>/dev/null — an AMBIGUOUS HALT (exit 4) must surface
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root . --folder-only   # slice-014: no 2>/dev/null — an AMBIGUOUS HALT (exit 4) must surface. Vault resolves internally (4.6.1: $AI_SDLC_VAULT_ROOT is not exported).
 ```
 
 ---
@@ -91,7 +91,10 @@ otherwise; omit any member not provided, but keep at least one). It records HOW 
 unwound; the audit validates the shape when present (members non-empty strings; unknown keys refused — a
 typo'd key would silently lose the revert ref).
 
-Use Edit to update the `"supersession": null` value in place. Do NOT modify any other content — supersession is append-only history, like ADR supersession. The rest of the reflection remains frozen.
+Use Edit to update the `"supersession": null` value in place. If the key is ABSENT (an older or hand-written
+reflection without the null placeholder), ADD `"supersession": { … }` as a new top-level key instead — do not
+let a missing placeholder fail the edit. Do NOT modify any other content — supersession is append-only history,
+like ADR supersession. The rest of the reflection remains frozen.
 
 Schema reference: `examples/reflection.json` (the `supersession` field).
 
@@ -101,7 +104,8 @@ Read `<vault>/slices/<active-slice-id>/mission-brief.json`.
 
 Set `"supersedes": "<archived-slice-id>"` (the field exists in the schema, currently `null`).
 
-Use Edit to update the `"supersedes": null` value. Do not change any other field.
+Use Edit to update the `"supersedes": null` value. If the key is ABSENT (an older or hand-written brief),
+ADD `"supersedes": "<archived-slice-id>"` as a new top-level key. Do not change any other field.
 
 Schema reference: `examples/mission-brief.json` (the `supersedes` field).
 
@@ -110,10 +114,12 @@ If no active slice exists yet: tell the user to set this field when running `/sl
 ## Step 5 — Run the supersession audit
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/scripts/supersede_audit.py" --root .
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/supersede_audit.py" --root .
 ```
 
-Expected: 1 link validated, no violations.
+Expected: the new link validated, no violations. (The audit is a project-wide sweep — it re-validates EVERY
+supersession link, not just this one, so pre-existing broken links surface here too. `/drift-check` full mode
+runs the same sweep periodically, catching links broken later by manual edits.)
 
 If audit reports `one-way-link` or `missing-target`: fix the reflection.json or mission-brief.json and re-run. Do not advance until the audit is clean.
 
@@ -129,7 +135,14 @@ If audit reports `one-way-link` or `missing-target`: fix the reflection.json or 
 Tell the user:
 - "Slice `<archived-slice-id>` superseded by `<active-slice-id>`."
 - "reflection.json in archive updated; mission-brief.json `supersedes` field set; audit clean. (The durable link lives in those two files — `/pulse --full` reads it from reflection.json.)"
-- "Run `/critique` on the active slice next — cite the supersession reason in design.json if it informs design choices."
+- A next step CONDITIONED on the active slice's `milestone.json` `stage` (a fixed "/critique next" misleads
+  when the supersession is established mid-build or later):
+  - stage `design` or earlier → "Run `/critique` on the active slice next — cite the supersession reason in
+    design.json if it informs design choices."
+  - stage `critique`/`build` → "Cite the supersession reason in the build — if it changes the plan, record a
+    deviation in build-log.json per `/build-slice`; no critique re-run is required for the link itself."
+  - stage `validate` or later → "The link is recorded; no further loop action needed — `/drift-check` (full
+    mode) re-validates it periodically."
 
 ## Critical rules
 

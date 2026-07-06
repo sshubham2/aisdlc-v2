@@ -1,9 +1,13 @@
-"""build_entry.py — serialize a drift-log entry for `vault_edit append` (v2, NEW).
+"""build_entry.py — serialize a drift-log entry for `vault_edit append` (v2).
 
-Single-skill helper for `/drift-check` (full mode + `--resolve` accept-drift). Builds a
-well-formed `drift-log.json` entry (schema `aisdlc/drift-log@1`) with a real timestamp
-and a canonical `slice-NNN` trigger, then emits it for the SVW-1 append channel — so
-the skill never hand-rolls JSON with fragile shell quoting.
+SHARED helper for `/drift-check` (full mode + `--resolve` accept-drift) AND `/sync`
+(Step 5b accept-drift) — promoted from skills/drift-check/scripts in the 2026-07 review
+sweep, so both writers of `drift-log.json` produce the ONE entry schema its reader
+(`drift_status.py --status` fold) can fold; a hand-rolled `{at, claim, reality,
+rationale}` shape lands as a permanently UNFOLDABLE record. Builds a well-formed
+`drift-log.json` entry (schema `aisdlc/drift-log@1`) with a real timestamp and a
+canonical `slice-NNN` trigger, then emits it for the SVW-1 append channel — so the
+skill never hand-rolls JSON with fragile shell quoting.
 
 Two output modes:
   - default: print the entry JSON to STDOUT → pipe straight into
@@ -29,8 +33,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# --- single-skill import bootstrap (cannot use `python -m` for a bundled script) ---
-_REPO = pathlib.Path(__file__).resolve().parents[3]  # skills/<name>/scripts/X.py -> <plugin>
+# --- plugin-root import bootstrap (shared lib invoked by ABSOLUTE PATH from SKILL.md) ---
+_REPO = pathlib.Path(__file__).resolve().parents[2]  # scripts/lib/X.py -> <plugin>
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 

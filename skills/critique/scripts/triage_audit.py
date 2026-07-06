@@ -11,8 +11,15 @@ It validates:
   - Required triage header fields present: `ratified_by`, `at`, `verdict`.
   - `verdict` is one of {clean, needs-fixes, blocked} (case-insensitive).
   - Every finding in `findings[]` has a disposition row in `triage.dispositions[]`.
+  - Every disposition row names a REAL finding id (an orphan row — e.g. a typo'd
+    `C7` for `C2` — is refused, not silently accepted).
   - Each disposition `action` is in the allowed vocabulary.
   - overridden / deferred / escalated dispositions carry a non-empty `rationale`.
+  - DD-15 deferred-BLOCKER qualification (mechanical, not prose-only): a `deferred`
+    disposition on a blocker-severity finding must (a) name a concrete deferral
+    target in its rationale (`slice-NNN` or `SC-NNN` — "later" is not a target),
+    and (b) be listed in `triage.deferred_blockers[]`; conversely every
+    `deferred_blockers[]` entry must be a real deferred blocker finding.
   - The declared `verdict` is consistent with the disposition pattern:
         any escalated                     -> blocked
         any accepted-pending (no esc.)    -> needs-fixes
@@ -50,7 +57,8 @@ Disposition vocabulary (v2 lowercase):
   - escalated           spike or redesign needed — rationale required
 
 NFR-1 mtime carry-over was REMOVED (3.9 — it was dead for every post-install user).
-`--no-carry-over` is still accepted as a no-op for CLI compatibility.
+`--no-carry-over` is still accepted as a no-op for CLI compatibility ONLY — no
+carry-over machinery exists anywhere in this module anymore.
 
 Usage:
     python triage_audit.py <slice-folder>
@@ -74,10 +82,9 @@ if str(_REPO) not in sys.path:
 
 import argparse
 import json
+import re
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
 from pathlib import Path
-from typing import Any
 
 from scripts.lib import _stdout
 
@@ -98,6 +105,10 @@ _RATIONALE_REQUIRED: frozenset[str] = frozenset({"overridden", "deferred", "esca
 # Sentinel rationale values treated as empty
 _EMPTY_SENTINELS = frozenset({"", "—", "-", "n/a", "none", "(none)"})
 
+# DD-15: a deferred BLOCKER's rationale must name a concrete deferral target —
+# a slice id or a backlog candidate id. "later" is not a target.
+_DEFERRAL_TARGET_RE = re.compile(r"\b(slice-\d+|SC-\d+)\b", re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class TriageViolation:
@@ -105,8 +116,9 @@ class TriageViolation:
     path: str
     finding_id: str  # may be "" for section-level errors
     kind: str        # "no-triage" | "missing-field" | "invalid-verdict" |
-                     # "missing-row" | "invalid-disposition" |
-                     # "missing-rationale" | "verdict-mismatch" | "format"
+                     # "missing-row" | "orphan-row" | "invalid-disposition" |
+                     # "missing-rationale" | "deferred-blocker" |
+                     # "verdict-mismatch" | "format"
     severity: str    # always "Important"
     message: str
 
@@ -123,7 +135,6 @@ class TriageResult:
     findings: list[str] = field(default_factory=list)
     dispositions: dict[str, str] = field(default_factory=dict)  # finding_id -> disposition
     violations: list[TriageViolation] = field(default_factory=list)
-    carry_over_exempt: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -134,7 +145,6 @@ class TriageResult:
             "findings": list(self.findings),
             "dispositions": dict(self.dispositions),
             "violations": [v.to_dict() for v in self.violations],
-            "carry_over_exempt": self.carry_over_exempt,
             "summary": {
                 "violation_count": len(self.violations),
                 "consistent": (
@@ -162,10 +172,7 @@ def _expected_verdict(dispositions: dict[str, str]) -> str:
     return "clean"
 
 
-def audit_critique_file(
-    critique_path: Path,
-    skip_if_carry_over: bool = True,
-) -> TriageResult:
+def audit_critique_file(critique_path: Path) -> TriageResult:
     """Audit a critique.json file's embedded triage object against TRI-1."""
     result = TriageResult()
 
@@ -201,8 +208,10 @@ def audit_critique_file(
         return result
 
     # Findings declared by the Critic (the body the triage must cover).
+    # severity_by_fid feeds the DD-15 deferred-BLOCKER qualification below.
     findings: list[str] = []
     seen_fids: set[str] = set()
+    severity_by_fid: dict[str, str] = {}
     raw_findings = data.get("findings")
     if isinstance(raw_findings, list):
         for entry in raw_findings:
@@ -212,6 +221,7 @@ def audit_critique_file(
             if fid and fid not in seen_fids:
                 seen_fids.add(fid)
                 findings.append(fid)
+                severity_by_fid[fid] = str(entry.get("severity", "")).strip().lower()
     result.findings = findings
 
     triage = data.get("triage")
@@ -270,6 +280,7 @@ def audit_critique_file(
         return result
 
     seen_ids: set[str] = set()
+    rationale_by_fid: dict[str, str] = {}
     for idx, row in enumerate(raw_disp):
         if not isinstance(row, dict):
             result.violations.append(TriageViolation(
@@ -284,6 +295,17 @@ def audit_critique_file(
             continue
         seen_ids.add(fid)
 
+        if fid not in seen_fids:
+            result.violations.append(TriageViolation(
+                path=str(critique_path), finding_id=fid,
+                kind="orphan-row", severity="Important",
+                message=(
+                    f"triage disposition names finding '{fid}', which does not "
+                    f"exist in findings[] (typo'd id?). Every disposition row must "
+                    f"name a real finding."
+                ),
+            ))
+
         action = str(row.get("action", "")).strip().lower()
         if action not in _ALLOWED_DISPOSITIONS:
             result.violations.append(TriageViolation(
@@ -297,6 +319,7 @@ def audit_critique_file(
             continue
 
         result.dispositions[fid] = action
+        rationale_by_fid[fid] = str(row.get("rationale", "")).strip()
 
         if action in _RATIONALE_REQUIRED and _cell_is_empty(row.get("rationale", "")):
             result.violations.append(TriageViolation(
@@ -320,6 +343,56 @@ def audit_critique_file(
                 ),
             ))
 
+    # DD-15 — deferred-BLOCKER qualification (mechanical, not prose-only).
+    # A deferred blocker is the user knowingly building on an unresolved blocker:
+    # its rationale must name a concrete target and the id must be declared in
+    # triage.deferred_blockers[] so no reader ever renders it as a plain green.
+    declared_db = triage.get("deferred_blockers", [])
+    if not isinstance(declared_db, list):
+        result.violations.append(TriageViolation(
+            path=str(critique_path), finding_id="",
+            kind="format", severity="Important",
+            message="triage.deferred_blockers is not a JSON array.",
+        ))
+        declared_db = []
+    declared_db_ids = {str(x).strip() for x in declared_db if str(x).strip()}
+
+    deferred_blockers = {
+        fid for fid, action in result.dispositions.items()
+        if action == "deferred" and severity_by_fid.get(fid) == "blocker"
+    }
+    for fid in sorted(deferred_blockers):
+        if not _DEFERRAL_TARGET_RE.search(rationale_by_fid.get(fid, "")):
+            result.violations.append(TriageViolation(
+                path=str(critique_path), finding_id=fid,
+                kind="deferred-blocker", severity="Important",
+                message=(
+                    f"finding {fid}: a deferred BLOCKER's rationale must name a "
+                    f"concrete deferral target (slice-NNN or SC-NNN) — 'later' is "
+                    f"not a target (DD-15)."
+                ),
+            ))
+        if fid not in declared_db_ids:
+            result.violations.append(TriageViolation(
+                path=str(critique_path), finding_id=fid,
+                kind="deferred-blocker", severity="Important",
+                message=(
+                    f"finding {fid}: a deferred BLOCKER must be listed in "
+                    f"triage.deferred_blockers[] so the verdict stays qualified "
+                    f"(DD-15)."
+                ),
+            ))
+    for fid in sorted(declared_db_ids - deferred_blockers):
+        result.violations.append(TriageViolation(
+            path=str(critique_path), finding_id=fid,
+            kind="deferred-blocker", severity="Important",
+            message=(
+                f"triage.deferred_blockers lists '{fid}', which is not a "
+                f"blocker-severity finding with a 'deferred' disposition — the "
+                f"list must mirror the actual deferred blockers exactly (DD-15)."
+            ),
+        ))
+
     # Verdict consistency
     expected = _expected_verdict(result.dispositions)
     result.expected_verdict = expected
@@ -339,12 +412,6 @@ def audit_critique_file(
 
 
 def _format_human(result: TriageResult) -> str:
-    if result.carry_over_exempt:
-        return (
-            "Triage audit: slice is carry-over exempt "
-            "(mission-brief.json predates TRI-1 release).\n"
-        )
-
     if not result.violations:
         if result.declared_verdict:
             return (
@@ -380,17 +447,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--no-carry-over", action="store_true",
-        help="Disable mtime-based carry-over exemption",
+        help="Accepted as a NO-OP for CLI compatibility (carry-over was removed in 3.9)",
     )
     args = parser.parse_args(argv)
 
     target: Path = args.target
     critique_path = target / "critique.json" if target.is_dir() else target
 
-    result = audit_critique_file(
-        critique_path,
-        skip_if_carry_over=not args.no_carry_over,
-    )
+    result = audit_critique_file(critique_path)
 
     if args.json:
         sys.stdout.write(json.dumps(result.to_dict(), indent=2) + "\n")

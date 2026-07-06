@@ -40,6 +40,21 @@ def test_fix_now_disposition_is_flagged():
     assert any("fix-now" in v for v in violations)
 
 
+def test_validation_criteria_empty_evidence_flagged():
+    # Review sweep 2026-07: the per-criterion evidence discipline is mechanical —
+    # a validation criteria[] row with empty/missing evidence must fail the lint
+    # ("it worked" without evidence is not a PASS).
+    examples = _load_examples()
+    val = copy.deepcopy(examples["validation"])
+    assert val.get("criteria"), "the canonical validation example has no criteria rows"
+    val["criteria"][0]["evidence"] = "   "
+    violations = lint_artifact(val, "validation", examples["validation"], "test")
+    assert any("evidence" in v for v in violations)
+    # and the canonical example itself stays clean (non-empty evidence)
+    assert not lint_artifact(examples["validation"], "validation",
+                             examples["validation"], "test")
+
+
 def test_missing_schema_tag_flagged():
     examples = _load_examples()
     key = next(iter(examples))

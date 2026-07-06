@@ -49,17 +49,26 @@ _CAT_TARGET = re.compile(r'cat\s+"\$SDIR/([^"]+)"')
 
 
 def _bash():
-    for name in ("bash", "sh"):
-        found = shutil.which(name)
-        if found:
-            return found
+    """Locate a WORKING POSIX shell. Candidates are validated by actually running them:
+    on Windows, `shutil.which('bash')` often finds the System32 WSL stub, which errors
+    out when WSL is not installed — fall through to git-bash instead of failing every
+    test environmentally."""
+    candidates = [shutil.which(n) for n in ("bash", "sh")]
     # Windows git-bash fallbacks (venv-python PATH may not include git's bin).
-    for cand in (
+    candidates += [
         r"C:\Program Files\Git\bin\bash.exe",
         r"C:\Program Files\Git\usr\bin\bash.exe",
         r"C:\Program Files (x86)\Git\bin\bash.exe",
-    ):
-        if os.path.exists(cand):
+    ]
+    for cand in candidates:
+        if not cand or not os.path.exists(cand):
+            continue
+        try:
+            ok = subprocess.run([cand, "-c", "echo ok"], capture_output=True,
+                                text=True, timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if ok.returncode == 0 and "ok" in (ok.stdout or ""):
             return cand
     return None
 

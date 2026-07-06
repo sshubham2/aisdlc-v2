@@ -60,7 +60,8 @@ it is NOT auto-skippable (a project-author Critical rule is closer to
 compliance-mandatory than the discretionary critique spawn).
 
 NFR-1 mtime carry-over was REMOVED (3.9 — it was dead for every post-install user).
-`--no-carry-over` is still accepted as a no-op for CLI compatibility.
+`--no-carry-over` is still accepted as a no-op for CLI compatibility ONLY — no
+carry-over machinery exists anywhere in this module anymore.
 
 Usage:
     python build_checks_audit.py --slice <slice-folder> [options]
@@ -155,14 +156,12 @@ class AuditResult:
     applicable: list[BuildCheckRule] = field(default_factory=list)
     skipped: list[BuildCheckRule] = field(default_factory=list)
     violations: list[BuildCheckViolation] = field(default_factory=list)
-    carry_over_exempt: bool = False
 
     def to_dict(self) -> dict:
         return {
             "applicable": [r.to_dict() for r in self.applicable],
             "skipped": [r.to_dict() for r in self.skipped],
             "violations": [v.to_dict() for v in self.violations],
-            "carry_over_exempt": self.carry_over_exempt,
             "summary": {
                 "applicable_count": len(self.applicable),
                 "skipped_count": len(self.skipped),
@@ -447,21 +446,17 @@ def audit_slice(
     slice_folder: Path,
     project_checks: Path | None = None,
     changed_files: list[str] | None = None,
-    skip_if_carry_over: bool = True,
     strict: bool = False,
     ack_critical: tuple[str, ...] = (),
 ) -> AuditResult:
     """Audit a slice against the project build-checks.json.
 
     Args:
-        slice_folder: path to the slice folder (must contain mission-brief.json
-            for carry-over check; design.json for keyword match).
+        slice_folder: path to the slice folder (design.json etc. for keyword match).
         project_checks: path to project build-checks.json (defaults to
             <vault>/build-checks.json).
         changed_files: list of files this slice changed (for glob match); empty
             means glob match never fires (keyword-only).
-        skip_if_carry_over: if True, slices with pre-rule mission-brief.json mtime
-            get an empty result (carry-over exempt).
         strict: if True (BCSG-1 / ADR-072), each applicable Critical rule whose
             id is NOT in ack_critical is appended as an `unacknowledged-critical`
             violation, so main()'s exit code becomes a gate-failure.
@@ -533,12 +528,6 @@ def _format_human(
     strict: bool = False,
     ack_critical: tuple[str, ...] = (),
 ) -> str:
-    if result.carry_over_exempt:
-        return (
-            "Build-checks audit: slice is carry-over exempt "
-            "(mission-brief.json predates BC-1 release).\n"
-        )
-
     out: list[str] = []
 
     parse_violations = [
@@ -627,7 +616,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--no-carry-over", action="store_true",
-        help="Disable mtime-based carry-over exemption",
+        help="Accepted as a NO-OP for CLI compatibility (carry-over was removed in 3.9)",
     )
     parser.add_argument(
         "--json", action="store_true",
@@ -661,7 +650,6 @@ def main(argv: list[str] | None = None) -> int:
         slice_folder=slice_folder,
         project_checks=args.project_checks,
         changed_files=args.changed_files,
-        skip_if_carry_over=not args.no_carry_over,
         strict=args.strict,
         ack_critical=tuple(args.ack_critical),
     )

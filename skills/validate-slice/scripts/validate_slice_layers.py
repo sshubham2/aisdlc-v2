@@ -123,7 +123,6 @@ class LayersResult:
     import_findings: list[ImportFinding] = field(default_factory=list)
     suppressed_secrets: int = 0
     declared_deps: list[str] = field(default_factory=list)
-    carry_over_exempt: bool = False
     # SC-084 / m1: audit ledger of imports resolved as the project's OWN modules
     # (one {path,line,import_name,via} row per internal resolution) so future
     # over-suppression stays detectable. NEVER feeds total_findings.
@@ -135,7 +134,6 @@ class LayersResult:
             "import_findings": [f.to_dict() for f in self.import_findings],
             "suppressed_secrets": self.suppressed_secrets,
             "declared_deps": list(self.declared_deps),
-            "carry_over_exempt": self.carry_over_exempt,
             "resolved_internal": list(self.resolved_internal),
             "summary": {
                 "critical_count": sum(
@@ -512,7 +510,6 @@ def run_layers(
     requirements: Path | None = None,
     skip_secrets: bool = False,
     skip_deps: bool = False,
-    skip_if_carry_over: bool = True,
     imports_allowlist: list[str] | None = None,
     project_root: Path | None = None,
 ) -> LayersResult:
@@ -548,12 +545,6 @@ def run_layers(
 
 
 def _format_human(result: LayersResult) -> str:
-    if result.carry_over_exempt:
-        return (
-            "VAL-1 layered safety checks: slice is carry-over exempt "
-            "(mission-brief.json predates rule release).\n"
-        )
-
     out: list[str] = []
     out.append(
         f"VAL-1 layered safety checks: "
@@ -645,7 +636,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--no-carry-over", action="store_true",
-        help="Disable mtime-based carry-over exemption",
+        help="Accepted as a NO-OP for CLI compatibility (carry-over was removed in 3.9)",
     )
     parser.add_argument(
         "--json", action="store_true", help="Output result as JSON",
@@ -693,7 +684,6 @@ def main(argv: list[str] | None = None) -> int:
         requirements=requirements,
         skip_secrets=args.skip_secrets,
         skip_deps=args.skip_deps,
-        skip_if_carry_over=not args.no_carry_over,
         imports_allowlist=args.imports_allowlist,
         project_root=Path("."),  # the project under validation (CWD-relative,
         # the same anchor as the pyproject/requirements resolution above)

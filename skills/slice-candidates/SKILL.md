@@ -30,18 +30,24 @@ topo-sorts into a DAG-ordered backlog, and appends candidates to `<vault>/candid
 
 Existing candidate count (pre-run baseline):
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" count --vault "$AI_SDLC_VAULT_ROOT" --file candidates.json --array candidates 2>/dev/null || echo "0 (candidates.json not yet created)"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" count --file candidates.json --array candidates 2>/dev/null || echo "0 (candidates.json not yet created)"
 ```
 
-## Step 0 — Resolve paths
+## Step 0 — Resolve paths + flags (ONE parse, both outputs)
 
 ```bash
-DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"
+DIAGNOSE_OUT=""; OBO=0
+for a in ${ARGUMENTS[@]}; do case "$a" in --obo) OBO=1 ;; --*) ;; *) [ -z "$DIAGNOSE_OUT" ] && DIAGNOSE_OUT="$a" ;; esac; done
+[ -n "$DIAGNOSE_OUT" ] || DIAGNOSE_OUT="./diagnose-out"
+echo "DIAGNOSE_OUT=$DIAGNOSE_OUT OBO=$OBO"
 ```
 
 > Shell vars do NOT persist across separate ```bash blocks, and skill args are 0-based Claude Code
 > substitutions (`${ARGUMENTS[0]}` = the first arg; `$1` is the *second*). So each block below re-derives
-> `DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"`, and bundled scripts use `${CLAUDE_SKILL_DIR}` directly.
+> `DIAGNOSE_OUT` with this SAME non-flag scan — never bare `${ARGUMENTS[0]}`: `/slice-candidates --obo`
+> (both args are optional) would make the flag the path (`DIAGNOSE_OUT="--obo"`), and bare `$ARGUMENTS`
+> under an array binding sees only token 0. `${ARGUMENTS[@]}` unquoted is array-safe AND scalar-safe.
+> Bundled scripts use `${CLAUDE_SKILL_DIR}` directly.
 
 Verify:
 - `$DIAGNOSE_OUT/diagnosis.html` exists and contains an embedded `<script type="application/json" id="diagnose-data">` block
@@ -51,14 +57,15 @@ If either check fails, report the specific reason and stop. If the HTML exists b
 entries, tell the user to confirm this is the **saved-and-downloaded** version from the owner (not the
 original sent — the owner must click "Save annotated HTML" to bake in their annotations).
 
-If `--obo` is in the arguments, skip to [--obo interactive review mode](#--obo-interactive-review-mode).
+If the Step-0 parse printed `OBO=1`, skip to [--obo interactive review mode](#--obo-interactive-review-mode)
+(one parsing mechanism — never re-detect the flag by eyeballing the argument string).
 
 ## Step 1 — Run the backlog builder
 
 ```bash
-DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"
+DIAGNOSE_OUT=""; for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) [ -z "$DIAGNOSE_OUT" ] && DIAGNOSE_OUT="$a" ;; esac; done; [ -n "$DIAGNOSE_OUT" ] || DIAGNOSE_OUT="./diagnose-out"   # Step-0 non-flag scan (never bare ${ARGUMENTS[0]} — a flag would become the path)
 $PY "${CLAUDE_SKILL_DIR}/scripts/build_backlog.py" --in "$DIAGNOSE_OUT" \
-    --vault "$AI_SDLC_VAULT_ROOT" --crg-graph "$DIAGNOSE_OUT/.code-review-graph/"
+    --crg-graph "$DIAGNOSE_OUT/.code-review-graph/"
 ```
 
 `build_backlog.py` does it all in one run (no separate append step — it routes the write through the SVW-1
@@ -90,7 +97,9 @@ locked channel itself):
 Relay the builder's JSON summary:
 
 - Path to `<vault>/candidates.json` (`vault_file`) — updated
-- `appended` new candidates (and `skipped_existing` already-present findings, if any)
+- `appended` new candidates — and when `skipped_existing` > 0, list `skipped_existing_ids`
+  (each `{finding, existing_candidate}`): an owner re-running after a partial annotation round needs to
+  see WHICH findings were deduped against existing candidates, not just how many
 - `crg` mode (`used` / `degraded` / `absent`) — note the degradation if not `used`
 - `clusters` — any "must-do-together" SC groups
 - `merge_recommendations` — thin coupled clusters (Theme 4): list each as "consider **merging** SC-X+SC-Y into one
@@ -110,7 +119,7 @@ then optionally runs Step 1 on the annotated copy.
 ### obo-1 — Extract findings
 
 ```bash
-DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"
+DIAGNOSE_OUT=""; for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) [ -z "$DIAGNOSE_OUT" ] && DIAGNOSE_OUT="$a" ;; esac; done; [ -n "$DIAGNOSE_OUT" ] || DIAGNOSE_OUT="./diagnose-out"   # Step-0 non-flag scan (never bare ${ARGUMENTS[0]} — a flag would become the path)
 $PY "${CLAUDE_SKILL_DIR}/scripts/build_backlog.py" --in "$DIAGNOSE_OUT" --obo-extract
 ```
 
@@ -126,11 +135,16 @@ evidence) and ask via `AskUserQuestion` with a header:
 
 > `Finding k of N · A approved · D deferred · R rejected`
 
+**Anti-alert-fatigue (the /critique lesson applies verbatim):** walk HIGH/CRITICAL findings individually,
+but **batch the LOW-severity tail** as ONE group question — "*M low-severity findings remain, all
+<category summary> — approve all / defer all? (or name any id to review individually)*". Forcing a
+keystroke per low finding trains the rubber-stamp reflex that makes the whole review theater.
+
 Options:
 - **Approve** → record `{confirmed:"yes", notes:""}` (or owner's note if given).
 - **Validate then approve** → run:
   ```bash
-  DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"
+  DIAGNOSE_OUT=""; for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) [ -z "$DIAGNOSE_OUT" ] && DIAGNOSE_OUT="$a" ;; esac; done; [ -n "$DIAGNOSE_OUT" ] || DIAGNOSE_OUT="./diagnose-out"   # Step-0 non-flag scan
   $PY "${CLAUDE_SKILL_DIR}/scripts/build_backlog.py" --in "$DIAGNOSE_OUT" \
       --obo-peek --finding <id> --file <path>
   ```
@@ -151,7 +165,7 @@ Collect decisions into `{finding_id: {confirmed, notes}}` (omit never-reached fi
 empty entries). Serialize via Bash here-doc into a temp file, then run:
 
 ```bash
-DIAGNOSE_OUT="${ARGUMENTS[0]:-./diagnose-out}"
+DIAGNOSE_OUT=""; for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) [ -z "$DIAGNOSE_OUT" ] && DIAGNOSE_OUT="$a" ;; esac; done; [ -n "$DIAGNOSE_OUT" ] || DIAGNOSE_OUT="./diagnose-out"   # Step-0 non-flag scan (never bare ${ARGUMENTS[0]} — a flag would become the path)
 # slice-026: portable temp dir ($PY gettempdir(), forward-slash) so the file mktemp creates in
 # git-bash is read back by the bundled Windows-Python tool at the SAME real path -- safe because the
 # SAME $PY resolves gettempdir() for both the bash $TMPD derivation and the in-tool reads. Keep the

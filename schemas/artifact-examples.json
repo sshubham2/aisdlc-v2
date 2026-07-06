@@ -274,7 +274,7 @@
   "sync-log": {
     "_schema": "aisdlc/sync-log@1",
     "_note": "Heavy-mode bidirectional reconciliation record (append-only).",
-    "runs": [{ "at": "<ts>", "regenerated": ["components/orders.json", "contracts/webhook.json"], "drift": [{ "claim": "retired R-3", "reality": "only simple case retired", "action": "updated risk-register" }] }]
+    "runs": [{ "at": "<ts>", "mode": "full", "regenerated": ["components/orders.json", "contracts/webhook.json"], "drift": [{ "claim": "retired R-3", "reality": "only simple case retired", "action": "updated risk-register" }], "csp1": { "violations": 1, "resolved": 1, "kinds": ["missing-ref"] } }]
   },
   "changelog": {
     "_schema": "aisdlc/changelog@1",
@@ -335,7 +335,7 @@
     "_note": "Heavy: upfront infra cost per component at 1K/10K/100K users (compute/storage/network/third-party), with monthly + per-user totals per scale. Human-authored (locked-at: heavy-architect); refined as reality lands.",
     "currency": "USD",
     "components": [
-      { "name": "api-server", "scales": {
+      { "name": "api-server", "fidelity": "estimated", "scales": {
         "1k":   { "compute": 50,   "storage": 10,  "network": 5,   "third_party": 15,  "total_monthly": 80,   "per_user": 0.08 },
         "10k":  { "compute": 320,  "storage": 60,  "network": 40,  "third_party": 90,  "total_monthly": 510,  "per_user": 0.051 },
         "100k": { "compute": 2600, "storage": 500, "network": 380, "third_party": 700, "total_monthly": 4180, "per_user": 0.0418 } } }

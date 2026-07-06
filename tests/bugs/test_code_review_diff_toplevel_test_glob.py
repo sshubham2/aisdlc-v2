@@ -1,23 +1,26 @@
-"""Repro + standing guard (BFRD-1, slice-056 / SC-087): /code-review's review-diff
-collection must not drop a branch-only NEW TOP-LEVEL file under a review root.
+"""Standing guard for /code-review's review-diff collection (slice-056 / SC-087,
+superseded by the 2026-07 review sweep's no-pathspec fix).
 
-Root cause (empirically confirmed): skills/code-review/SKILL.md collected the review
-diff with an UNQUOTED `$paths` glob list (`src/** ... tests/**`). Bash pathname-expands
-it against the MAIN-TREE CWD *before* git runs (globstar off), so a top-level file that
-exists only on the slice branch is absent from the expansion and never reaches git.
-New files under an existing SUBDIR (tests/bugs/x.py) survive because the directory
-`tests/bugs` is passed as a pathspec covering its subtree.
+History:
+- SC-087 (slice-056): the collection used an UNQUOTED `$paths` glob list that bash
+  pathname-expanded against the MAIN-tree cwd, silently dropping branch-only
+  top-level files. Fixed with a quoted pathspec array (ADR-050).
+- Review sweep 2026-07: the quoted array itself was the deeper bug — its five
+  entries ('src/**' 'skills/**' 'agents/**' 'scripts/**' 'tests/**') are THIS
+  PLUGIN'S OWN layout, so any host project shaped differently (app/, lib/,
+  packages/, ...) produced an EMPTY diff -> a confident false NO-CODE-CHANGES
+  review. The fix removes the pathspec entirely: the worktree diff vs the
+  fork-point base IS the slice's change (.gitignore already scopes noise; the
+  vault is external). No pathspec also retires the SC-087 expansion trap.
 
-The fix (ADR-050): deliver the pathspecs to git as a QUOTED bash array
-(`paths=('src/**' ...)` expanded `"${paths[@]}"`), so git receives them literally.
-
-These tests extract the LIVE pathspec-collection region from SKILL.md and run it against
-a temp git worktree scenario, so the fix flips them green and a future regression flips
-them red. AC-mapped:
-  AC1 -> test_ac1_toplevel_branch_only_collected
-  AC2 -> test_ac2_subdir_new_file_still_collected
-  AC3 -> test_ac3_second_populated_root_toplevel_collected  (skills/ POPULATED in main -- m1)
-  AC4 -> test_ac4_collection_delivers_pathspecs_as_quoted_array  (static site-guard)
+These tests extract the LIVE collection region from SKILL.md and run it against a
+temp git worktree scenario:
+  AC1 -> branch-only top-level file under tests/ collected        (SC-087 guard)
+  AC2 -> new file under an existing subdir collected              (no regression)
+  AC3 -> branch-only top-level under a second populated root      (root-agnostic)
+  AC4 -> the collection delivers NO pathspec to git               (site-guard)
+  AC5 -> a change under a NON-plugin-shaped root (app/) collected (false-green guard)
+  AC6 -> a >1200-line diff emits the DIFF-TRUNCATED marker        (partial-input signal)
 """
 import re
 import shutil
@@ -31,27 +34,36 @@ SKILL_MD = REPO_ROOT / "skills" / "code-review" / "SKILL.md"
 
 
 def _bash():
-    """Locate a bash interpreter (git-bash on Windows, /bin/bash on CI)."""
+    """Locate a WORKING bash (git-bash on Windows, /bin/bash on CI). Candidates are
+    validated by actually running them: on Windows, `shutil.which('bash')` often finds
+    the System32 WSL stub, which errors out when WSL is not installed — fall through
+    to the next candidate instead of failing every test environmentally."""
+    candidates = []
     p = shutil.which("bash")
     if p:
-        return p
-    for cand in (
+        candidates.append(p)
+    candidates += [
         r"C:\Program Files\Git\bin\bash.exe",
         r"C:\Program Files\Git\usr\bin\bash.exe",
         "/bin/bash",
         "/usr/bin/bash",
-    ):
-        if Path(cand).exists():
+    ]
+    for cand in candidates:
+        if not Path(cand).exists():
+            continue
+        try:
+            ok = subprocess.run([cand, "-c", "echo ok"], capture_output=True,
+                                text=True, timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if ok.returncode == 0 and "ok" in (ok.stdout or ""):
             return cand
     return None
 
 
-def _first_bash_block(text):
-    """Return the (start, end) line indices of the FIRST ```bash ... ``` fenced block
-    that contains a `paths=` assignment. N1 (slice-056 TRI-1): bounding extraction to a
-    single block makes it robust to a future unrelated `$paths` token elsewhere in the
-    file (the earlier global last-match scan was brittle -- slice-021/034 test-coupling
-    lesson)."""
+def _collection_block(text):
+    """Return the lines of the FIRST ```bash block containing a `git -C "$wt" diff`
+    collection line (the review-diff block)."""
     lines = text.splitlines()
     in_block = False
     block_start = None
@@ -63,34 +75,26 @@ def _first_bash_block(text):
             continue
         if in_block and stripped == "```":
             block = lines[block_start:i]
-            if any(re.match(r"\s*paths=", b) for b in block):
-                return block_start, i
+            if any(re.search(r'git\s+-C\s+"\$wt"\s+diff', b) for b in block):
+                return block
             in_block = False
             block_start = None
-    raise AssertionError("no ```bash block containing a paths= assignment found in SKILL.md")
+    raise AssertionError("no ```bash block containing the review-diff collection found in SKILL.md")
 
 
 def _extract_collection_snippet(text):
-    """Within the FIRST bash block carrying `paths=`, extract from the `paths=` line
-    through the last line referencing `$paths`/`${paths` (the collection's git calls),
-    dropping only the `base=` derivation line (we inject `base`). Whatever glob-safety
-    form the fix uses (quoted array / set -f) is preserved and exercised."""
-    lines = text.splitlines()
-    b_start, b_end = _first_bash_block(text)
+    """From the collection block, extract the executable collection region: the first
+    `git -C "$wt" diff` line through the last collection line (the ls-files untracked
+    listing), skipping comments. `wt`/`base` are injected by the test."""
+    block = _collection_block(text)
     start = end = None
-    for i in range(b_start, b_end):
-        if start is None and re.match(r"\s*paths=", lines[i]):
+    for i, ln in enumerate(block):
+        if start is None and re.search(r'git\s+-C\s+"\$wt"\s+diff', ln):
             start = i
-        # End-bound anchored on the git COLLECTION line (git ... -- $paths / "${paths[@]}"),
-        # NOT any $paths token, so a trailing paths-mentioning comment inside the block can't
-        # be swept into the executed snippet (code-review m1; matches both the fixed quoted-array
-        # and the unquoted form so red-on-revert still works).
-        if start is not None and re.search(r"git\s+-C.*--\s+\S*\$\{?paths", lines[i]):
+        if re.search(r'git\s+-C\s+"\$wt"\s+ls-files', ln):
             end = i
-    assert start is not None and end is not None, "paths= region not found inside the first bash block"
-    region = lines[start:end + 1]
-    kept = [ln for ln in region if not re.match(r"\s*base=", ln)]
-    return "\n".join(kept)
+    assert start is not None and end is not None, "collection region not found in the diff block"
+    return "\n".join(block[start:end + 1])
 
 
 def _git(*args, cwd):
@@ -98,12 +102,11 @@ def _git(*args, cwd):
                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
-def _build_scenario(tmp):
-    """main tree at base holds POPULATED roots tests/ AND skills/ (existing top-level
-    files) + tests/bugs/; a worktree on a branch ADDS branch-only top-level files under
-    BOTH roots plus a subdir file. skills/ is populated so the unquoted form actually
-    pre-expands and drops the branch-only skills/ file (m1: an EMPTY root would stay
-    literal and false-green)."""
+def _build_scenario(tmp, big_diff=False):
+    """main tree at base holds populated roots tests/, skills/ AND a NON-plugin root
+    app/ (the host-project shape the old hardcoded pathspec was blind to); a worktree
+    on a branch adds branch-only files under each. big_diff additionally commits a
+    >1200-line change to exercise the truncation marker."""
     main = tmp / "main"
     main.mkdir()
     _git("init", "-q", "-b", "main", cwd=main)
@@ -111,9 +114,11 @@ def _build_scenario(tmp):
     _git("config", "user.name", "t", cwd=main)
     (main / "tests" / "bugs").mkdir(parents=True)
     (main / "skills").mkdir()
+    (main / "app").mkdir()
     (main / "tests" / "existing_top.py").write_text("# base top-level\n")
     (main / "tests" / "bugs" / "existing_sub.py").write_text("# base sub\n")
     (main / "skills" / "existing_top.md").write_text("# base skills top-level\n")
+    (main / "app" / "views.py").write_text("VIEW = 1\n")
     _git("add", "-A", cwd=main)
     _git("commit", "-qm", "base", cwd=main)
     base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=main,
@@ -123,17 +128,21 @@ def _build_scenario(tmp):
     (wt / "tests" / "new_top.py").write_text("# branch-only TOP-LEVEL under tests/\n")
     (wt / "tests" / "bugs" / "new_sub.py").write_text("# branch-only sub\n")
     (wt / "skills" / "new_top.md").write_text("# branch-only TOP-LEVEL under skills/\n")
+    (wt / "app" / "views.py").write_text("VIEW = 2  # host-project-shaped change\n")
+    if big_diff:
+        (wt / "app" / "big.py").write_text(
+            "\n".join(f"x{i} = {i}" for i in range(1500)) + "\n")
     _git("add", "-A", cwd=wt)
     _git("commit", "-qm", "feature", cwd=wt)
     return main, wt, base
 
 
-def _collect(tmp):
+def _collect(tmp, big_diff=False):
     bash = _bash()
     if bash is None:
-        pytest.skip("bash unavailable to reproduce the shell-glob behavior")
+        pytest.skip("no working bash available to exercise the collection block")
     snippet = _extract_collection_snippet(SKILL_MD.read_text(encoding="utf-8"))
-    main, wt, base = _build_scenario(tmp)
+    main, wt, base = _build_scenario(tmp, big_diff=big_diff)
     script = f'wt="{wt.as_posix()}"\nbase="{base}"\n{snippet}\n'
     out = subprocess.run([bash, "-c", script], cwd=str(main),
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -141,7 +150,7 @@ def _collect(tmp):
 
 
 def test_ac1_toplevel_branch_only_collected(tmp_path):
-    """AC1: a branch-only NEW top-level file under a review root reaches git."""
+    """AC1 (SC-087 guard): a branch-only NEW top-level file reaches git."""
     out = _collect(tmp_path)
     assert "tests/new_top.py" in out, (
         f"AC1 (SC-087): branch-only top-level tests/new_top.py was DROPPED.\n---collected---\n{out}")
@@ -155,28 +164,41 @@ def test_ac2_subdir_new_file_still_collected(tmp_path):
 
 
 def test_ac3_second_populated_root_toplevel_collected(tmp_path):
-    """AC3 (root-agnostic): a branch-only top-level file under a SECOND, POPULATED root
-    (skills/) is also collected. m1: skills/ is populated in the scenario main tree so
-    the unquoted form genuinely pre-expands and drops it -- red-on-bug, not a false-green
-    from unmatched-glob passthrough."""
+    """AC3 (root-agnostic): a branch-only top-level file under a SECOND populated root."""
     out = _collect(tmp_path)
     assert "skills/new_top.md" in out, (
-        f"AC3 (SC-087): branch-only top-level skills/new_top.md was DROPPED -- fix is not root-agnostic.\n"
-        f"---collected---\n{out}")
+        f"AC3: branch-only top-level skills/new_top.md was DROPPED.\n---collected---\n{out}")
 
 
-def test_ac4_collection_delivers_pathspecs_as_quoted_array(tmp_path):
-    """AC4 (site-guard / regression guard): the code-review collection region delivers
-    the pathspecs to git as a quoted array `"${paths[@]}"`, never as an unquoted `$paths`.
-    This is the durable guard for the audit conclusion (code-review:58 was the sole
-    affected shell site and is fixed) and against a maintainer reverting the fix."""
-    text = SKILL_MD.read_text(encoding="utf-8")
-    b_start, b_end = _first_bash_block(text)
-    lines = text.splitlines()[b_start:b_end]
-    git_lines = [ln for ln in lines if re.search(r'git\s+-C\s+"\$wt"\s+(diff|ls-files)', ln)]
-    assert git_lines, "no git diff/ls-files collection lines found in the first bash block"
-    for ln in git_lines:
-        assert '"${paths[@]}"' in ln, (
-            f"AC4: collection line does not deliver pathspecs as a quoted array:\n  {ln.strip()}")
-        assert not re.search(r'--\s+\$paths\b', ln), (
-            f"AC4: collection line still uses an UNQUOTED $paths (the SC-087 bug):\n  {ln.strip()}")
+def test_ac4_collection_has_no_pathspec(tmp_path):
+    """AC4 (site-guard): the collection lines pass NO pathspec to git — a hardcoded
+    directory list is the false-NO-CODE-CHANGES bug on differently-shaped host projects,
+    and this guard trips if a maintainer re-scopes the diff."""
+    block = _collection_block(SKILL_MD.read_text(encoding="utf-8"))
+    assert not any(re.match(r"\s*paths=", ln) for ln in block), (
+        "AC4: the collection block reintroduced a `paths=` pathspec list — the reviewer's "
+        "field of view must be the whole worktree diff, never a hardcoded layout.")
+    coll = [ln for ln in block if re.search(r'git\s+-C\s+"\$wt"\s+(diff|ls-files)', ln)]
+    assert coll, "no git diff/ls-files collection lines found in the block"
+    for ln in coll:
+        assert not re.search(r"\s--\s", ln.split("#")[0]), (
+            f"AC4: collection line scopes git with a pathspec (` -- `):\n  {ln.strip()}")
+
+
+def test_ac5_nonplugin_root_change_collected(tmp_path):
+    """AC5 (the false-green guard): a change under a NON-plugin-shaped root (app/ — a
+    host-project layout the old hardcoded pathspec was blind to) IS collected, so the
+    reviewer can never write a confident NO-CODE-CHANGES over it."""
+    out = _collect(tmp_path)
+    assert "app/views.py" in out, (
+        f"AC5: the app/ change was invisible to the collection — the false "
+        f"NO-CODE-CHANGES bug is back.\n---collected---\n{out}")
+
+
+def test_ac6_truncation_marker_emitted(tmp_path):
+    """AC6: a >1200-line diff emits the DIFF-TRUNCATED marker so the reviewer must
+    reassemble per-file diffs and record diff_truncated in the artifact — a silently
+    partial input must never read as full coverage."""
+    out = _collect(tmp_path, big_diff=True)
+    assert "DIFF-TRUNCATED" in out, (
+        f"AC6: no DIFF-TRUNCATED marker on a large diff.\n---tail---\n{out[-800:]}")

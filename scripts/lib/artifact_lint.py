@@ -362,6 +362,28 @@ CO_CONSTRAINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("spike", ""): ("verdict", "constraints"),
 }
 
+# Review sweep 2026-07: per-row REQUIRED-NON-EMPTY fields. /validate-slice's evidence
+# discipline ("command + output pasted; 'it worked' without evidence is not a PASS")
+# was prose-only — this makes it mechanical: each row at the listed path must carry a
+# non-empty string in the named field. (artifact_key, list path) -> field.
+ROW_REQUIRED_NONEMPTY: dict[tuple[str, str], str] = {
+    ("validation", "criteria[]"): "evidence",
+}
+
+
+def _row_required_violations(data: dict, key: str, label: str) -> list[str]:
+    v: list[str] = []
+    for (ak, parent), fld in ROW_REQUIRED_NONEMPTY.items():
+        if ak != key:
+            continue
+        for row in _walk_elements(data, parent):
+            if not str(row.get(fld) or "").strip():
+                rid = row.get("id") or "?"
+                v.append(f"{label}: {parent} row {rid!r} must carry a non-empty `{fld}` "
+                         f"— 'it worked' without evidence is not a PASS (the evidence "
+                         f"discipline is mechanical, not prose)")
+    return v
+
 
 def _walk_elements(data, dotted: str) -> list:
     """Like _walk, but returns the list ELEMENTS (dicts) at an `a[].b[]`-style path —
@@ -423,6 +445,7 @@ def lint_artifact(data: dict, key: str, example: dict, label: str) -> list[str]:
             if val is not None and val not in allowed:
                 v.append(f"{label}: `{path}` = {val!r} not in {sorted(allowed)}")
     v.extend(_co_constraint_violations(data, key, label))
+    v.extend(_row_required_violations(data, key, label))
     return v
 
 
