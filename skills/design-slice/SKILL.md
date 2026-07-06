@@ -55,7 +55,8 @@ and the `grep_vault.py` fallback below are unavailable/fail, proceed with the ad
 
 For conceptual matches not found by CRG keyword search, fall back to:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/grep_vault.py" --vault "$AI_SDLC_VAULT_ROOT" --pattern "<concept>" --dir slices/archive
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is NOT exported -- resolve per block (vars don't persist across bash blocks)
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/grep_vault.py" --vault "$VAULT" --pattern "<concept>" --dir slices/archive
 ```
 
 **Keep a short blast-radius summary** — it becomes part of the shared context every designer gets.
@@ -79,7 +80,7 @@ Capture stdout — it is shared designer context too.
 
 ## Step 1 — the design tournament (always 3 blind designers)
 
-Read `risk_tier` from the injected mission-brief — you still record it in `tournament.tier`, and it still drives
+Read `risk_tier` from the mission-brief resolved by the body step above — you still record it in `tournament.tier`, and it still drives
 the downstream `/critique` + `/critique-review` gates and the Step-8 design-spike triggers. **But the tournament
 runs on EVERY slice regardless of risk_tier — generation breadth is always maximal: spawn all 3 blind designers
 (`designer-practice` + `designer-crossdomain` + `designer-expert`) feeding the Step-2 reality-grounded synthesis.**
@@ -141,7 +142,9 @@ You now hold 2–3 independent proposals. Compose **one** design — this is the
    keep one and redesign the seam; record it in `coherence_check`.
 3. **Classify the disagreements.**
    - **Empirically decidable** (does the API support X? is it fast enough? does the integration actually work?)
-     → add to `tournament.decidable_disagreements` with `verdict: "pending"` **only when the losing answer would
+     → add to `tournament.decidable_disagreements` with `verdict: "pending"` (each entry is
+     `{question, verdict: "pending", spike: "pending"}` — the Step-8 design spike overwrites both, filling the
+     go/no-go `verdict` and the `spike: spike-<name>` ref) **only when the losing answer would
      force a re-synthesis** — a different component boundary, contract, or data model. A cheap question whose
      answer doesn't change the design (it just needs to hold) is NOT a decidable disagreement; let `/build-slice`'s
      smoke gate settle it. **Reality adjudicates the material ones** at the post-synthesis design spike (Step 8) —
@@ -180,7 +183,7 @@ If the design is clear, skip this step.
 
 ## Step 4 — tag every new ADR with reversibility
 
-For each decision this slice locks: first MINT the number IN-LOCK — `ADR=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --vault "$AI_SDLC_VAULT_ROOT" --file candidates.json --kind adr)` (prints `ADR-NNN`, bumps `counters.adr`; NEVER hand-pick the number) — then create `<vault>/decisions/$ADR.json` (schema: `examples/adr.json`) with `id` = `$ADR`. Key
+For each decision this slice locks: first MINT the number IN-LOCK — `VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"; ADR=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --vault "$VAULT" --file candidates.json --kind adr)` (prints `ADR-NNN`, bumps `counters.adr`; NEVER hand-pick the number) — then create `<vault>/decisions/$ADR.json` (schema: `examples/adr.json`) with `id` = `$ADR`. Key
 fields: `id`, `title`, `status: "accepted"`, `reversibility` (cheap|expensive|irreversible),
 `supersedes`/`superseded_by` (null if n/a), `slice`, `date`, `context`, `decision`, `consequences`.
 
@@ -190,8 +193,9 @@ overwrite an existing ADR — always write a NEW file (supersede via `supersedes
 **ADR-append seal (ADR-023 / SC-019):** immediately after writing the new `$ADR.json`, baseline it (SCOPED to
 that id) so the append-only gate carries its content fingerprint, then VERIFY the decisions set is clean:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$AI_SDLC_VAULT_ROOT" --seal "$ADR"
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$AI_SDLC_VAULT_ROOT"
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # AI_SDLC_VAULT_ROOT is NOT exported (4.6.1); adr_append_only_audit EXITS 2 on an empty --vault (unlike vault_edit/grep_vault, which fall back to the computed VAULT_ROOT) -- resolve it here or the VERIFY below false-STOPs on every mint
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$VAULT" --seal "$ADR"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$VAULT"
 ```
 `--seal "$ADR"` is SCOPED to the just-minted id ONLY -- never blanket (a blanket re-seal on every mint would
 re-open the trust window and launder an unrelated unsealed edit). **Treat ANY non-zero VERIFY here as STOP** and
@@ -199,7 +203,7 @@ surface it, do NOT seal over it: **exit 1** = a PRIOR ADR was edited in place ou
 sealed ADR was DELETED from disk out-of-band (ADR-049). With precedence 2>4>1>3>0 a co-occurring deletion+edit
 returns the scalar 4, so inspect `--json result['tampered']` too before acting -- a masked tamper is still listed
 there. (A project that already had ADRs *before* adopting this gate runs `adr_append_only_audit.py --vault
-"$AI_SDLC_VAULT_ROOT" --backfill` ONCE to baseline them.)
+"$VAULT" --backfill` ONCE to baseline them — resolve `$VAULT` as above.)
 
 Reversibility tags:
 - **cheap** — 1-hour change: UI tokens, log format, library swap
@@ -248,13 +252,14 @@ Key fields:
 every slice, so this row is always written):
 
 ```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is NOT exported -- resolve per block
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate design-tournament --slice slice-NNN-<name> \
     --verdict <most-divergent pair: identical|overlapping|disjoint> --findings-count 0 \
     --approach-divergence "practice~crossdomain:<d>; practice~expert:<d>; crossdomain~expert:<d>" \
     --mode <minimal|standard|heavy> --tier <low|medium|high> \
   | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+        --vault "$VAULT" --file gate-log.json --array entries --stdin
 ```
 
 This row raises no findings (it is informational, not a verdict/finding gate — `/pulse` excludes it from the
@@ -319,6 +324,9 @@ invariants, logs a **high** reality-contact gate row, and then:
   specific composition failed). Re-run Step 2 with the failed branch excluded, sourcing the full proposals from
   `<slice>/design-proposals.json` (written in Step 1 — do NOT rely on conversation memory; after a
   compaction/restart that file is the only complete record). Do NOT re-spawn the designers.
+  **Bound the loop to ≤2 re-synthesis rounds:** each round drops the failed branch, so it converges fast; if a
+  2nd design spike still returns NO-GO, HALT and surface to the user — a persistent NO-GO is a feasibility
+  problem, not a composition one (reconsider the candidate / discuss a fallback), not another silent re-synthesis.
 
 **Step 8 is condition-gated, never tier-gated:** a slice with no pending decidable disagreement and no
 `must-verify` invariant has nothing for reality to adjudicate — it skips Step 8 and goes straight to Step 9.
