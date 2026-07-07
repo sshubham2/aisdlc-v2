@@ -52,10 +52,33 @@ Then:
 - The MCP server **cannot** go live this session (Claude Code reads MCP config at startup) — the report's
   "RESTART Claude Code" step is mandatory, not optional. Reinforce it.
 
+## Offer to commit the ai-sdlc config (consented)
+
+`/setup` scaffolds `<repo>/.aisdlc/reality-gates.json` and appends ignore lines to `<repo>/.gitignore` —
+repo-tracked config that is **meant to be committed** (it must travel to teammates + CI), but which `setup.py`
+leaves *uncommitted*. Left that way, it makes the main tree dirty and trips the **WT-ROOT-1** pristine-main-tree
+check on the first `/build-slice`. So close the loop here, **only with consent** (a git side-effect on the user's repo):
+
+- If `setup.py`'s report contains an **`UNCOMMITTED AI-SDLC CONFIG`** block, `AskUserQuestion`: commit those files
+  now? (Recommended — sends declared reality-gates to CI + keeps the tree clean for slice builds.) Show the exact
+  paths it listed so consent is informed. `.mcp.json` is deliberately **not** offered (machine-specific + gitignored).
+- **On yes**, run the actuator (it is pathspec-scoped — it commits ONLY those two files, never the user's other
+  staged work — and is guarded: a visible no-op on a non-git repo / detached HEAD / nothing-to-commit):
+  ```bash
+  PYX="${PY:-}"; [ -f "$PYX" ] || PYX="$(printf '%s' "${AI_SDLC_PY:-}" | tr '\134' '/')"; [ -f "$PYX" ] || PYX="$(command -v python3 || command -v python || command -v py || true)"
+  "$PYX" "${CLAUDE_SKILL_DIR}/scripts/setup.py" --commit
+  ```
+- **On no**, leave it — the report already told the user how to commit it themselves later.
+- If the report has **no** `UNCOMMITTED AI-SDLC CONFIG` block (not a git repo, or already committed on a re-run),
+  skip this step silently.
+
 ## What this skill does NOT do
 
 - **No vault writes, no source edits.** `setup.py` only installs deps, writes `<repo>/.mcp.json` (+ a `.gitignore`
-  line), and builds `<repo>/.code-review-graph/`. It is not part of the per-slice loop and produces no pipeline artifacts.
+  line), scaffolds `<repo>/.aisdlc/reality-gates.json`, and builds `<repo>/.code-review-graph/`. The one git
+  side-effect it can make is the **consented** `--commit` of its own config above (`.aisdlc/reality-gates.json` +
+  `.gitignore`) — never source, never the user's other staged work. It is not part of the per-slice loop and
+  produces no pipeline artifacts.
 - **It cannot make the MCP server live this session** — a Claude Code lifecycle fact (MCP loads at startup, before
   skills run). The honest deliverable is "installed + registered, now restart."
 
