@@ -64,8 +64,25 @@ def _make_default_changelog(vault):
     def _cl(repo_root, new_version):
         if not vault:
             return (False, "no --vault provided for changelog regen")
+        # slice-065 / ADR-062: this is the IN-CUT changelog hook -- run_release_cut has
+        # ALREADY confirmed the integration branch is ahead and staged a non-empty
+        # `--no-ff --no-commit` merge, so MERGE_HEAD provably exists. Source the open
+        # period from it (read-your-own-writes) so the pre-commit changelog sees the
+        # merged-in slices and _roll_forward attributes them onto the new version.
+        # m2: probe against repo_root (`git -C`), NOT the process CWD -- run_release_cut
+        # never chdirs. M-add-1: an ABSENT MERGE_HEAD here is a fail-visible invariant
+        # violation, NOT a silent HEAD fallback (which would strand the released slices
+        # under [Unreleased] -- the exact regression this slice fixes). Returning False
+        # routes into run_release_cut's changelog-failed rollback (master untouched).
+        mh = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+            capture_output=True, text=True)
+        merge_head = mh.stdout.strip() if mh.returncode == 0 else ""
+        if not merge_head:
+            return (False, "MERGE_HEAD absent mid-cut -- refusing to cut a changelog that "
+                           "would strand released slices under [Unreleased]")
         args = [sys.executable, str(_ASSEMBLE), "--vault", str(vault),
-                "--repo-root", str(repo_root),
+                "--repo-root", str(repo_root), "--merge-head", merge_head,
                 "--out", str(Path(repo_root) / "CHANGELOG.md")]
         if new_version:
             args += ["--new-version", new_version]

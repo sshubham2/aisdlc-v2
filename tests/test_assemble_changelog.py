@@ -563,3 +563,39 @@ def test_no_new_version_spot_unchanged(run_script, vault, repo):
     withflag_absent = _run_rf(run_script, vault, repo)  # explicitly no --new-version
     assert withflag_absent.returncode == 0
     assert withflag_absent.stdout == base.stdout
+
+
+# ---- slice-065 / ADR-062: --merge-head byte-identical witness (m1) ----------
+def _load_assemble_module():
+    import importlib.util
+    import sys
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    spec = importlib.util.spec_from_file_location(
+        "assemble_changelog", root / "skills" / "release" / "scripts" / "assemble_changelog.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["assemble_changelog"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_merge_head_no_new_reachability_byte_identical(run_script, vault, repo):
+    """m1 (AC4): passing --merge-head <a ref already reachable from HEAD> adds no new
+    reachability, so the rendered CHANGELOG is BYTE-IDENTICAL to the no-flag run -- the
+    direct on/off witness for the additive-flag preservation claim."""
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    no_flag = run_script(SCRIPT, ["--vault", str(vault), "--repo-root", str(repo)])
+    with_flag = run_script(SCRIPT, ["--vault", str(vault), "--repo-root", str(repo),
+                                    "--merge-head", head])
+    assert no_flag.returncode == 0 and with_flag.returncode == 0, (no_flag.stderr, with_flag.stderr)
+    assert with_flag.stdout == no_flag.stdout, \
+        "--merge-head adding no new reachability must be byte-identical to the no-flag run"
+
+
+def test_git_log_merge_head_none_equals_no_arg(repo):
+    """m1: the new optional param defaults to the historical HEAD-only walk -- _git_log with
+    merge_head=None returns the SAME commit list as the no-arg call (byte-identical contract
+    pinned directly at the function boundary)."""
+    asm = _load_assemble_module()
+    assert asm._git_log(str(repo)) == asm._git_log(str(repo), merge_head=None)
