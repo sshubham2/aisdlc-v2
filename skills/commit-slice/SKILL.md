@@ -150,8 +150,10 @@ is the backstop for docs that drift when this hook is declined.
 - **Present** (the project opted into the CI merge gate): emit the receipt into the worktree so it rides the
   slice commit and the PR carries its own reality evidence:
   ```bash
+  wt="$(git rev-parse --show-toplevel | tr -d '\r')"   # slice worktree (cwd here -- rides the slice commit)
+  VAULT="${AI_SDLC_VAULT_ROOT:-$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/ship_receipt.py" emit \
-      --slice slice-NNN-<name> --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$wt"
+      --slice slice-NNN-<name> --vault "$VAULT" --repo-root "$wt"
   ```
   It writes `.aisdlc/receipts/slice-NNN.json` (validation result + criteria counts + shippability/deferral
   state + this slice's gate-log rows). **Stage it with the commit** (add it to the Step 5b/5c `git add` set).
@@ -320,7 +322,7 @@ direct-merge path was dropped at slice-008 TRI-1 (ADR-006); nothing merges local
    non-blocking auto-merge when you have merge rights? Auto-merge is non-blocking (it merges after CI); nothing
    merges locally."_ On no → STOP (branch left committed + rebased; nothing pushed).
 5. On yes → invoke the non-interactive PR ladder (it owns push → PR-create → auto-merge-enable + verify). Each
-   ```bash``` block is a FRESH shell (vars do NOT persist across blocks), so resolve `default` IN THIS block; 5c
+   fenced `bash` block is a FRESH shell (vars do NOT persist across blocks), so resolve `default` IN THIS block; 5c
    runs ON the slice branch, so the worktree IS the cwd — pass `--repo-root .` (do NOT reference a `$wt` from
    another block):
    ```bash

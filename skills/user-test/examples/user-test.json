@@ -1,6 +1,6 @@
 {
   "_schema": "aisdlc/user-test@1",
-  "_note": "Real-user validation findings (mockup / prototype / working slice). Surfaced risks append to risk-register.json; surfaced work becomes candidates. The real-user signal is participants + findings[] tagged source:'real-user' (slice-044 / ADR-034); the OPTIONAL heuristic_walkthrough sibling is a weaker model-only pre-flight screen that NEVER counts as real-user validation.",
+  "_note": "Real-user validation findings (mockup / prototype / working slice). Surfaced risks append to risk-register.json; surfaced work becomes candidates. Real-user signal = participants + findings[] tagged source:'real-user' (slice-044 / ADR-034); the OPTIONAL heuristic_walkthrough sibling is a weaker model-only pre-flight screen that NEVER counts as real-user validation.",
   "test": "checkout-flow-mockup",
   "mode": "prototype",
   "date": "<ts>",
@@ -28,7 +28,11 @@
     "color": "heuristic",
     "status": "ok",
     "echo_chamber_caveat": "This artifact was itself AI-generated, so a model reviewing it shares its blind spots (echo chamber). Treat these heuristic findings as especially weak and confirm everything with the real-user session.",
-    "disclaimed_scopes": ["cross-screen-state", "efficiency", "motivational-dropout"],
+    "disclaimed_scopes": [
+      "cross-screen-state",
+      "efficiency",
+      "motivational-dropout"
+    ],
     "findings": [
       {
         "id": "H1",

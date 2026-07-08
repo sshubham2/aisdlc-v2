@@ -8,17 +8,32 @@ All notable changes, newest first. Versions are reconstructed from git history; 
 
 _Nothing unreleased._
 
-## [2.38.1] — 2026-07-08
+## [2.38.2] — 2026-07-08
+
+### Changed
+
+- refresh README to v2.38.1 + reality-gates scaffold clause
+- refresh user-guide for reality-gates + commit-slice flow
 
 ### Fixed
 
-- **release:** Make a /release cut produce a correct CHANGELOG by sourcing the open period from the staged MERGE_HEAD (slice-065-fix-release-cut-changelog-regen-ordering) [ADR-062]
+- green the build-consistency job (cross-block audit + stale examples)
+
+## [2.38.1] — 2026-07-08
+
+### Changed
+
+- release 2.38.1: merge aisdlc-uat -> master + bump + changelog
 
 ## [2.38.0] — 2026-07-08
 
 ### Changed
 
 - release 2.38.0: merge aisdlc-uat -> master + bump + changelog
+
+### Fixed
+
+- **release:** Make a /release cut produce a correct CHANGELOG by sourcing the open period from the staged MERGE_HEAD (slice-065-fix-release-cut-changelog-regen-ordering) [ADR-062]
 
 ## [2.37.0] — 2026-06-19
 

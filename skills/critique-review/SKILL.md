@@ -114,7 +114,12 @@ belt-and-braces, ALWAYS run together — one block so neither can be skipped alo
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is NOT exported -- resolve per block
-ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+ARG="${ARGUMENTS[0]:-}"
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
+SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"
+else
+SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"
+fi
 $PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py" "$SDIR"; audit_rc=$?
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type critique-review "$SDIR/critique-review.json"; lint_rc=$?
 # each: exit 0 = clean · 1 = violations (re-prompt + rewrite + re-validate) · 2 = usage/tooling error (surface, NOT a clean pass)

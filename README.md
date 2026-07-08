@@ -68,7 +68,10 @@ After installing the plugin, run the one-time dependency doctor:
 
 It resolves a working Python, installs the runtime deps (PyYAML + `code-review-graph`) **with visible
 progress**, registers the `code-review-graph` **MCP server** for Claude Code (a project-scoped, gitignored
-`.mcp.json`), builds the code graph, then prints the next steps. Two of them matter:
+`.mcp.json`), scaffolds a repo-tracked `.aisdlc/reality-gates.json` (the pluggable reality-gate declaration that
+`/build-slice`'s pre-finish gate and `/validate-slice` run via `scripts/lib/reality_gate_runner.py`), builds the
+code graph, then prints the next steps — including, on a git repo, a consented offer to commit that new
+`.aisdlc/` config so it reaches your teammates and CI. Two of the next steps matter most:
 
 1. **Restart Claude Code** — MCP servers load at startup, so the CRG graph tools only appear on the next launch.
 2. **Approve the one-time trust prompt** for `code-review-graph`; then `/mcp` should show it connected.
@@ -344,7 +347,7 @@ Licensed under the **MIT License** — see [LICENSE](LICENSE).
 
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.32.0
+Shubhendu Shubham · plugin `ai-sdlc` v2.38.1
 
 ---
 
