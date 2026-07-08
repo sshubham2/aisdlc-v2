@@ -8,6 +8,12 @@ All notable changes, newest first. Versions are reconstructed from git history; 
 
 _Nothing unreleased._
 
+## [2.38.1] — 2026-07-08
+
+### Fixed
+
+- **release:** Make a /release cut produce a correct CHANGELOG by sourcing the open period from the staged MERGE_HEAD (slice-065-fix-release-cut-changelog-regen-ordering) [ADR-062]
+
 ## [2.38.0] — 2026-07-08
 
 ### Changed
