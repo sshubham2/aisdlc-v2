@@ -32,11 +32,17 @@ Before anything else, run the one-time setup in the project directory you want t
 ```
 
 This installs PyYAML and `code-review-graph` (with visible pip progress), registers the CRG MCP server
-in a gitignored `.mcp.json`, and builds the initial code graph. When it finishes:
+in a gitignored `.mcp.json`, scaffolds a repo-tracked `.aisdlc/reality-gates.json` (the pluggable
+reality-gate declaration that `/build-slice`'s pre-finish gate and `/validate-slice` run, fail-closed —
+an absent/empty file is simply a no-op), and builds the initial code graph. When it finishes:
 
 1. **Restart Claude Code** — the MCP server only becomes available on the next launch.
 2. **Approve the one-time trust prompt** for `code-review-graph` when Claude Code restarts.
 3. Run `/mcp` to confirm the server is connected.
+
+On a git repo, `/setup` also offers — with your consent — to commit `.aisdlc/reality-gates.json` plus the
+`.gitignore` line it added, so the declared gates travel to teammates and CI and the main tree stays clean
+for `/build-slice`. Decline and it just tells you how to commit them yourself later.
 
 Optional flags:
 - `--no-mcp` — skip MCP server registration
@@ -294,7 +300,8 @@ phone over Remote Control. You then approve to proceed to `/build-slice`.
 Plan-mode execution: the Builder explores code with CRG queries and targeted Reads, drafts a task sequence,
 and **halts for your explicit approval** before writing any code. Execution proceeds task-by-task with
 per-task verification, a mandatory mid-slice smoke gate, and a multi-audit pre-finish gate (including
-`/drift-check --fast`). Writes `build-log.json` and updates `milestone.json`.
+`/drift-check --fast` and any project-declared reality gates from `.aisdlc/reality-gates.json`, run
+fail-closed). Writes `build-log.json` and updates `milestone.json`.
 
 ### 4h. Code review — `/code-review`
 
@@ -313,8 +320,9 @@ Blocker findings must be dispositioned before `/validate-slice` proceeds.
 ```
 
 Runs forked. Executes per-criterion PASS/FAIL/PARTIAL checks on the **real environment** (real device, real
-user, real data — not just tests passing). Runs VAL-1/WS-1/ETC-1 layered audits and the shippability
-catalog regression check. Auto-advances to `/reflect` only on aggregate Result: PASS.
+user, real data — not just tests passing). Runs VAL-1/WS-1/ETC-1 layered audits, the shippability catalog
+regression check, and any project-declared reality gates (`.aisdlc/reality-gates.json`, fail-closed — an
+absent/empty manifest is a no-op). Auto-advances to `/reflect` only on aggregate Result: PASS.
 
 ### 4j. Reflect — `/reflect`
 
@@ -338,8 +346,12 @@ calibration per TRI-1, and auto-archives the slice.
 User-invoked only — never auto-advanced into. Generates an audit-grade conventional commit message from
 vault artifacts (mission-brief, build-log, validation, reflection, critique, ADRs, shippability). Modes:
 
-- `--merge` — solo-dev local merge + safe branch delete
-- `--push` — push slice branch + display PR hint
+- `--merge` — solo-dev local merge + safe branch delete. Before merging, re-runs the shippability catalog
+  against the post-rebase integration-branch tip and **refuses the merge on red** (the integration-health
+  gate) — so a locally-green slice can never merge into a branch already broken by an already-landed sibling.
+- `--push` — push the slice branch, rebase it onto the integration branch, then (gh present + GitHub origin)
+  open a PR and enable **non-blocking auto-merge** once you have confirmed merge rights — degrading
+  gracefully to a plain push + a printed PR/next-step hint at every rung it can't clear. Never merges locally.
 - `--sync-after-pr` — post-PR local cleanup
 - No flag — generate and show the commit message only
 
