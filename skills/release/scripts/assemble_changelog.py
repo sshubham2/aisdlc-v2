@@ -150,15 +150,23 @@ def _run_git(repo_root: str, *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def _git_log(repo_root: str) -> list[dict] | None:
+def _git_log(repo_root: str, merge_head: str | None = None) -> list[dict] | None:
     """ONE call: every commit oldest->newest as {hash, date (YYYY-MM-DD), subject}.
-    None on git failure (binary missing / not a repo / zero commits)."""
+    None on git failure (binary missing / not a repo / zero commits).
+
+    ``merge_head`` (slice-065 / ADR-062): when given, walk the UNION of history reachable
+    from ``HEAD`` AND that ref (an in-progress release cut's staged MERGE_HEAD), so the
+    open period -- which lives on the second-parent side of a `--no-ff --no-commit` merge
+    and is NOT yet reachable from the un-advanced HEAD -- is visible pre-commit. When
+    ``None`` (the standalone-regen caller), the git-log argv is byte-identical to the
+    historical HEAD-only walk (AC4)."""
+    extra_refs = ["HEAD", merge_head] if merge_head else []
     try:
         # --topo-order keeps a child after its parents; --date-order is the stable
         # secondary key so parallel branches with no strict ancestry break ties
         # deterministically (M3: identical output across runs on parallel history).
         r = _run_git(repo_root, "log", "--reverse", "--topo-order", "--date-order",
-                     "--date=short", f"--format=%H{_UNIT}%ad{_UNIT}%s")
+                     "--date=short", f"--format=%H{_UNIT}%ad{_UNIT}%s", *extra_refs)
     except (FileNotFoundError, OSError):
         return None
     if r.returncode != 0:
@@ -212,16 +220,17 @@ def _versions_at(repo_root: str, commits: list[dict]) -> dict[str, str]:
     return versions
 
 
-def _git_history(repo_root: str) -> tuple[str, list[dict] | None]:
+def _git_history(repo_root: str, merge_head: str | None = None) -> tuple[str, list[dict] | None]:
     """Returns (status, commits). status: ok | absent | empty | shallow.
-    Anything but ``ok`` means the log is incomplete -> the caller degrades."""
+    Anything but ``ok`` means the log is incomplete -> the caller degrades.
+    ``merge_head`` is passed straight through to ``_git_log`` (slice-065)."""
     try:
         top = _run_git(repo_root, "rev-parse", "--show-toplevel")
     except (FileNotFoundError, OSError):
         return ("absent", None)
     if top.returncode != 0:
         return ("absent", None)
-    commits = _git_log(repo_root)
+    commits = _git_log(repo_root, merge_head)
     if not commits:  # None (git log failed) or [] -> repo with no commits
         return ("empty", [])
     shallow = _run_git(repo_root, "rev-parse", "--is-shallow-repository")
@@ -474,6 +483,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         "(commits after the last version-change) forward onto it. Must be "
                         "strictly greater than the current head version. Omit when there is "
                         "no unreleased work (an open period of merges only).")
+    p.add_argument("--merge-head", default=None, dest="merge_head",
+                   help="also walk history reachable from this ref (an in-progress release "
+                        "cut's staged MERGE_HEAD), UNIONed with HEAD, so the open period on "
+                        "the merge's second-parent side is visible pre-commit (slice-065 / "
+                        "ADR-062). Omit for standalone regen -> byte-identical HEAD-only walk.")
     return p
 
 
@@ -512,7 +526,8 @@ def main(argv: list[str] | None = None) -> int:
 
     records = [rec for _, rec in _load_changelogs(vault)]
     repo_root = _resolve_repo_root(args.repo_root)
-    status, commits = _git_history(repo_root)
+    merge_head = (args.merge_head or "").strip() or None
+    status, commits = _git_history(repo_root, merge_head)
 
     if status != "ok":
         # Degraded run — the git log is absent/incomplete, so a full reconstruction is
