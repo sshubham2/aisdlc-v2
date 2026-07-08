@@ -34,10 +34,16 @@ The /critique skill will hand you:
 - **mission-brief.json** — slice intent, acceptance criteria, must-not-defer, out-of-scope, mid-slice smoke gate, pre-finish gate
 - **design.json** — what's new, what's reused, components touched, contracts changed, decisions, authorization model, error model
 - **New ADRs** — one or more `<vault>/decisions/ADR-NNN.json` this slice introduces
-- **Aggregated lessons** — from `<vault>/slices/_index.json`
+- **Active worktree** (ADR-012) — where this slice's code + relocated repro tests live, or "main tree"
+- **Cross-domain transfer / tournament blocks** — from design.json when present (incl. channeled experts), or "none"
+- **project-frame** — the PFS-1 synthesis, or "(project-frame unavailable)"
+- **Cross-slice action points** — contents of `<vault>/slices/action-points.json`, or "none"
+- **Project-calibrated checks / calibration notes** — `active_checks[]` to apply + `calibration_notes[]` to weight lighter, or "none"
 - **Optional**: specific archived slice reflections if directly relevant
 
-If any are missing or unreadable, say so explicitly and stop. Do not invent inputs.
+**mission-brief.json and design.json are the two REQUIRED inputs** — if either is missing or unreadable, say so
+explicitly and stop; do not invent inputs. Every other block is contextual and arrives with an explicit
+"none"/"unavailable" marker when absent — proceed without it rather than halting.
 
 ## Reference frameworks (retrieval keys — name the framework in each finding)
 

@@ -13,14 +13,15 @@ Discovery step of the AI SDLC pipeline. Output: enough understanding of WHAT, WH
 
 ## Live vault state — injected
 
-Triage context (mode, audience, existing risks):
+Triage context (mode, audience, existing risks) — no `--vault` flag anywhere in this skill: 4.6.1,
+`AI_SDLC_VAULT_ROOT` is NOT exported; the bundled tools resolve the vault internally:
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" --vault "$AI_SDLC_VAULT_ROOT" triage.json 2>/dev/null || echo '{"_missing":true}'
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" triage.json 2>/dev/null || echo '{"_missing":true}'
 ```
 
 HIGH-risk items for Step 4:
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" --vault "$AI_SDLC_VAULT_ROOT" risk-register.json 2>/dev/null || echo '{"risks":[]}'
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" risk-register.json 2>/dev/null || echo '{"risks":[]}'
 ```
 
 ## Prerequisite check
@@ -70,7 +71,8 @@ For each HIGH-risk item from the injected `risk-register.json` (band == "high"):
 > "Is this risk addressed by an assumption on the first slice candidate, or does it need its own candidate first?"
 
 - Either way: the risk stays **open** in the register. Do NOT resolve or close it here.
-- Note which candidate(s) will retire each HIGH risk when the per-slice loop begins.
+- Note which candidate(s) will retire each HIGH risk when the per-slice loop begins — and record the mapping
+  STRUCTURED at Step 6 (the candidate's `retires: ["R-NN"]` field), not only in `notes` prose.
 - `/risk-spike` is an **in-loop gate** inside `/slice` — it is not a pre-pipeline step. Discover never hands off to it.
 
 Do NOT remove risks from the register here — only annotate `notes`.
@@ -110,13 +112,21 @@ Write all outputs using the schemas shown in `examples/`. All artifacts are JSON
 
 Schema by example: `examples/concept.json` (write_semantics: create, raw-write). Key fields: `_schema`, `mode`, `what`, `non_goals[]`, `actors[]` (name/role/top_actions/needs/cannot), `constraints` (stack[]/infra/team), `references[]`, `first_slice_candidate`.
 
+**Re-run guard**: if `concept.json` already exists (a re-run, or post-`/adopt` concept sharpening — the
+pipeline position supports both), READ it first and carry forward every field you are not deliberately
+changing — especially `references[]` and any `/adopt`-written `doc_vs_code_discrepancies` / `q1_vs_code` —
+the raw-write must never silently drop an earlier writer's fields.
+
 ### All modes — update `<vault>/risk-register.json`
 
 Schema by example: `examples/risk-register.json`. Route through `vault_edit` (SVW-1) — **never raw whole-file overwrite**:
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" \
-    --file risk-register.json --array risks --json '[<new-risk-objects>]'
+# PRE-MINT each new risk's id in-lock (one alloc per risk — never model-mint "next R-NN";
+# parallel writers collide on it), then carry the ids in the payload:
+R="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --file risk-register.json --kind r)"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+    --file risk-register.json --array risks --json '[<new-risk-objects, each with an alloc-minted "id">]'
 ```
 
 Add any new discovery-phase risks found during the conversation (band = high/med/low as appropriate). This is a shared append-mutated file; `vault_edit` append is mandatory to prevent the write-race `raw-write` would reintroduce.
@@ -126,15 +136,15 @@ Add any new discovery-phase risks found during the conversation (band = high/med
 Schema by example: `examples/slice-candidates.json`. Materialize the named first slice candidate:
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" \
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
     --file candidates.json --array candidates --json '<new-candidate-object>'
 ```
 
-Candidate `id`: OMIT it — the allocator mints `SC-NNN` in-lock (`vault_edit append` on `candidates.json`/`candidates` rejects a caller-supplied id and fills it). `status: "candidate"`, `progress: "not-started"`, `source: [{"type":"risk","ref":"<R-NN>"}]`, `history: [{"event":"created","by":"discover","at":"<ts>"}]`.
+Candidate `id`: OMIT it — the allocator mints `SC-NNN` in-lock (`vault_edit append` on `candidates.json`/`candidates` rejects a caller-supplied id and fills it). `status: "candidate"`, `progress: "not-started"`, `source: [{"type":"risk","ref":"<R-NN>"}]`, `retires: ["<R-NN>", …]` (the Step-4 risk→candidate mapping as STRUCTURED data — which HIGH risks this candidate will retire, so `/pulse` can show unretired HIGH risks mechanically instead of mining `notes` prose), `history: [{"event":"created","by":"discover","at":"<ts>"}]`.
 
 ### Standard + Heavy — `<vault>/decisions/ADR-NNN.json`
 
-Schema by example: `examples/adr.json`. One ADR per non-trivial tech decision. ADRs are **append-only** — never edit in place; supersede with a new ADR. Mint the ADR number IN-LOCK — `ADR=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --vault "$AI_SDLC_VAULT_ROOT" --file candidates.json --kind adr)` (prints `ADR-NNN`, bumps `counters.adr`) — and name the file `<vault>/decisions/$ADR.json`. Never hand-pick the number. Reference each ADR from `concept.json` `constraints.stack[].adr`.
+Schema by example: `examples/adr.json`. One ADR per non-trivial tech decision. ADRs are **append-only** — never edit in place; supersede with a new ADR. Mint the ADR number IN-LOCK — `ADR=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --file candidates.json --kind adr)` (prints `ADR-NNN`, bumps `counters.adr`) — and name the file `<vault>/decisions/$ADR.json`. Never hand-pick the number. Reference each ADR from `concept.json` `constraints.stack[].adr`.
 
 ### Heavy mode only — `<vault>/requirements.json`
 
@@ -142,7 +152,7 @@ Schema by example: `examples/requirements.json`. Functional + non-functional req
 
 ### Heavy mode only — `<vault>/actors/<actor>.json`
 
-One file per actor. Includes role-play walkthrough fields: `first_time_use`, `heavy_load`, `error_case`, `waiting`, `collaboration`, `audit_history` (markdown-valued strings).
+One file per actor. Includes role-play walkthrough fields: `first_time_use`, `heavy_load`, `error_case`, `waiting`, `collaboration`, `audit_history` (markdown-valued strings). These are the MODEL's imagined walkthroughs — `/user-test` is the real-user version of the same walk; when it runs, its observed findings supersede (and are worth cross-checking against) what was imagined here.
 
 ## Critical rules
 

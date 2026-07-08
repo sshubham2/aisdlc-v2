@@ -6,8 +6,11 @@ concise, human-readable summary of its `mission-brief.json` — intent, acceptan
 criteria, must-not-defer, out-of-scope, verification plan, variant flags — for the
 designer to read at load time. Read-only.
 
-CLI: `--vault ROOT [--repo-root .]`. Exit 0 always (an absent slice / brief is a normal
-early state — print a clear note and let the skill proceed).
+CLI: `--vault ROOT [--repo-root .] [--slice slice-NNN]`. With `--slice` it resolves THAT slice
+by id (archive-aware, via `active_slice.resolve_slice_by_id`) — mirroring `active_slice.py --slice`
+so `/design-slice slice-NNN` resolves the named slice's brief from a main session (slice-031 / AC5);
+without it, the active slice. Exit 0 always (an absent slice / brief is a normal early state — print
+a clear note and let the skill proceed).
 """
 from __future__ import annotations
 
@@ -23,7 +26,7 @@ if str(_PLUGIN_ROOT) not in sys.path:
 
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
-from scripts.lib.active_slice import resolve_active_slice
+from scripts.lib.active_slice import resolve_active_slice, resolve_slice_by_id
 
 
 def _root(vault_arg: str | None) -> Path:
@@ -82,9 +85,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--vault", default=None)
     p.add_argument("--repo-root", "--root", dest="repo_root", default=".")
+    p.add_argument("--slice", default=None, metavar="slice-NNN",
+                   help="resolve THIS slice by id (archive-aware, via resolve_slice_by_id) -- mirrors "
+                        "active_slice.py --slice; for /design-slice slice-NNN. Else the active slice.")
     args = p.parse_args(argv)
 
-    info = resolve_active_slice(_root(args.vault), args.repo_root)
+    # slice-031 (AC5): an explicit --slice resolves by id (the SAME archive-aware primitive
+    # active_slice.py --slice uses), so design-slice's guard then-branch resolves the named slice
+    # from a main session; the no-arg path keeps resolve_active_slice (branch-first + exit-4 HALT).
+    info = (resolve_slice_by_id(_root(args.vault), args.slice) if args.slice
+            else resolve_active_slice(_root(args.vault), args.repo_root))
     if isinstance(info, dict) and info.get("source") == "ambiguous":
         # slice-014 (B1/M-add-1): the AMBIGUOUS sentinel is a TRUTHY dict, so it must be
         # caught BEFORE `if not info` (else `Path(info['path'])` would crash on path=None),

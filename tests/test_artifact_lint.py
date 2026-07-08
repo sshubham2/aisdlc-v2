@@ -40,6 +40,21 @@ def test_fix_now_disposition_is_flagged():
     assert any("fix-now" in v for v in violations)
 
 
+def test_validation_criteria_empty_evidence_flagged():
+    # Review sweep 2026-07: the per-criterion evidence discipline is mechanical —
+    # a validation criteria[] row with empty/missing evidence must fail the lint
+    # ("it worked" without evidence is not a PASS).
+    examples = _load_examples()
+    val = copy.deepcopy(examples["validation"])
+    assert val.get("criteria"), "the canonical validation example has no criteria rows"
+    val["criteria"][0]["evidence"] = "   "
+    violations = lint_artifact(val, "validation", examples["validation"], "test")
+    assert any("evidence" in v for v in violations)
+    # and the canonical example itself stays clean (non-empty evidence)
+    assert not lint_artifact(examples["validation"], "validation",
+                             examples["validation"], "test")
+
+
 def test_missing_schema_tag_flagged():
     examples = _load_examples()
     key = next(iter(examples))
@@ -327,3 +342,18 @@ def test_enum_path_resolves_detects_dead_row(monkeypatch):
     fake[("code-review", "no_such_field")] = frozenset({"x"})
     monkeypatch.setattr(artifact_lint, "KNOWN_ENUMS", fake)
     assert any("no_such_field" in d for d in artifact_lint.enum_path_resolves())
+
+
+def test_public_surface_unverified_reason_enum_enforced():
+    # BC-PROJ-1 / M2 (slice-040): the new public_surface_unverified[].reason enum is only real
+    # where the linter enforces it -- a bogus value must fail lint; the canonical value passes.
+    examples = _load_examples()
+    ex = examples["doc-manifest"]
+    bad = copy.deepcopy(ex)
+    bad["public_surface_unverified"] = [{"token": "x", "reason": "BOGUS-REASON"}]
+    assert any("BOGUS-REASON" in v or "public_surface_unverified" in v
+               for v in lint_artifact(bad, "doc-manifest", ex, "test"))
+    good = copy.deepcopy(ex)
+    good["public_surface_unverified"] = [{"token": "x", "reason": "not-indexed"}]
+    assert not any("public_surface_unverified" in v
+                   for v in lint_artifact(good, "doc-manifest", ex, "test"))

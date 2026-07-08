@@ -62,22 +62,90 @@ def _stream(cmd: list[str]) -> int:
         return 1
 
 
+# The repo-TRACKED config files /setup creates or modifies -- ai-sdlc's OWN artifacts,
+# meant to be committed (M-add-2) so declared reality-gates reach teammates + CI and the
+# main tree stays clean for a later slice build (an uncommitted file here trips WT-ROOT-1,
+# the pristine-main-tree check in scripts/lib/wt_root_audit.py). `.mcp.json` is deliberately
+# EXCLUDED -- it is machine-specific + gitignored, so it must NOT be committed.
+_SCAFFOLD_PATHS = (".aisdlc/reality-gates.json", ".gitignore")
+
+
+def _uncommitted_scaffold(repo: str) -> list[str]:
+    """Which of the _SCAFFOLD_PATHS are currently uncommitted (untracked OR modified).
+    Empty when not a git repo or all already committed (idempotent re-run)."""
+    if not _is_git(repo):
+        return []
+    out = []
+    for rel in _SCAFFOLD_PATHS:
+        r = subprocess.run(["git", "-C", repo, "status", "--porcelain", "--", rel],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            out.append(rel)
+    return out
+
+
+def commit_scaffold(repo: str) -> int:
+    """Stage + commit ONLY the ai-sdlc config files /setup created/modified, so they reach
+    teammates + CI and don't trip WT-ROOT-1 during a later slice build. Consent lives in the
+    SKILL.md; this is the mechanical actuator (`/setup --commit`).
+
+    Guarded + idempotent -- a visible no-op (exit 0) when: not a git repo, HEAD is detached /
+    mid-merge (committing there is surprising), or nothing is uncommitted. NEVER `git add -A`
+    and the commit is pathspec-scoped, so the user's OTHER staged work is never swept in."""
+    if not _is_git(repo):
+        print("commit skipped: not a git repo (nothing to commit).", flush=True)
+        return 0
+    if subprocess.run(["git", "-C", repo, "symbolic-ref", "-q", "HEAD"],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+        print("commit skipped: HEAD is detached / mid-merge -- commit the ai-sdlc config "
+              "manually once you are back on a branch.", flush=True)
+        return 0
+    paths = _uncommitted_scaffold(repo)
+    if not paths:
+        print("commit skipped: ai-sdlc config already committed (nothing to do).", flush=True)
+        return 0
+    if subprocess.run(["git", "-C", repo, "add", "--", *paths]).returncode != 0:
+        print("commit FAILED: could not stage the ai-sdlc config.", flush=True)
+        return 1
+    msg = ("chore(ai-sdlc): commit setup scaffolding\n\n"
+           "Commits ai-sdlc's own config so declared reality-gates travel to teammates + CI\n"
+           "and the tree stays clean for slice builds (WT-ROOT-1):\n"
+           "  " + ", ".join(paths))
+    # Pathspec-scoped commit: records ONLY these paths, ignoring any other staged changes.
+    rc = subprocess.run(["git", "-C", repo, "commit", "-m", msg, "--", *paths]).returncode
+    if rc != 0:
+        print("commit FAILED: `git commit` returned non-zero (see output above).", flush=True)
+        return 1
+    print("committed ai-sdlc config: " + ", ".join(paths), flush=True)
+    return 0
+
+
 def hook_health() -> tuple[bool, list[str]]:
     """Diagnose whether the SessionStart hook set its env vars cleanly THIS session.
     A skill cannot write $CLAUDE_ENV_FILE (it is handed only to hooks), so /setup can
-    only DIAGNOSE these -- repairing them needs the hook to re-run, i.e. a restart."""
+    only DIAGNOSE these -- repairing them needs the hook to re-run, i.e. a restart.
+
+    4.6.1: the hook exports ONLY PY + CRG. AI_SDLC_VAULT_ROOT is deliberately NOT
+    exported (skills resolve the vault per-invocation), so UNSET is the healthy norm --
+    flagging it made every healthy install read DEGRADED (2026-07 review sweep). Only a
+    set-but-BOM'd legacy value is an issue."""
     issues = []
     py = os.environ.get("PY", "")
-    if not py:
-        issues.append("PY unset -- every skill that calls $PY will fail")
-    elif not os.path.isfile(py):
-        issues.append(f"PY is not a valid file ({py!r}) -- a mangled path (old-hook bug, fixed 2.5.1)")
-    if not os.environ.get("CRG"):
-        issues.append("CRG unset -- CRG calls fall back to a bare PATH lookup (works only if on PATH)")
-    vault = os.environ.get("AI_SDLC_VAULT_ROOT", "")
-    if not vault:
-        issues.append("AI_SDLC_VAULT_ROOT unset -- skills resolve the vault per-call (slower, still external)")
-    elif vault.startswith("\ufeff"):
+    crg = os.environ.get("CRG", "")
+    if not py and not crg:
+        # Name the root cause, not just the symptoms: both hook-exported vars missing
+        # means the hook itself never ran.
+        issues.append("SessionStart hook did NOT fire this session (PY and CRG both unset) -- "
+                      "every skill that calls $PY will fail. Check the plugin's hooks/hooks.json "
+                      "is installed, then RESTART Claude Code; /setup cannot re-fire the hook")
+    else:
+        if not py:
+            issues.append("PY unset -- every skill that calls $PY will fail")
+        elif not os.path.isfile(py):
+            issues.append(f"PY is not a valid file ({py!r}) -- a mangled path (old-hook bug, fixed 2.5.1)")
+        if not crg:
+            issues.append("CRG unset -- CRG calls fall back to a bare PATH lookup (works only if on PATH)")
+    if os.environ.get("AI_SDLC_VAULT_ROOT", "").startswith("\ufeff"):
         issues.append("AI_SDLC_VAULT_ROOT has a leading BOM -- old-hook bug (fixed 2.5.1)")
     return (not issues, issues)
 
@@ -94,7 +162,7 @@ def do_check(repo: str) -> int:
     print(f"graph       : {'built (./.code-review-graph)' if (Path(repo) / '.code-review-graph').is_dir() else 'NOT built'}")
     print(f"git         : {'repo' if _is_git(repo) else 'NOT a git repo'}")
     ok, issues = hook_health()
-    print(f"hook env    : {'OK (PY/CRG/VAULT all set by the hook)' if ok else 'DEGRADED'}")
+    print(f"hook env    : {'OK (hook fired: PY + CRG set; vault resolves per-invocation by design)' if ok else 'DEGRADED'}")
     for i in issues:
         print(f"  ! {i}")
     return 0
@@ -124,7 +192,22 @@ def main(argv: list[str]) -> int:
     if "--check" in argv:
         return do_check(repo)
 
+    if "--commit" in argv:
+        return commit_scaffold(repo)
+
     print(f"AI SDLC setup - interpreter: {PY}\n", flush=True)
+
+    # Step 0 - scaffold the empty reality-gates manifest (slice-062 / SC-095 / ADR-059).
+    # A pure repo-file write, run on the DEFAULT (non---check) path BEFORE the deps install so
+    # a deps FATAL never skips it (DR-1 m3). Idempotent: never clobbers a populated manifest.
+    try:
+        from scripts.lib.scaffold_reality_gates import scaffold as _scaffold_reality_gates
+        _rg = _scaffold_reality_gates(repo)
+        print(f"reality-gates manifest : {_rg['action']} ({_rg['path']})", flush=True)
+        if _rg.get("gitignore_hint"):
+            print("  ! " + _rg["gitignore_hint"], flush=True)
+    except Exception as exc:  # visible, non-fatal: the runner no-ops without a manifest anyway
+        print(f"reality-gates manifest : scaffold skipped ({exc})", flush=True)
 
     # Step 1 - install deps (VISIBLE)
     if not REQ.is_file():
@@ -190,6 +273,21 @@ NEXT STEPS
   2. On restart, APPROVE the one-time trust prompt for `code-review-graph` (stdio servers need
      consent). Confirm with /mcp - it should show "connected".
   3. Then start the pipeline:  /triage (greenfield) | /adopt (brownfield) | /pulse (state).""")
+
+    # Step 5.5 - surface uncommitted ai-sdlc config so the SKILL.md can offer to commit it.
+    # This block's marker line ("UNCOMMITTED AI-SDLC CONFIG") is what the skill keys its
+    # consent gate on; committing runs `/setup --commit` (the commit_scaffold actuator).
+    scaffold_paths = _uncommitted_scaffold(repo)
+    if scaffold_paths:
+        print("\n" + "-" * 64)
+        print("UNCOMMITTED AI-SDLC CONFIG (commit before your first slice):")
+        for p in scaffold_paths:
+            print(f"  ? {p}")
+        print("\nThese are ai-sdlc's OWN config files. Committing them sends your declared")
+        print("reality-gates to teammates + CI and keeps the main tree clean for slice builds")
+        print("(an uncommitted file here trips the WT-ROOT-1 pristine-tree check). `.mcp.json`")
+        print("is intentionally left gitignored -- its interpreter path is machine-specific.")
+        print("To commit now:  /setup --commit   (or git add + commit them yourself).")
 
     ok, issues = hook_health()
     if not ok:

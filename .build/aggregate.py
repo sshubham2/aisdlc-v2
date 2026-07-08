@@ -120,7 +120,7 @@ def v2_format(n):
     if f == "json": return "json"
     if f == "markdown":
         # VAULT content files follow the v2 md->json conversion convention; repo markdown
-        # DELIVERABLES (README/CHANGELOG/docs/*, written by /product-doc) stay markdown by nature.
+        # DELIVERABLES (README/CHANGELOG/docs/*, written by /release) stay markdown by nature.
         return "json" if n.startswith("<vault>/") else "markdown"
     return "other"
 
@@ -295,7 +295,7 @@ for m in manifests:
         edges.append({"from":s,"to":nxt,"type":"hands_off_to"})
 
 graph = {
-    "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills) + skills/bug-hunt/SKILL.md + skills/setup/SKILL.md + skills/slice-story/SKILL.md + skills/product-doc/SKILL.md (v2-native, 30 total)",
+    "generated_from": "temp/skills/*/SKILL.md (AI SDLC v1, 26 skills) + skills/bug-hunt/SKILL.md + skills/setup/SKILL.md + skills/slice-story/SKILL.md + skills/release/SKILL.md (v2-native, 30 total)",
     "note": "Forward edges from each skill manifest; file inverse-edges (created_by/edited_by/read_by) computed globally. update access = read-modify-write (counts as both read and edit).",
     "stats": {
         "skills": len(manifests),

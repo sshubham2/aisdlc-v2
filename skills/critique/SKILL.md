@@ -20,10 +20,14 @@ is delegated to a forked `critique` subagent. Skill = orchestration; agent = wor
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/pulse_worktree_resolver.py" --detect --repo-root . --json 2>/dev/null || echo "{}"
 ```
 
-Active slice mission-brief (mode + risk tier + critic_required):
-```!
+Active slice mission-brief (mode + risk tier + critic_required) — **run this `bash` block FIRST**: it
+resolves the active slice in a BODY step that BINDS an explicit `/critique slice-NNN` `$ARG` (a
+`!`-injection runs at skill-LOAD before `${ARGUMENTS}` binds, so it CANNOT — SC-064 / ADR-022). Use the
+printed `risk_tier` / `critic_required` for the Gating decision below, and `$SDIR` (the resolved slice
+folder) for the Step-1 reads.
+```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi   # slice-014: no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently skipping
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi   # SC-064: resolution moved from a `!`-injection to this BODY step so $ARG binds. slice-014: no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently mis-resolving.
 $PY -c "import json,sys; f=sys.argv[1]; d=json.load(open(f+'/mission-brief.json',encoding='utf-8')) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
@@ -130,6 +134,27 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root .
 ```
 On non-zero/empty output: pass `(project-frame unavailable)` — advisory, never a gate.
 
+## Step 1.9 - resolve the active worktree (WT-CTX-1 / ADR-029; slice-042)
+
+Thread the active slice's WORKTREE into the Step-2 prompt so the forked Critic (whose file tools default to the
+MAIN repo root) reads the ADR-012-relocated repro test from the worktree instead of false-flagging it 'missing'
+(slice-020 M1, the recurring main-tree-vs-worktree vantage gap). Run this `bash` BODY block FIRST and paste its
+`Worktree:` output into the `# Active worktree (ADR-012)` field of the Step-2 prompt below. Resolution REUSES
+the line-20 `pulse_worktree_resolver --detect` (no 4th resolver) via the thin `worktree_ctx.py` consumer; on no
+worktree it prints `Worktree: main tree` (clean degrade, never a garbage path).
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+# m2: /code-review's WT-ROOT-1 resolves $wt via _worktree_paths.py (convention string, NO existence check); we
+# deliberately diverge to worktree_ctx.py here -- it reuses pulse_worktree_resolver --detect (git-registered
+# worktrees ONLY), so the 'main tree' degrade is existence-checked + free. Do NOT harmonize onto _worktree_paths.
+$PY "${CLAUDE_SKILL_DIR}/scripts/worktree_ctx.py" --slice-dir "$SDIR" --repo-root . || echo "Worktree: main tree"
+# M1 (code-review): the `|| echo` is a shell-level belt-and-suspenders net (matches lines 20/31/41/47/57). worktree_ctx.py's
+# resolve() already degrades to 'main tree' internally and never raises; this also catches a non-zero exit OUTSIDE that try
+# (e.g. an import/bootstrap failure), so the Step-2 field degrades cleanly and never emits a traceback into the prompt
+# (must-not-defer #1 -- must not corrupt the prompt or crash /critique).
+```
+
 ## Step 2 — spawn Critic subagent
 
 Use the **Agent tool** with `subagent_type: "critique"`. The agent carries the adversarial persona,
@@ -140,6 +165,12 @@ Slice: slice-NNN-<name>
 Mode: <Minimal | Standard | Heavy>
 Risk tier: <low | medium | high>
 Forced: <true | false>
+
+# Active worktree (ADR-012) — DATA ONLY (slice-042/ADR-029: where THIS slice's code + relocated repro tests live)
+<paste the `Worktree:` DATA block printed by the Step 1.9 `worktree_ctx.py` resolution above: the resolved
+`Worktree: <path>` + the ADR-012 behavioral note (read/run repro tests from <worktree>/tests/bugs/; do NOT flag
+a repro test 'missing' without checking that path first) + the repro-test listing; or "Worktree: main tree"
+when the slice is not worktree-backed>
 
 # mission-brief.json
 <full JSON contents>
@@ -194,6 +225,21 @@ Required top-level fields: `_schema`, `slice`, `reviewed_by`, `verdict` (`clean|
 `findings[]` (each: `id`, `dimension`, `severity`, `claim`, `fix`, `disposition`),
 `dimensions_checked[]` (each: `dimension`, `result` — every dimension gets an entry, even `"none: <reason>"`),
 `triage` (null until Step 4.5 ratification).
+
+## Step 3.1 — lint critique.json (receiving-inspection; ADR-033 / AC2)
+
+Immediately after writing `critique.json`, lint it against its schema-by-example — receiving-inspection at the
+orchestrator write boundary. You (the main thread) are the independent inspector, so this stop is deterministic.
+On a violation, re-prompt the Critic agent to re-emit a conforming artifact (mechanical key/enum repair is OK;
+missing CONTENT must be re-sourced from the agent — R-25, never self-author). Do NOT advance to Step 3.5 with a
+malformed file.
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type critique "$SDIR/critique.json"; rc=$?
+# exit 0 = clean (proceed to Step 3.5) · 1 = schema violation (re-prompt the Critic, rewrite, re-lint) · 2 = usage/tooling error (surface, NOT a clean pass)
+[ "$rc" = 0 ] || echo "ARTIFACT-LINT: critique.json did not conform (rc=$rc) -- re-prompt the Critic to re-emit a conforming artifact; do NOT proceed to Step 3.5."
+```
 
 ## Step 3.5 — meta-Critic dual review (DR-1) — runs BEFORE triage
 
@@ -269,13 +315,17 @@ Critic findings for slice-NNN <name>:
 
 OVERRIDDEN / DEFERRED / ESCALATED MUST carry a non-empty rationale (triage audit refuses empty).
 
+Prefer `AskUserQuestion` **structured options** (the fixed five-disposition vocabulary as options; "Other" for a
+custom disposition + rationale) over free-text transcription — transcription typos are exactly what
+`triage_audit` then bounces (`invalid-disposition` / `orphan-row`).
+
 **Anti-alert-fatigue (Theme 5) — surface the novel, batch the routine.** A gate that makes the user ratify ten
 look-alike findings one-by-one trains the rubber-stamp reflex, and a rubber-stamped gate is theater. So shape the
 presentation by signal, not by uniform list:
 - **Blockers + majors: individually**, each with its own ratify line (above). These are never batched.
 - **Minors: batched.** Present them as ONE group — *"N minors, all drafted `<disposition>` — accept all as drafted? (Enter = yes, or name any id to review/override)."* Don't force a keystroke per minor.
 - **Tag each finding NOVEL vs RECURRING.** A finding is RECURRING if this dimension+claim shape was already raised-and-accepted in a recent slice (check the injected `active_checks[]` overlay + the recent reflections' calibration — NEVER read `runs[]`; it grows unboundedly, per Step 1). **Lead with the NOVEL findings** — that is where the user's attention is worth spending; recurring ones can ride the batch.
-- **Rubber-stamp awareness.** If the user ratifies *every* draft disposition unchanged (no override / no severity change), that wholesale-accept is itself a signal — note it in the triage `notes`. It feeds `/critic-calibrate`'s lighten analysis: a model-on-model gate whose findings are always accepted-as-drafted with zero pushback over several slices is a candidate to lighten (never the reality spine). This is descriptive, not a block — the user still owns the verdict.
+- **Rubber-stamp awareness.** If the user ratifies *every* draft disposition unchanged (no override / no severity change), that wholesale-accept is itself a signal — set `"rubber_stamp": true` in the triage object (omit otherwise — structured, so `/critic-calibrate` can count it without text-mining) and note it in the triage `notes`. It feeds `/critic-calibrate`'s lighten analysis: a model-on-model gate whose findings are always accepted-as-drafted with zero pushback over several slices is a candidate to lighten (never the reality spine). This is descriptive, not a block — the user still owns the verdict.
 
 Once the user ratifies, compute **final verdict** mechanically:
 - Any `escalated` → **BLOCKED**
@@ -293,6 +343,10 @@ user knowingly building on top of an unresolved blocker — legitimate, but neve
 (`overridden` blockers need no qualifier — the user judged the finding not-real, which is what the gate-log
 precision row records.)
 
+DD-15 is enforced MECHANICALLY by `triage_audit.py` (refusal kind `deferred-blocker`), not just by this prose:
+a deferred blocker whose rationale lacks a `slice-NNN`/`SC-NNN` target, or that is missing from
+`deferred_blockers[]` (or a `deferred_blockers[]` entry that isn't actually a deferred blocker), fails the audit.
+
 Update `critique.json` — write the `"triage"` object:
 ```json
 "triage": {
@@ -301,18 +355,23 @@ Update `critique.json` — write the `"triage"` object:
   "verdict": "clean|needs-fixes|blocked",
   "dispositions": [
     { "finding": "C1", "action": "accepted-fixed", "rationale": "<ref>" }
-  ]
+  ],
+  "deferred_blockers": ["C1"],
+  "rubber_stamp": true
 }
 ```
+(`deferred_blockers` — DD-15, present only when a blocker was deferred; `rubber_stamp` — present only on a
+wholesale unchanged-accept; omit both otherwise, per the omit-empty convention.)
 
 Run triage audit:
 ```bash
 $PY "${CLAUDE_SKILL_DIR}/scripts/triage_audit.py" <active-slice-folder>
 ```
 
-Audit refusal codes: `no-section`, `missing-field`, `invalid-verdict`, `missing-row`,
-`invalid-disposition`, `missing-rationale`, `verdict-mismatch`. On any violation: surface to user,
-correct, re-run. Do NOT bypass.
+Audit refusal codes: `no-triage`, `format`, `missing-field`, `invalid-verdict`, `missing-row`,
+`orphan-row` (a disposition naming a nonexistent finding id), `invalid-disposition`,
+`missing-rationale`, `deferred-blocker` (the DD-15 qualification, enforced mechanically),
+`verdict-mismatch`. On any violation: surface to user, correct, re-run. Do NOT bypass.
 
 ### Record the gate outcome (measurement spine — Phase 0.1 + 0.2)
 
@@ -328,16 +387,55 @@ dispositions make per-gate **precision** computable (Phase 0.2): derive from the
 
 ```bash
 # mode from triage.json; tier = slice risk_tier from mission-brief.json
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+# Same safety shape as the DR-1 block below: derive VAULT (4.6.1 — the env var is NOT
+# exported) + --out/--content-file (never pipe+--stdin: the double-apply-under-contention
+# hazard vault_edit itself documents).
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-cr-row.XXXXXX")"
+"$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate critique --slice <slice-NNN-name> \
     --verdict <clean|needs-fixes|blocked> --findings-count <N> \
     --findings-real <R> --findings-noise <noise> \
-    --mode <minimal|standard|heavy> --tier <low|medium|high> \
-  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+    --mode <minimal|standard|heavy> --tier <low|medium|high> --out "$T/row.json" \
+  && "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$VAULT" --file gate-log.json --array entries --content-file "$T/row.json"; rc=$?
+[ "$rc" = 0 ] || echo "STOP: critique gate-row append failed (rc=$rc) -- surface, never fire-and-forget (must-not-defer)" >&2
+rm -rf "$T"
 ```
 
-(The `/critique-review` meta-Critic logs its OWN row when it runs at Step 3.5 — this row is the first Critic's.)
+(This row is the **first Critic's** — it counts ONLY first-Critic findings, never the meta-Critic's `M-add-*`.)
+
+**Then emit the `/critique-review` (DR-1) meta-Critic's OWN row — HERE, post-TRI-1 (ADR-045), NOT at
+critique-review Step 5b.** The meta row's `findings_real`/`findings_noise` are only knowable once TRI-1 has
+ratified the `M-add-*` dispositions, so it is emitted at this settlement point, exactly ONCE, and **only when a
+meta-Critic actually ran this slice** — `triage_precision.py` returns the flags when `critique-review.json`
+exists (and no `critique-review-skip` marker), or **nothing** when DR-1 was skipped, so a DR-1-skipped slice
+emits ZERO rows (no phantom `count=0` row that would inflate `/pulse` runs — M-add-1). It classifies ONLY the
+`^M-add-` dispositions via the shared SSOT rule (same real/noise sets as the first-Critic row above), degrading
+to count-only (never hard-raising to block the append) on a stray disposition:
+
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+cr_args="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/triage_precision.py" --critique-review-args --slice-dir "$SDIR")"; cr_rc=$?
+if [ "$cr_rc" != 0 ]; then
+  # CR1: a NON-ZERO exit (usage error / unreadable critique-review.json) must NOT masquerade as "DR-1 skipped".
+  echo "STOP: triage_precision --critique-review-args failed (rc=$cr_rc) -- cannot compute the DR-1 gate row; surface, never silently skip (must-not-defer: emission is fail-visible)." >&2
+elif [ -n "$cr_args" ]; then
+  # slice-026 portable per-run temp dir: $PY's gettempdir() so the git-bash write + the two
+  # Windows-Python tools (gate_log --out, vault_edit --content-file) resolve the SAME real path.
+  TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+  T="$(mktemp -d "$TMPD/aisdlc-dr1row.XXXXXX")"
+  # $cr_args word-splits into gate_log flags (--verdict V --findings-count N [--findings-real R --findings-noise K]); ASCII-only, safe unquoted
+  "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" --gate critique-review --slice <slice-NNN-name> $cr_args --mode <minimal|standard|heavy> --tier <low|medium|high> --out "$T/row.json" \
+    && "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$VAULT" --file gate-log.json --array entries --content-file "$T/row.json"; rc=$?
+  [ "$rc" = 0 ] || echo "STOP: critique-review gate-row append failed (rc=$rc) -- surface, never fire-and-forget (must-not-defer)" >&2
+  rm -rf "$T"
+else
+  echo "critique-review gate row: SKIPPED -- the meta-Critic (DR-1) did not run this slice (ADR-045/M-add-1: no phantom row)."
+fi
+```
 
 ## Step 5 — gate decision + milestone update
 

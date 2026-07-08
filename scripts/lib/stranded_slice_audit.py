@@ -64,6 +64,7 @@ from scripts.lib.pulse_worktree_resolver import (
     classify_worktree_state,
     detect_active_worktrees,
 )
+from scripts.lib.milestone_stages import TERMINAL_STAGES as _TERMINAL_STAGES
 
 __all__ = [
     "DivergenceClass",
@@ -77,8 +78,8 @@ __all__ = [
 _SLICE_BRANCH_RE = re.compile(r"^slice/(\d{3})-(.+)$")
 _SLICE_FOLDER_RE = re.compile(r"^slice-(\d{3})-(.+)$")
 
-# Terminal "built/done" milestone stages (v2 loop ends at /reflect -> `complete`).
-_TERMINAL_STAGES = frozenset({"reflect", "complete"})
+# Terminal "built/done" milestone stages come from the ONE shared source of truth
+# scripts/lib/milestone_stages.TERMINAL_STAGES (slice-037 / ADR-024); imported aliased above.
 
 
 class _UsageError(Exception):

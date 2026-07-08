@@ -18,7 +18,10 @@ You audit the vault and code for over-engineering, then present ranked reduction
 ## Argument modes
 
 - `/reduce` — audit + suggestions (no commitment; user picks what to act on)
-- `/reduce --force` — proceed with all REDUCE-NOW items as a simplification slice (skip confirmation)
+- `/reduce --force` — include ALL REDUCE-NOW items in the slice proposal without the per-item confirmation
+  gate. It does NOT start the slice: this skill runs forked (no Skill tool), so the proposal still lands with
+  the user/main thread, and the slice starts only when they act (matches Pipeline position: "--force bypasses
+  the confirmation gate but NOT the slice gate").
 
 ## Live state — injected
 
@@ -59,20 +62,38 @@ Read `<vault>/triage.json` for `mode`. Apply:
 
 Collect:
 - Component, contract, ADR, total vault file counts (from injected state above)
-- ADRs with zero cross-references (unreferenced after creation): run `Grep` for each ADR id across `<vault>/` — an ADR returned only by its own file is a candidate
+- ADRs with zero cross-references (unreferenced after creation) — ONE pass, not a per-ADR Grep loop
+  (O(ADRs × vault) tool calls on a mature vault):
 - Concept scope from `<vault>/concept.json` — compare intended breadth vs actual component count
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
-# Check unreferenced ADRs (example for one ADR — repeat for each)
-grep -r "ADR-NNN" "$VAULT" --include="*.json" -l 2>/dev/null
+VAULT="$VAULT" $PY -c "
+import json, os, pathlib, re
+vault = pathlib.Path(os.environ['VAULT'])
+adr_ids = sorted(p.stem for p in (vault / 'decisions').glob('ADR-*.json'))
+refs = {a: 0 for a in adr_ids}
+for p in vault.rglob('*.json'):
+    try:
+        text = p.read_text(encoding='utf-8')
+    except OSError:
+        continue
+    for a in adr_ids:
+        # a reference from any file OTHER than the ADR's own (supersedes-chain refs count)
+        if p.stem != a and re.search(a + r'\b', text):
+            refs[a] += 1
+print(json.dumps({'unreferenced_adrs': [a for a, n in refs.items() if n == 0],
+                  'adr_total': len(adr_ids)}, indent=2))
+"
 ```
 
 ## Step 3 — code metrics (CRG)
 
 Use `code-review-graph` MCP tools for god-node and blast-radius detection:
 
-- **God nodes**: use `impact-radius` or `search` on highest-degree files/functions — flag nodes with
+- **God nodes**: use the CRG MCP tools `mcp__code-review-graph__get_impact_radius_tool` /
+  `mcp__code-review-graph__semantic_search_nodes_tool` (CRG 2.3.x has no `impact-radius`/`search` verbs) on
+  highest-degree files/functions — flag nodes with
   in-degree + out-degree > 2× average as god-node candidates.
 - **Dead paths**: search for symbols defined but not referenced elsewhere.
 - **Layer-cake**: identify files that are pure pass-throughs (imported by one consumer, imports one target, adds no logic).
@@ -184,23 +205,11 @@ reduction slice's acceptance criteria must be:
 
 Route through the normal loop: `/slice → /risk-spike → /design-slice → /critique → /build-slice → /code-review → /validate-slice → /reflect`.
 
-## Step 8 — append lesson to lessons-learned.json
-
-After a reduction slice ships, note the over-engineering pattern that led to the bloat. Route through
-`vault_edit` (SVW-1 — never a raw Write/Edit on append-only files):
-
-```bash
-VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-    --vault "$VAULT" --file lessons-learned.json \
-    --array entries \
-    --content-file <tmp_lesson_json>
-```
-
-(`<tmp_lesson_json>` = the lesson entry written to a temp location first — `T="$(mktemp -d)"`, write
-`"$T/lesson.json"`, append, `rm -rf "$T"`. Never write scratch files into the project CWD.)
-
-Schema by example: `examples/lessons-learned.json` (`aisdlc/lessons-learned@1`).
+**Lesson capture rides the loop, not this fork.** Include in the proposal text: _"the reduction slice's
+`/reflect` should record the over-engineering pattern that led to the bloat as its lesson (which pattern from
+the reduction table, and what produced it)."_ This fork ends at the proposal — the slice ships days later in a
+different session, where `/reflect` owns lesson capture; there is no executable moment here to append a lesson
+from. (The old Step 8 prescribed an append this skill could never be running at the time of.)
 
 ## Critical rules
 

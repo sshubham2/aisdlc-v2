@@ -10,8 +10,9 @@ would silently collapse the audit window to "since the last release", a false-GR
 (M1). Every first-parent advance of the released trunk since genesis MUST change
 ``.claude-plugin/plugin.json``'s ``version`` line; an unversioned advance — or a
 split bump/changelog where the changelog commit carries no version change — is
-flagged. It also asserts the integration branch ``uat`` descends from the recorded
-genesis (M4: uat was rooted at the release baseline).
+flagged. It also asserts the resolved integration branch (``aisdlc-uat``, or legacy
+``uat`` in an ai-sdlc-managed repo) descends from the recorded genesis (M4: the
+integration branch was rooted at the release baseline).
 
 Mirrors the existing audit idiom (``branch_workflow_audit``): exit 0 clean / 1
 violation / 2 usage (git unusable / genesis absent). NO-OP PASS on a non-methodology
@@ -34,6 +35,7 @@ if str(_REPO) not in sys.path:
 
 from scripts.lib import _stdout  # noqa: E402
 from scripts.lib._git_default_branch import (  # noqa: E402
+    existing_integration_branch,
     resolve_default_branch,
     run_git,
 )
@@ -113,14 +115,19 @@ def audit(repo_root: Path | str, genesis_ref: str = "release-genesis") -> dict:
                             f"plugin.json version bump (unversioned advance / split release)."),
             })
 
-    # M4: the integration branch uat must descend from the recorded genesis.
-    if run_git(repo_root, "rev-parse", "--verify", "--quiet", "refs/heads/uat").returncode == 0:
-        result["uat_checked"] = True
-        if run_git(repo_root, "merge-base", "--is-ancestor", genesis_sha, "uat").returncode != 0:
+    # M4: the resolved integration branch (aisdlc-uat / legacy uat) must descend from the
+    # recorded genesis. Resolve via the shared non-degrading probe (slice-061) so this check
+    # stays in lockstep with the resolver + write guard; skip it when no integration branch
+    # exists (preserves the fresh-repo behavior -- never false-flag the released trunk).
+    integration = existing_integration_branch(repo_root)
+    if integration is not None:
+        result["integration_branch_checked"] = integration
+        if run_git(repo_root, "merge-base", "--is-ancestor", genesis_sha, integration).returncode != 0:
             result["violations"].append({
-                "kind": "uat-genesis-mismatch",
-                "message": (f"integration branch 'uat' does not descend from the recorded genesis "
-                            f"{genesis_sha[:10]} (M4: uat must be rooted at the release baseline)."),
+                "kind": "integration-genesis-mismatch",
+                "message": (f"integration branch '{integration}' does not descend from the recorded "
+                            f"genesis {genesis_sha[:10]} (M4: the integration branch must be rooted "
+                            f"at the release baseline)."),
             })
 
     result["clean"] = not result["violations"]

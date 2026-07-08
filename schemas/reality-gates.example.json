@@ -1,0 +1,16 @@
+{
+  "_schema": "aisdlc/reality-gates@1",
+  "_note": "STANDALONE reference for the repo-tracked declared reality-gates manifest (slice-062/SC-095/ADR-059). The live file lives at <repo-root>/.aisdlc/reality-gates.json -- DISTINCT from the external per-machine ~/.aisdlc vault (it is committed and travels to teammates + CI). Gates are grouped by surface {security,nfr,ops}; each gate is {id, command (SCMD-1 <interp>-anchored), description?}. An absent OR all-empty manifest is a structural no-op. The runner (scripts/lib/reality_gate_runner.py) is fail-closed: a declared gate that is missing / errors / exits nonzero -- or a malformed manifest -- FAILS; a declared gate SHOULD invoke a stack tool (`<interp> -m <module>`), NOT cite a slice-local tests/*.py path (which would trip fail-closed under the parallel-slice model). This example's `gates` are illustrative only -- the concrete gates ship in SC-097 + feedback #6/#12.",
+  "gates": {
+    "security": [
+      { "id": "bandit", "command": "<interp> -m bandit -q -r .", "description": "Python SAST (illustrative)" },
+      { "id": "pip-audit", "command": "<interp> -m pip_audit", "description": "dependency CVEs (illustrative)" }
+    ],
+    "nfr": [
+      { "id": "query-count-budget", "command": "<interp> -m myproject.perf.query_budget", "description": "hot-path query-count budget as a stack tool -- <interp> -m <module>, NOT a slice-local tests/*.py path (illustrative)" }
+    ],
+    "ops": [
+      { "id": "telemetry-checklist", "command": "<interp> scripts/ops/telemetry_checklist.py", "description": "metrics/trace conventions (illustrative)" }
+    ]
+  }
+}

@@ -16,10 +16,15 @@ detect drift in human-authored vault claims. Interactive drift-resolution gate i
 ## Live mode check — injected
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" get --vault "$AI_SDLC_VAULT_ROOT" --file triage.json --path .mode 2>/dev/null || echo "UNRESOLVABLE"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" get --file triage.json --path .mode 2>/dev/null || echo "UNRESOLVABLE"
 ```
 
 If the injected mode is not `heavy` → **STOP**: print "sync is Heavy-mode only — use /drift-check instead" and exit.
+
+> **Boundary vs `/drift-check`:** `/drift-check` is the every-slice, all-modes detective audit (read-only
+> findings + optional `--resolve`; never regenerates). `/sync` is the Heavy-only reconciler that additionally
+> REGENERATES the code-derived vault files. Both write `drift-log.json` through the same `build_entry.py`
+> shape, so either skill's entries fold in `/drift-check --status`.
 
 ## Argument modes
 
@@ -34,7 +39,7 @@ If the injected mode is not `heavy` → **STOP**: print "sync is Heavy-mode only
 ## Step 1 — Build code graph (CRG)
 
 ```bash
-"${CRG:-code-review-graph}" build
+"${CRG:-code-review-graph}" build --repo .
 ```
 
 Produces `.code-review-graph/` — AST-level structure (classes, functions, endpoints, imports, types). All
@@ -46,8 +51,19 @@ If `--check-only` is active: skip this step.
 
 Skip if `--check-only`.
 
-For each output file, READ the existing file first (preserve human sections), then regenerate derived sections.
-Write output via raw Write (these are `write_semantics: create` files, not append-only).
+For each EXISTING target file, DERIVE only the whitelisted code-derived fields (per artifact type below) into
+a per-file `<dir>__<name>.derived.json` under a per-run temp dir — do **NOT** hand-write the merged file. The
+merge that preserves human-authored fields is **MECHANICAL**: `sync_merge.py` (Steps 4/5a) replaces ONLY
+whitelisted derived keys and exits 2 on a derived file that touches anything else — so a slip cannot destroy
+human-authored content (these are create-semantics files with no CAS/append channel to catch a bad Write).
+Only a **NEW** artifact (no existing vault file) is authored fresh via raw Write — nothing human-authored
+exists there to protect; `sync_merge` refuses a missing base by design.
+
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+S="$(mktemp -d "$TMPD/aisdlc-sync.XXXXXX")"
+echo "sync derived-content dir: $S"   # NOTE this path -- later steps run in FRESH shells; reuse the SAME dir
+```
 
 ### Components — `<vault>/components/<name>.json`
 
@@ -56,8 +72,9 @@ Schema by example: `examples/component.json` (`aisdlc/component@1`).
 For each component:
 - Locate corresponding source module (via `implements_in` field in existing JSON, or name-match).
 - Use CRG AST to re-derive: `public_surface[]`, `depends_on[]`.
-- **Preserve** string fields: `responsibility`, `failure_modes` (human-authored markdown strings).
-- Write the merged result.
+- Write ONLY those keys to `"$S/components__<name>.derived.json"`.
+- (`responsibility`, `failure_modes` — human-authored markdown strings — never appear in a derived file;
+  `sync_merge` carries them through from the existing artifact.)
 
 ### Contracts — `<vault>/contracts/<name>.json`
 
@@ -65,21 +82,22 @@ Schema by example: `examples/contract.json` (`aisdlc/contract@1`).
 
 For HTTP contracts:
 - Parse `openapi.json` if present, or use CRG endpoint scan (route definitions / annotations).
-- Re-derive: `endpoints[]` (method, path, request, response).
-- **Preserve** string fields: `notes` (auth model, idempotency, rate-limit commentary).
+- Re-derive: `endpoints[]` (method, path, request, response) → `"$S/contracts__<name>.derived.json"`.
 
 For event contracts:
 - Find publisher/subscriber annotations in code via Grep (`@publish`, `@subscribe`, event bus calls).
-- Re-derive: `event`, `payload_schema`, `delivery_guarantee`.
-- **Preserve**: ordering decisions, retry strategy, dead-letter commentary in `notes`.
+- Re-derive: `event`, `payload_schema`, `delivery_guarantee` → same derived-file shape.
+
+(`notes` — auth model, idempotency, rate-limits, ordering, retry, dead-letter commentary — is human-authored;
+never in a derived file.)
 
 ### Schemas — `<vault>/schemas/<name>.json`
 
 Schema by example: `examples/schema.json` (`aisdlc/schema@1`).
 
 - Find data-model code (SQLAlchemy / Prisma / Pydantic / Drizzle / Zod) via Glob + Grep.
-- Re-derive: `fields[]`, `constraints[]`.
-- **Preserve**: `state_diagram` (Mermaid state-transition string).
+- Re-derive: `fields[]`, `constraints[]` → `"$S/schemas__<name>.derived.json"`.
+- (`state_diagram` — the Mermaid state-transition string — is human-authored; never in a derived file.)
 
 ## Step 3 — Vault-to-code drift detection
 
@@ -119,6 +137,18 @@ human-authored Heavy files — ask the user to fix references or change status f
 
 ## Step 4 — Present diff (always, even with --dry-run)
 
+Build each merged preview mechanically (vault untouched — `--out-file`, not `--write`), then diff it against
+the existing artifact to fill the "Regenerate" lines:
+
+```bash
+S="<the per-run dir path printed in Step 2>"   # fresh shell -- reuse the SAME $S (it holds the derived files)
+$PY "${CLAUDE_SKILL_DIR}/scripts/sync_merge.py" --file components/<name>.json \
+    --derived-file "$S/components__<name>.derived.json" --out-file "$S/components__<name>.merged.json"
+```
+
+(One call per target file; exit 2 here = the derived file is malformed or touches a human-authored key —
+fix the derivation BEFORE showing the plan.)
+
 Show a grouped plan:
 
 ```
@@ -150,8 +180,17 @@ Skip execution if `--dry-run`.
 
 ### 5a — Apply regenerated content (auto)
 
-For each file in the "Regenerate" list: write the merged JSON (derived sections updated, human sections
-preserved). No user gate needed for regenerated content.
+For each EXISTING file in the "Regenerate" list, apply via the mechanical merge (never a raw Write):
+
+```bash
+S="<the per-run dir path printed in Step 2>"   # fresh shell -- reuse the SAME $S
+$PY "${CLAUDE_SKILL_DIR}/scripts/sync_merge.py" --file components/<name>.json \
+    --derived-file "$S/components__<name>.derived.json" --write
+```
+
+Exit 2 = refusal (derived file touches a non-whitelisted key, or base missing) — STOP and re-derive; never
+fall back to a raw Write of an EXISTING artifact. NEW artifacts (no existing file) are the one raw-Write case.
+No user gate needed for regenerated content. After the last apply: `rm -rf "$S"`.
 
 ### 5b — Resolve drift findings (interactive gate)
 
@@ -159,15 +198,22 @@ For each drift finding, present an `AskUserQuestion` with three options:
 
 1. **Update vault** — code is right; update the vault claim to match code.
 2. **Fix code** — vault is right; invoke `/slice` via the Skill tool to address the discrepancy.
-3. **Accept drift** — intentional; route through `vault_edit` (SVW-1 — append-only file):
+3. **Accept drift** — intentional; build the entry with the SHARED `build_entry.py` (the ONE
+   `drift-log.json` entry shape — `/drift-check --status` folds it; a hand-rolled
+   `{at, claim, reality, rationale}` shape is permanently UNFOLDABLE to that reader), then append via
+   the SVW-1 channel:
    ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" --file drift-log.json --array entries --json '{
-     "at": "<ISO-8601-timestamp>",
-     "claim": "<claim>",
-     "reality": "<reality>",
-     "rationale": "<user-supplied rationale>"
-   }'
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/build_entry.py" \
+       --category <drift|stale-claim> \
+       --finding "claim: <claim> -- reality: <reality>" \
+       --trigger sync --action accept-drift \
+       --rationale "<user-supplied rationale incl. next-action slice>" \
+     | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+           --file drift-log.json --array entries --stdin
    ```
+   Category per drift class: ADR library / ADR approach divergence → `drift`; retired-risk mitigation,
+   threat-model component, and design path-ref claims that no longer hold → `stale-claim`.
+   `build_entry` fail-closes if `accept-drift` has no rationale.
 
 Walk each finding in sequence. Record each resolution.
 
@@ -183,13 +229,17 @@ Schema by example: `examples/sync-log.json` (`aisdlc/sync-log@1`).
 Route through `vault_edit` (SVW-1 — append-only file):
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" --file sync-log.json --array runs --json '{
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file sync-log.json --array runs --json '{
   "at": "<ISO-8601-timestamp>",
   "mode": "<full|dry-run|regen-only|check-only>",
   "regenerated": ["<list of files written>"],
-  "drift": [{"claim":"<claim>","reality":"<reality>","action":"<resolution>"}]
+  "drift": [{"claim":"<claim>","reality":"<reality>","action":"<resolution>"}],
+  "csp1": {"violations": <N-found>, "resolved": <N-resolved-in-5c>, "kinds": ["<missing-field|invalid-status|missing-ref|broken-ref>", "..."]}
 }'
 ```
+
+(`csp1` makes the record a complete audit of the run — omit it only when CSP-1 was skipped
+(`--regen-only`), never write it as null.)
 
 Skip if `--dry-run`.
 
@@ -209,7 +259,9 @@ Skip if `--dry-run`.
 ## Critical rules
 
 - VERIFY Heavy mode first (injected check above). Do NOT run in Standard/Minimal.
-- PRESERVE all human-authored string fields. Regeneration touches only derived array/object fields.
+- PRESERVE all human-authored string fields. Regeneration touches only derived array/object fields — and
+  ONLY through `sync_merge.py` for existing artifacts (its whitelist is the mechanical form of the table
+  below; a refusal means re-derive, never raw-Write over an existing file).
 - DO NOT silently fix code drift. Every drift finding requires an explicit user decision (Step 5b).
 - DO NOT auto-delete ADRs if a library is removed — mark superseded; link a new ADR.
 - DO NOT apply regenerated content past unresolved CSP-1 violations in human-authored files.

@@ -4,8 +4,8 @@
 
 `ai-sdlc` turns "build this feature" into a disciplined, reviewable pipeline built on one rule —
 **diverse at generation · reality-grounded at selection · independent at review.** It gives you: risk-first
-**slicing** with an in-loop **spike gate**; a tier-gated **design tournament** (blind designers generate, then
-reality selects); **method-heterogeneous adversarial review** (a Builder plus forked Critics that decorrelate by
+**slicing** with an in-loop **spike gate**; an always-on **design tournament** (all 3 blind designers generate on
+every slice, then reality selects); **method-heterogeneous adversarial review** (a Builder plus forked Critics that decorrelate by
 *method*, not just persona); a per-gate **measurement spine** (precision + recall, ranked by reality-contact);
 machine-queryable **JSON vault artifacts**; and one unified **candidate backlog**. It ships **30 skills**, named
 review + designer agents, a shared Python tooling library, and a SessionStart hook — all as one plugin.
@@ -240,7 +240,7 @@ triage / adopt  →  discover  →  (user-test)
         ▼
    slice (pick candidate)
      → risk-spike                (FEASIBILITY — in-loop BLOCKING step-0: prove the candidate's assumptions, or block)
-     → design-slice              (tier-gated design tournament: 2–3 blind designers generate → reality-grounded synthesis)
+     → design-slice              (design tournament: all 3 blind designers generate on every slice → reality-grounded synthesis)
      → risk-spike --mode design  (post-synthesis: reality adjudicates the tournament's empirically-decidable disagreements)
      → critique  (+ critique-review)
      → slice-story               (plain-language report of the slice, delivered straight to you — phone included)
@@ -258,7 +258,7 @@ triage / adopt  →  discover  →  (user-test)
   backlog); `bug-hunt` (whole-codebase correctness + security defect sweep).
 - **Orientation:** `pulse`, `query-design`.
 - **Maintenance:** `drift-check`, `reduce`, `archive`, `sync`, `supersede-slice`, `critic-calibrate`,
-  `product-doc` (grounded README / CHANGELOG / API-ref / user-guide).
+  `release` (grounded README / CHANGELOG / API-ref / user-guide).
 - **Heavy-mode only:** `heavy-architect`, `sync`.
 
 Backlog of work lives in `<vault>/candidates.json` (live) and `<vault>/archive/candidates.json` (shipped); the
@@ -273,9 +273,9 @@ Per-slice review cost keys on the slice's **risk tier**, not the project mode (m
 
 | Tier | Agent spawns | Your gates | Wall-clock overhead |
 |------|-------------|-----------|---------------------|
-| **low / mechanical** | 0–1 | plan approval | ~10–20 min |
-| **medium** | ~5–7 (tournament ×2, recon, Critic, code-Critic, narrator) | candidate pick · plan approval · TRI-1 triage | ~1–2 h |
-| **high / novel** | ~7–9 (+ expert designer, meta-Critic, design spike) | + spike/validation failure gates | ~2–4 h |
+| **low / mechanical** | ~3–4 (3-designer tournament always runs; Critic skipped unless mandatory) | plan approval | ~15–25 min |
+| **medium** | ~6–8 (tournament ×3, recon, Critic, code-Critic, narrator) | candidate pick · plan approval · TRI-1 triage | ~1–2 h |
+| **high / novel** | ~8–10 (+ meta-Critic, design spike) | + spike/validation failure gates | ~2–4 h |
 
 One-time: `/triage` ~15 min · `/discover` ~30 min · `/heavy-architect` (Heavy only) ~2 h. Maintenance
 (`/drift-check`, `/critic-calibrate`, `/sync`) is signal-driven, not per-slice. If these numbers feel heavy for

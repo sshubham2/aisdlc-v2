@@ -155,7 +155,7 @@ whole-codebase **defect-finding** complement (vs `/code-review`'s diff scope). T
    (code-review 9-dim lens, intent-aware, NOT one-shot) → `finding_dedup` → adversarial code-review refute gate → `findings.json`
    (+ optional `--report` HTML) → declinable `/repro`→`/slice` handoff. Shares `write_pass.py` / `assemble.py` /
    `finding.yaml` with `/diagnose` in **`scripts/lib/`** (promotion DONE — no cross-skill reach; `passes/*.md` stay
-   diagnose-only). Manifest in `.build/manifests/batch6.json`; `aggregate.py` count guard now 30. **Now 30 skills total** (bug-hunt + `/setup` + `/slice-story` + `/product-doc`, hand-authored in `.build/manifests/batch8.json` / `batch9.json` / `batch10.json`).
+   diagnose-only). Manifest in `.build/manifests/batch6.json`; `aggregate.py` count guard now 30. **Now 30 skills total** (bug-hunt + `/setup` + `/slice-story` + `/release`, hand-authored in `.build/manifests/batch8.json` / `batch9.json` / `batch10.json`).
 
 **✅ NEW SKILL `/slice-story`** (added later — NOT part of the original fan-out): a plain-language per-slice **report
 generator**. Runs just after `/critique` as the pre-build overview (also user-invokable any time), spawns the forked
@@ -178,30 +178,39 @@ Code restart to register the new skill + agent** (NAW-1: the agent registry load
 - **Never hand-edit inverse-link fields** (`created_by` / `edited_by` / `read_by` / `validated_by`) in any
   `skill.json`. They are **computed** from the global file-access map by `.build/aggregate.py`. To change
   them, edit the source manifest and re-run the aggregator (see *Regenerate* below).
-- **The uat/master release model makes "served = release-only" STRUCTURAL (SC-020 / slice-022 — IMPLEMENTED).**
-  Slices branch from + merge to the `uat` integration branch and integrate WITHOUT a version bump (so parallel
-  slices never conflict on the `version` line); `master` is released-only and is the marketplace-served default,
-  advanced ONLY by the deliberate `uat->master` release cut. `/product-doc`'s `release_cut.py` performs that cut
-  ATOMICALLY — stage `merge --no-ff --no-commit uat` + bump `.claude-plugin/plugin.json` (semver: **patch** = fix /
+- **The integration/master release model makes "served = release-only" STRUCTURAL (SC-020 / slice-022 — IMPLEMENTED).**
+  The integration branch is **`aisdlc-uat`** (namespaced in slice-061/SC-114 so it cannot collide with a host
+  project's own `uat`; legacy `uat` is still accepted as back-compat **only in an ai-sdlc-managed repo** — one
+  carrying a `release-genesis` tag — so existing installs keep working). Slices branch from + merge to the
+  integration branch and integrate WITHOUT a version bump (so parallel slices never conflict on the `version` line);
+  `master` is released-only and is the marketplace-served default, advanced ONLY by the deliberate
+  integration→`master` release cut. `/release`'s `release_cut.py` performs that cut ATOMICALLY — stage
+  `merge --no-ff --no-commit <integration>` + bump `.claude-plugin/plugin.json` (semver: **patch** = fix /
   docs / refactor, **minor** = new skill / backward-compatible feature, **major** = breaking change) + regenerate
-  the version-grouped CHANGELOG as **ONE commit**, then sync `uat` back (on any pre-commit failure it `git reset
-  --hard <captured-SHA>` so master is untouched). `release_advance_audit.py` enforces the invariant — every
+  the version-grouped CHANGELOG as **ONE commit**, then sync the integration branch back (on any pre-commit failure it
+  `git reset --hard <captured-SHA>` so master is untouched). `release_advance_audit.py` enforces the invariant — every
   first-parent `master` advance since the recorded `release-genesis` tag is a versioned cut. Every branch-base /
-  rebase / PR-base / merged-detection call site resolves the integration branch via `resolve_integration_branch`;
-  the `--merge` WRITE path REFUSES on a uat-absent degrade (never advances the released trunk without uat). **There
-  is NO per-commit version-bump mandate — the bump lives only in the release cut.**
+  rebase / PR-base / merged-detection call site resolves the integration branch via `resolve_integration_branch`
+  (whose single precedence point `existing_integration_branch` probes `aisdlc-uat` → genesis-gated legacy `uat` →
+  None); the `--merge` WRITE path REFUSES on a full trunk-degrade (no `aisdlc-uat` AND no ai-sdlc-managed `uat`) —
+  keyed on resolution SOURCE, never name-equality — so it never advances the released trunk without an integration
+  branch. **There is NO per-commit version-bump mandate — the bump lives only in the release cut.**
   **Transition (one-time, POST-slice-022-ship) — ✅ EXECUTED 2026-06-19 (genesis = master@2.36.0; SC-048):** `uat` +
   the durable `release-genesis` tag were established from `master` at the FIRST release under this model —
   master@**2.36.0** (the first clean new-model baseline, NOT 2.35.1; slice-022 itself bootstrapped via the old
   merge-to-master path, so its code wasn't live until re-published at 2.36.0). The bootstrap 2.36.0 cut was driven
   directly through `bump_plugin_version.py` + `assemble_changelog.py`, NOT `release_cut.py` — the latter correctly
   no-ops when `uat` carries no un-released work, which is exactly the bootstrap state. From here on slices branch off
-  `uat`; `master` advances ONLY via `release_cut`.
+  the integration branch; `master` advances ONLY via `release_cut`. (The branch established in 2026 was literally
+  named `uat`; slice-061/SC-114 renames it to `aisdlc-uat` — the live local+origin rename runs one-time at
+  `/commit-slice` with explicit go-ahead per `docs/runbooks/aisdlc-uat-rename.md`; until then the genesis-gated
+  legacy-`uat` probe keeps this repo resolving. The `release-genesis` tag and its descent invariant survive the rename.)
 - **Local dev workflow (this working copy).** This repo is dogfooded by launching Claude Code with
   `--plugin-dir C:\Users\sshub\aisdlc-v2`, so the LIVE plugin is this working tree, not the marketplace cache (run
-  `/reload-plugins` after editing skills/agents). **This working copy stays checked out to `uat`** (the integration
-  branch); all slice work happens here. `master` is merged from `uat` on a **weekly** release cadence via the
-  `uat->master` release cut (`/product-doc` → `release_cut.py`), never by direct commits to `master`. **This
+  `/reload-plugins` after editing skills/agents). **This working copy stays checked out to the integration branch**
+  (`aisdlc-uat` after the slice-061 rename lands; still `uat` until then); all slice work happens here. `master` is
+  merged from the integration branch on a **weekly** release cadence via the integration→`master` release cut
+  (`/release` → `release_cut.py`), never by direct commits to `master`. **This
   `CLAUDE.md` is now git-tracked** (dropped from `.gitignore` 2026-06-19) for version history — it remains local dev
   scaffolding (plugin installers do not load it as instructions); the enforcement that ships is the code/audit above
   per SC-019/SC-020.
@@ -210,7 +219,7 @@ Code restart to register the new skill + agent** (NAW-1: the agent registry load
 
 ```
 aisdlc-v2/  (the v2 PLUGIN)
-  .claude-plugin/plugin.json   ← plugin manifest (name: ai-sdlc; version cut POST-MERGE by /product-doc — see Hard rules; not a per-commit bump)
+  .claude-plugin/plugin.json   ← plugin manifest (name: ai-sdlc; version cut POST-MERGE by /release — see Hard rules; not a per-commit bump)
   CLAUDE.md                    ← you are here
   skill-graph.json             ← the global dependency graph
   requirements.txt             ← runtime deps (PyYAML, for /diagnose + build_backlog's yaml fallback)
@@ -304,11 +313,11 @@ Start here to answer "what touches X?" or "what does skill Y produce?". `stats` 
 
 `triage`/`adopt` → `discover` → (`user-test`) → **per-slice loop:** `slice` (pick candidate) →
 `risk-spike` (**feasibility spike** — step-0; prove the candidate's blocking assumptions or block) →
-`design-slice` (**tier-gated design tournament** — 2-3 BLIND designers [practice/cross-domain/expert] → reality-grounded synthesis; low/mechanical = single inline flight) →
+`design-slice` (**design tournament — all 3 BLIND designers [practice/cross-domain/expert] on EVERY slice** → reality-grounded synthesis) →
 `risk-spike --mode design` (**design spike** — post-synthesis; reality adjudicates the tournament's empirically-decidable disagreements + must-verify invariants; conditional) →
 `critique` (+`critique-review`) → `slice-story` (plain-language pre-build report; delivered to you via SendUserFile) → `build-slice` → `code-review` → `validate-slice` →
 `reflect` → next `slice`. `commit-slice` finalizes. Maintenance: `drift-check`, `reduce`, `archive`, `sync`,
-`supersede-slice`, `critic-calibrate`, `product-doc` (grounded README/CHANGELOG/API-ref/user-guide; out-of-loop).
+`supersede-slice`, `critic-calibrate`, `release` (grounded README/CHANGELOG/API-ref/user-guide; out-of-loop).
 Orientation: `pulse`, `query-design`. Brownfield analysis: `diagnose`, `bug-hunt`,
 `slice-candidates`. **Heavy-mode-only:** `heavy-architect`, `sync`.
 Single candidate backlog: `<vault>/candidates.json` (live) + `<vault>/archive/candidates.json` (shipped).
@@ -329,3 +338,11 @@ guaranteed. `batch0` is hand-authored (triage, discover); `batch1-7` came from s
 v1 `SKILL.md` files. The aggregator `html.unescape`s the manifests, canonicalizes paths into stable graph
 node ids (e.g. all `slice-NNN-<name>/` → `slice-NNN/`, all ADR references → one `decisions/ADR-*.md` node),
 then computes the global map.
+
+## AISDLC Pipeline discipline
+- User is not reading your conversation output, so, avoid conversational and narrative output as much as possible.
+- If user specifically asks any question then only proceed as conversation. In all other cases, you are just wasting tokens.
+- Reply in the most concise form possible. Skip pleasantries, preambles, and recaps.
+- If user is required to invoke next pipeline skill, give precise, short and clear next steps and always include slice id.
+- Do not narrate your steps.
+- AISDLC Pipeline discipline rules does not apply to the content you write in any file.

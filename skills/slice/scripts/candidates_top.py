@@ -24,6 +24,10 @@ Classification (LIVE-file statuses, per schemas/slice-candidates.example.json):
 A dependency is UNMET iff it is still LIVE in candidates.json — a shipped dependency
 is MOVED out to archive/candidates.json, so its ABSENCE from the live file == satisfied.
 
+A `reserved` soft HOLD older than 24h is additionally flagged [STALE HOLD] (aged from
+`started_at`): an abandoned pre-claim pick has no TTL and would otherwise stay invisible
+to every other picker forever; /slice offers the same-owner `--release`.
+
 Vault root: `--vault ROOT` overrides `$AI_SDLC_VAULT_ROOT` / the computed default
 (mirrors vault_edit's `_root`). Exit 0 success (INCLUDING the normal "no backlog yet"
 early state — never breaks the injection), 1 runtime error (malformed/unexpected JSON),
@@ -36,6 +40,7 @@ import json
 import pathlib
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # --- single-skill import bootstrap (cannot use `python -m` for a bundled script) ---
@@ -48,9 +53,12 @@ from scripts.lib._vault_paths import VAULT_ROOT
 
 _PICKABLE = {"candidate", "deferred"}
 _BLOCKED = {"blocked"}
-_IN_FLIGHT = {"spiking", "active"}
+_IN_FLIGHT = {"spiking", "active", "reserved"}  # slice-027: a `reserved` soft HOLD is claimed-in-intent (in-flight), never re-pickable
 # effort -> sort rank (smaller cut first on a score tie). Unknown effort sorts last.
 _EFFORT_RANK = {"XS": 0, "S": 1, "M": 2, "L": 3, "XL": 4}
+# A `reserved` soft HOLD older than this is flagged STALE: an abandoned pre-claim pick has no
+# TTL and no cleanup sweep, so without this flag it stays invisible to other pickers forever.
+_STALE_HOLD_HOURS = 24.0
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────────
@@ -113,6 +121,26 @@ def _coupling(cand: dict, all_live: list[dict]) -> list[dict]:
                         "in_flight": _classify(other) == "in_flight"})
     out.sort(key=lambda d: (not d["in_flight"], str(d["id"])))  # in-flight (conflict risk) first
     return out
+
+
+def _hold_age_hours(cand: dict) -> float | None:
+    """Age in hours of a `reserved` soft HOLD (None unless reserved with a parseable started_at)."""
+    if cand.get("status") != "reserved":
+        return None
+    raw = cand.get("started_at")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        ts = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - ts).total_seconds() / 3600.0)
+
+
+def _fmt_age(hours: float) -> str:
+    return f"{hours / 24:.0f}d" if hours >= 48 else f"{hours:.0f}h"
 
 
 def _failed_blocking_assumption(cand: dict) -> dict | None:
@@ -199,11 +227,19 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
         lines.append("In-flight (claimed; parallel slices are normal — do not re-pick):")
         for cand in in_flight:
             who = (cand.get("claimed_by") or {}).get("git_user") or "?"
-            slc = cand.get("slice") or "?"
+            # slice-027 / M-add-1: a `reserved` hold has minted no slice number yet -- show 'held'
+            # rather than a bare '?' so the In-flight row reads coherently (slice=null is expected).
+            slc = cand.get("slice") or ("held" if cand.get("status") == "reserved" else "?")
             prog = cand.get("progress") or "?"
             lines.append(
                 f"  {cand.get('id', '?')}  {cand.get('title', '')}  [{slc}, {prog}, by {who}]"
             )
+            age = _hold_age_hours(cand)
+            if age is not None and age >= _STALE_HOLD_HOURS:
+                lines.append(
+                    f"       [STALE HOLD: reserved {_fmt_age(age)} ago, never claimed -- if abandoned, "
+                    f"release it: claim_candidate.py --candidate {cand.get('id', '?')} --release]"
+                )
 
     return "\n".join(lines) + "\n"
 
@@ -241,18 +277,22 @@ def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
             }
             for c in blocked
         ],
-        "in_flight": [
-            {
-                "id": c.get("id"),
-                "title": c.get("title"),
-                "slice": c.get("slice"),
-                "progress": c.get("progress"),
-                "by": (c.get("claimed_by") or {}).get("git_user"),
-            }
-            for c in in_flight
-        ],
+        "in_flight": [_in_flight_entry(c) for c in in_flight],
     }
     return json.dumps(payload, ensure_ascii=False) + "\n"
+
+
+def _in_flight_entry(c: dict) -> dict:
+    age = _hold_age_hours(c)
+    return {
+        "id": c.get("id"),
+        "title": c.get("title"),
+        "slice": c.get("slice"),
+        "progress": c.get("progress"),
+        "by": (c.get("claimed_by") or {}).get("git_user"),
+        "stale_hold": age is not None and age >= _STALE_HOLD_HOURS,
+        "held_hours": round(age, 1) if age is not None else None,
+    }
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────────

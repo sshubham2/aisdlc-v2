@@ -23,7 +23,11 @@ Contract:
       Parse / max the trailing integer of an id of `kind` (tolerant of zero-pad + a trailing -name;
       never raises on garbage — so a vault polluted by the pre-fix bug still seeds correctly).
 
-Managed kinds: slice, sc, ship, adr. Unknown kind -> ValueError (fail-visible, R-7).
+Managed kinds: slice, sc, ship, adr, bc (build-checks BC-PROJ-N rules — minted in-lock
+by the managed append, like sc/ship), plus the calibration-overlay kinds cc/cn/gs
+(CC-/CN-/GS- ids in critic-calibration-log.json — minted via `vault_edit alloc`, then
+carried in the append payload, mirroring the ADR flow). Unknown kind -> ValueError
+(fail-visible, R-7).
 """
 from __future__ import annotations
 
@@ -31,11 +35,19 @@ import json
 import re
 from pathlib import Path
 
-_PREFIX = {"slice": "slice-", "sc": "SC-", "ship": "SHIP-", "adr": "ADR-"}
-_PAD = {"slice": 3, "sc": 3, "ship": 3, "adr": 3}
+_PREFIX = {"slice": "slice-", "sc": "SC-", "ship": "SHIP-", "adr": "ADR-",
+           "cc": "CC-", "cn": "CN-", "gs": "GS-", "bc": "BC-PROJ-", "r": "R-"}
+# bc + r pad to 1 (i.e. no zero-pad): the established conventions are BC-PROJ-9, BC-PROJ-10, ...
+# and R-1, R-2, ... (the risk ledger was the last shared aggregate with model-minted ids —
+# 2026-07 review sweep: parallel slices could collide on "next R-NN").
+_PAD = {"slice": 3, "sc": 3, "ship": 3, "adr": 3, "cc": 3, "cn": 3, "gs": 3, "bc": 1, "r": 1}
 # The element key that carries a managed id (for reject_supplied_id): a candidate/ship row keys
 # on `id`; a slice's join key on a candidate is `slice`.
-_ID_KEY = {"sc": "id", "ship": "id", "adr": "id", "slice": "slice"}
+_ID_KEY = {"sc": "id", "ship": "id", "adr": "id", "slice": "slice",
+           "cc": "id", "cn": "id", "gs": "id", "bc": "id", "r": "id"}
+
+# The calibration-overlay kinds live in critic-calibration-log.json: kind -> its array.
+_CALIBRATION_ARRAYS = {"cc": "active_checks", "cn": "calibration_notes", "gs": "gate_skips"}
 
 COUNTERS_KEY = "counters"
 MANAGED_KINDS = frozenset(_PREFIX)
@@ -149,4 +161,22 @@ def seed_max_for(vault, kind: str, data: dict) -> int:
     if kind == "slice":  # claim_candidate also scans folders; this covers candidates + pick_log
         mx = scan_max([c.get("slice") for c in data.get("candidates", []) if isinstance(c, dict)], "slice")
         return max(mx, scan_max([e.get("slice") for e in data.get("pick_log", []) if isinstance(e, dict)], "slice"))
+    if kind == "bc":  # build-checks.json rules[] — no archive aggregate to floor against
+        return scan_max([r.get("id") for r in data.get("rules", []) if isinstance(r, dict)], "bc")
+    if kind == "r":  # risk-register.json risks[] — retired risks stay in-file (no archive), so
+        return scan_max([r.get("id") for r in data.get("risks", []) if isinstance(r, dict)], "r")
+    if kind in _CALIBRATION_ARRAYS:
+        # Live overlay elements PLUS the run history: runs[].proposals[] keep the ids past
+        # proposals minted (check_id/note_id/...), so a RETIRED check's id is never re-issued
+        # after `vault_edit remove` deletes its element. parse_num is prefix-anchored, so
+        # scanning every string field of a proposal only ever matches this kind's own ids.
+        mx = scan_max([r.get("id") for r in data.get(_CALIBRATION_ARRAYS[kind], [])
+                       if isinstance(r, dict)], kind)
+        for run in data.get("runs", []) or []:
+            if isinstance(run, dict):
+                for pr in run.get("proposals", []) or []:
+                    if isinstance(pr, dict):
+                        mx = max(mx, scan_max(
+                            [v for v in pr.values() if isinstance(v, str)], kind))
+        return mx
     return 0

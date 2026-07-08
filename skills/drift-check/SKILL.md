@@ -1,6 +1,6 @@
 ---
 name: drift-check
-description: "Audits vault claims against code reality and flags divergence in four categories: DRIFT (blocker), UNSPECIFIED CODE (major), STALE CLAIM (major), and STALE DOC (major — a /product-doc-generated doc that no longer matches the code surface it documented, via the doc-manifest.json provenance anchor). Runs in fast mode (<2s, for the /build-slice pre-finish gate) or full mode (on-demand audit). Appends findings to drift-log.json via the SVW-1 safe channel. Detect-only, all-modes counterpart to the Heavy-mode-only /sync skill."
+description: "Audits vault claims against code reality and flags divergence in four categories: DRIFT (blocker), UNSPECIFIED CODE (major), STALE CLAIM (major), and STALE DOC (major — a /release-generated doc that no longer matches the code surface it documented, via the doc-manifest.json provenance anchor). Runs in fast mode (<2s, for the /build-slice pre-finish gate) or full mode (on-demand audit). Appends findings to drift-log.json via the SVW-1 safe channel. Detect-only, all-modes counterpart to the Heavy-mode-only /sync skill."
 when_to_use: "Trigger phrases: /drift-check, 'check for drift', 'vault sync check', 'is the vault still accurate', 'audit vault vs code'. Use in --fast mode as the /build-slice pre-finish gate (DCE-1), or on-demand (full mode) before starting a new slice or after external changes. (Not a git pre-commit hook — nothing installs one; hooks/ is SessionStart-only.)"
 argument-hint: "[--fast] [--resolve] [--status] [path]"
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion, Skill
@@ -48,7 +48,7 @@ Read only the live-claim surfaces. Always included:
 - `<vault>/risk-register.json` — risks with `status: retired`; verify retirement is real.
 - `<vault>/slices/*/mission-brief.json` — active slices only; check `must_not_defer` items are implemented.
 - `<vault>/slices/*/design.json` — active slices only; verify referenced file paths exist and components are touched.
-- `<vault>/doc-manifest.json` — **if it exists** (written by `/product-doc`, all modes): the generated docs + the CRG public-surface snapshot each was grounded in. Drives the STALE DOC check (Step 3). Absent → skip the doc audit entirely (no-op for projects that never ran `/product-doc`).
+- `<vault>/doc-manifest.json` — **if it exists** (written by `/release`, all modes): the generated docs + the CRG public-surface snapshot each was grounded in. Drives the STALE DOC check (Step 3). Absent → skip the doc audit entirely (no-op for projects that never ran `/release`).
 
 **Skip**: `slices/archive/*` (historical, not live assertions), `slices/_index.json` (metadata), any folder that doesn't exist.
 
@@ -67,6 +67,15 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --dir "$VAULT/slice
 ```
 Non-zero → surface each violation as a STALE CLAIM finding (Step 4). Detect-only; `--fast` writes nothing.
 
+**SUP-1 supersession-link sweep (full mode only — skip in `--fast`):** re-validate every bidirectional
+supersession link (`/supersede-slice` validated each link once at creation; this catches one broken LATER by a
+manual edit or hand-moved folder):
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/supersede_audit.py" --root . --json
+```
+Exit 1 → surface each violation (`one-way-link` / `missing-target` / `revert-malformed`) as a STALE CLAIM
+finding (Step 4) with `Resolve: /supersede-slice <archived-id>` (or fix the named file directly).
+
 | Claim type | Verification |
 |---|---|
 | ADR chose library `X` | CRG search for `X` in imports/pyproject.toml/package.json; fallback: `Grep "X" pyproject.toml` |
@@ -83,23 +92,32 @@ For each mismatch capture: vault file path, vault claim text, code evidence, sev
 **Doc-vs-code (STALE DOC).** If `<vault>/doc-manifest.json` exists, for each entry in its `docs[]`: (a) confirm the
 doc file still exists on disk; (b) re-resolve each `grounded_in` token — these are now **path-based** (slice-015),
 so split on the scheme: `crg:<repo-rel-path>::<symbol>` re-resolves via the same code-map path+symbol check the
-producer uses (reuse `skills/product-doc/scripts/grounding_verify.py` / `_crg_grounding_probe.py` — single source of
-truth, don't re-describe the resolution), `file:<repo-rel-path>` by repo-file existence (+ optional symbol), and
+producer uses (reuse `scripts/lib/grounding_verify.py` / `_crg_grounding_probe.py` — SHARED lib modules, promoted
+there because this skill and `/release` both consume them; single source of truth, don't re-describe the
+resolution), `file:<repo-rel-path>` by repo-file existence (+ optional symbol), and
 `vault:<vault-rel-path>` by vault-file existence. A previously-verified token that no longer resolves means the doc
 describes something gone (the tokens are verified-only now, so a non-resolving one is a real STALE-DOC signal, not a
 conceptual-node miss); (c) diff the manifest's `public_surface` snapshot
 against the current CRG surface — a removed/renamed public symbol means the README / API-reference likely document a
-vanished interface. Each mismatch → a **STALE DOC** finding citing the doc path + the specific vanished symbol, with
-`Resolve: regenerate via /product-doc`. No manifest → skip this check (no-op).
+vanished interface. **slice-040 (M-add-1):** `public_surface` is the **FULL** harvested snapshot (kept intact — NOT
+narrowed to verified-only), with a sibling `public_surface_unverified[{token, reason}]` annotating which entries were
+reality-grounded at doc-gen. **Diff the FULL snapshot** so a real symbol that was momentarily unverifiable at doc-gen
+(stale graph, packaging label, or ambiguous name) still has a baseline and is caught when it genuinely vanishes; the
+annotation only records an entry's doc-gen provenance, it never shrinks the baseline. Each mismatch → a **STALE DOC**
+finding citing the doc path + the specific vanished symbol, with `Resolve: regenerate via /release`. No manifest →
+skip this check (no-op).
 
-In `--fast` mode: only check claims in files touched by the injected diff. Skip deep graph traversal.
+In `--fast` mode: only check claims in files touched by the injected diff, and cap EVERY claim type at
+**existence/import depth** — file exists, import resolves, endpoint/field string present via one Grep. No CRG
+queries, no schema diffs, no doc-manifest re-resolution (those are full-mode depth); the <2s budget is the
+contract, and per-claim judgment calls are how it blows out on a big vault.
 
 ## Step 4 — Classify findings
 
 - **DRIFT (blocker)** — vault says X, code does Y. Must pick one: update vault or fix code.
 - **UNSPECIFIED CODE (major)** — code does X, vault doesn't mention it. Either scope creep or missing ADR.
 - **STALE CLAIM (major)** — vault mentions a removed feature/library/file. Delete or supersede.
-- **STALE DOC (major)** — a `/product-doc`-generated doc (README / API-reference / user-guide, per `doc-manifest.json`) documents a code surface that no longer matches reality. Regenerate via `/product-doc`. (Skipped when no `doc-manifest.json` exists.)
+- **STALE DOC (major)** — a `/release`-generated doc (README / API-reference / user-guide, per `doc-manifest.json`) documents a code surface that no longer matches reality. Regenerate via `/release`. (Skipped when no `doc-manifest.json` exists.)
 
 ## Step 5 — Output
 
@@ -118,7 +136,8 @@ DRIFT BLOCKING COMMIT:
           but pyproject.toml has no pyheif dependency (removed)
           Resolve: update ADR or restore dependency
 
-To bypass (NOT RECOMMENDED): git commit --no-verify
+Resolve via /drift-check --resolve, or proceed knowingly — this gate blocks
+/build-slice's pre-finish (DCE-1), not git (no pre-commit hook exists).
 ```
 
 Do NOT write `drift-log.json` in `--fast` mode — stdout only.
@@ -131,7 +150,7 @@ Build each entry with `build_entry.py` and append it via the SVW-1 stdin channel
 whole-file overwrite):
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/scripts/build_entry.py" \
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/build_entry.py" \
     --category <drift|unspecified-code|stale-claim|stale-doc> \
     --finding "<finding>" --trigger slice-NNN [--resolution "<how resolved>"] \
   | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
@@ -149,11 +168,17 @@ is a **medium** reality-contact gate (claims vs real code); `gate_log.py` stamps
 
 ```bash
 # verdict: clean | drift (any BLOCKER) | warn (warns only); findings-count = drift + unspecified-code + stale-claim + stale-doc
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+# Gold-standard append shape: derive VAULT (4.6.1) + --out/--content-file (never pipe+--stdin), rc-checked.
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-drift-row.XXXXXX")"
+"$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate drift-check --slice slice-NNN \
-    --verdict <clean|drift|warn> --findings-count <N> \
-  | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+    --verdict <clean|drift|warn> --findings-count <N> --out "$T/row.json" \
+  && "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+        --vault "$VAULT" --file gate-log.json --array entries --content-file "$T/row.json"; rc=$?
+[ "$rc" = 0 ] || echo "STOP: drift-check gate-row append failed (rc=$rc) -- surface, never fire-and-forget" >&2
+rm -rf "$T"
 ```
 
 Print a 2-line summary: finding counts + whether the audit is clean.
@@ -172,7 +197,10 @@ Options:
 ```
 
 Execute the chosen action:
-- **Update vault**: edit the relevant JSON file via `vault_edit`; commit with the code change.
+- **Update vault**: edit the relevant JSON file via `vault_edit` — EXCEPT an ADR, which is never edited in
+  place: ADR supersession is the multi-step append-only flow specified in `/design-slice` Step 4 (mint the new
+  number via `vault_edit alloc --kind adr`, write the new ADR with `supersedes`, mark the old one
+  `superseded_by` — the append-only seal would catch an in-place edit later and louder). Commit with the code change.
 - **Fix code**: invoke `/slice "fix drift: <area>"` via the Skill tool — do NOT silently fix; track it.
 - **Accept drift**: append an entry via `build_entry.py --category <cat> --finding "<f>" --trigger slice-NNN --action accept-drift --rationale "<rationale incl. next-action slice>"` piped to `vault_edit append --file drift-log.json --array entries --stdin`. `build_entry` fail-closes if `accept-drift` has no `rationale`.
 

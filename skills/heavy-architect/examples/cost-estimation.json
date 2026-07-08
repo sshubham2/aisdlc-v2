@@ -5,6 +5,7 @@
   "components": [
     {
       "name": "api-server",
+      "fidelity": "estimated",
       "scales": {
         "1k": {
           "compute": 50,

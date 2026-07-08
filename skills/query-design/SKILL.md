@@ -28,10 +28,20 @@ Every answer **must** be grounded in actual repository evidence read this sessio
 
 1. **Locate** with Grep — find the symbol, pattern, or file.
 2. **Inspect** with Read — read the actual definition, not memory.
-3. **Structure** with CRG (optional) — use `code-review-graph` MCP tools (`impact-radius`, `review-context`, `search`) for reachability and blast-radius when a question involves call chains or dependencies; use `review-context` specifically for richer call-chain context when tracing how a symbol is used across the codebase.
+3. **Structure** with CRG (optional) — use the `code-review-graph` MCP tools for reachability and
+   blast-radius when a question involves call chains or dependencies. The REAL tool names (there is no
+   `search` / `impact-radius` / `review-context` verb in CRG 2.3.x): keyword/code search →
+   `mcp__code-review-graph__semantic_search_nodes_tool`; blast-radius →
+   `mcp__code-review-graph__get_impact_radius_tool`; call-chain / component structure (the nearest thing to
+   "review context" — no such tool exists) → `mcp__code-review-graph__query_graph` /
+   `mcp__code-review-graph__traverse_graph_func`.
 4. **Cite** in the answer — every substantive claim carries a `path/to/file:line`, symbol name, or ADR id.
 
 "It works roughly like X" with no citation is not an acceptable answer. If the code does not contain enough to answer truthfully, say so explicitly and state what is undetermined — do not speculate.
+
+**Vault reads are in-scope** (they are read-only): `<vault>/decisions/ADR-*.json` is often the ONLY place a
+"why is it this way?" answer lives — read and cite ADR ids freely, along with any other vault artifact that
+grounds an answer. The read-only invariant forbids *writes*, not vault *reads*.
 
 If a doc/vault claim and the code disagree, say so and cite both. Code wins (brownfield discipline).
 
@@ -56,7 +66,7 @@ This skill never authors a fix, a slice, a candidate file, or a `candidates.json
 
 | Situation | Response |
 |---|---|
-| CRG graph absent or clearly stale | Instruct user to rebuild (`code-review-graph build --repo .`); answer from Read/Grep in the meantime. Never answer from a stale graph or recall. |
+| CRG graph absent or clearly stale | Instruct user to rebuild: `"${CRG:-code-review-graph}" build --repo .` (the `${CRG:-…}` form — on the documented Windows venv setup the bare name is off PATH; if CRG itself is missing, point at `/ai-sdlc:setup`, whose doctor resolves it). Answer from Read/Grep in the meantime. Never answer from a stale graph or recall. |
 | Question unanswerable from repo evidence | Say so explicitly — "the code doesn't determine this; here's what I can see and what's undetermined." Never speculate. |
 | Handoff declined | Terminate with zero side effects. |
 

@@ -41,8 +41,6 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-import shlex
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +51,10 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from scripts.lib import _pyfn, _stdout  # noqa: E402
+# slice-047/ADR-038: the WS-1 checker now shares the mature execution core instead
+# of re-implementing the loop inline, and gains a STATIC portability gate.
+from scripts.lib.runnable_command import NON_PORTABLE_CONSOLE_SCRIPT, classify  # noqa: E402
+from scripts.lib.verification_core import _segments, run_verification  # noqa: E402
 
 _EMPTY_SENTINELS = frozenset({"", "—", "-", "n/a", "none", "(none)"})
 
@@ -280,26 +282,112 @@ def audit(
 
     # ── variant hook: WS-1 --execute reality run (3.1) ──
     if execute and spec.name == "walking_skeleton" and result.rows:
+        # slice-047/ADR-038 (M3): the STATIC portability gate fires WITHIN the
+        # --execute path, BEFORE the runtime run, so the repro's direct
+        # audit(execute=True) triggers it. It does NOT fire on a non-execute
+        # --strict-pre-finish call (a non-portable verification is caught at
+        # /validate-slice, not earlier).
+        _hook_ws_portability(result, str(brief_path))
         _execute_verifications(result, (root or Path(".")).resolve(), str(brief_path), timeout)
 
     return result
 
 
-def _hook_ac_coverage(result: AuditResult, data: dict, brief_path: Path) -> None:
+def _declared_acs(data: dict) -> list[str]:
+    """The RAW declared acceptance-criterion ids (`id`, else the `ac` fallback), in brief
+    order, non-empty only. The single shared extractor for 'what ACs did the brief declare' --
+    used by BOTH `_hook_ac_coverage` (the gate) and `scaffold_pending_plan` (the producer), so
+    the two can never disagree about the AC set (slice-051 / ADR-042: producer/gate SSOT)."""
     acs = data.get("acceptance_criteria")
-    declared: list[str] = []
+    out: list[str] = []
     if isinstance(acs, list):
         for e in acs:
             raw = (e.get("id") or e.get("ac") or "") if isinstance(e, dict) else e
-            norm = _normalize_ac_label(str(raw))
-            if norm:
-                declared.append(norm)
+            if str(raw).strip():
+                out.append(str(raw))
+    return out
+
+
+def _hook_ac_coverage(result: AuditResult, data: dict, brief_path: Path) -> None:
+    declared = [n for n in (_normalize_ac_label(a) for a in _declared_acs(data)) if n]
     covered = {_normalize_ac_label(str(r.entry.get("ac", ""))) for r in result.rows}
     for ac in declared:
         if ac not in covered:
             result.violations.append(Violation(str(brief_path), "", "ac-without-row", "Important",
                 f"AC#{ac} is declared in the brief but has no test-first row. Per TF-1, every "
                 f"AC must map to at least one test."))
+
+
+def scaffold_pending_plan(data: dict) -> tuple[dict, list[str]]:
+    """Per-AC MERGE the test_first PENDING stub into ``data['test_first_plan']`` (in place),
+    returning ``(data, notes)``. The deterministic PRODUCER counterpart to the TF-1 gate
+    (slice-051 / ADR-042): a ``test_first`` slice arrives at ``/build-slice`` already carrying
+    one PENDING row per declared AC, instead of the builder hand-authoring the plan mid-build.
+
+    Idempotent + builder-safe:
+      * ``test_first`` not enabled -> unchanged, note.
+      * APPEND one ``{ac:<raw id>, status:'PENDING', test_path:'', test_function:''}`` for every
+        declared AC not already covered (keyed by the gate's OWN ``_normalize_ac_label``, so the
+        appended row satisfies ``_hook_ac_coverage`` by construction). Existing rows are NEVER
+        touched -- never clobbers a builder-authored row (must_not_defer).
+      * PRUNE only SCAFFOLDER-CREATED PENDING orphans -- a PENDING row with empty ``test_path``
+        AND empty ``test_function`` whose ``ac`` matches no declared AC (an AC removed/re-id'd
+        mid-build). A builder row (WRITTEN-FAILING/PASSING, or any row carrying a real
+        test_path/test_function) is NEVER pruned (M-add-1: the row-vs-AC symmetric gap).
+      * empty/malformed ``acceptance_criteria`` -> empty plan + a loud note; the gate's
+        ``empty-table`` / ``ac-without-row`` then fires fail-visibly (never a silent pass).
+    """
+    spec = SPECS["test_first"]
+    notes: list[str] = []
+    if not _flag_enabled(data, spec):
+        return data, ["test_first not enabled -- no scaffold"]
+
+    declared_raw = _declared_acs(data)
+    declared_norm = {n for n in (_normalize_ac_label(a) for a in declared_raw) if n}
+
+    plan = data.get(spec.array_key)
+    if not isinstance(plan, list):
+        if plan is not None:
+            # CR1: a present-but-malformed (non-list) plan is replaced with a fresh one --
+            # emit a note so this mutation is observable too (must_not_defer). A non-list plan
+            # has no recoverable rows and the strict gate rejects it regardless.
+            notes.append(f"replaced a malformed non-list `{spec.array_key}` with a fresh plan")
+        plan = []
+
+    covered = {_normalize_ac_label(str(r.get("ac", ""))) for r in plan if isinstance(r, dict)}
+    appended: list[str] = []
+    for raw in declared_raw:
+        norm = _normalize_ac_label(raw)
+        if norm and norm not in covered:
+            plan.append({"ac": raw, "status": "PENDING", "test_path": "", "test_function": ""})
+            covered.add(norm)
+            appended.append(raw)
+
+    def _is_scaffolder_orphan(r: object) -> bool:
+        if not isinstance(r, dict):
+            return False
+        norm = _normalize_ac_label(str(r.get("ac", "")))
+        return (
+            str(r.get("status", "")).strip().upper() == "PENDING"
+            and _empty(r.get("test_path", ""))
+            and _empty(r.get("test_function", ""))
+            and norm not in declared_norm
+        )
+
+    kept = [r for r in plan if not _is_scaffolder_orphan(r)]
+    pruned = len(plan) - len(kept)
+    data[spec.array_key] = kept
+
+    if appended:
+        notes.append(f"appended PENDING row(s) for: {', '.join(appended)}")
+    if pruned:
+        notes.append(f"pruned {pruned} scaffolder-created PENDING orphan row(s) (AC removed/re-id'd)")
+    if not declared_raw:
+        notes.append("WARNING: no acceptance_criteria declared -- empty plan; the "
+                     "empty-table / ac-without-row gate will fire fail-visibly")
+    elif not appended and not pruned:
+        notes.append("no change -- plan already covers all declared ACs")
+    return data, notes
 
 
 def _hook_test_first_disk(result: AuditResult, brief_path: Path, root: Path) -> None:
@@ -338,60 +426,112 @@ def _hook_test_first_disk(result: AuditResult, brief_path: Path, root: Path) -> 
                 f"'{fn}' in '{resolved}'.")
 
 
-def _execute_verifications(result: AuditResult, repo_root: Path, brief_path_str: str,
-                           timeout: float | None) -> None:
-    """WS-1 3.1: RUN each layer's `verification` (split on `;`, shlex, subprocess). A layer
-    is reality-verified iff every segment exits 0. Non-zero -> `verification-failed` VIOLATION;
-    not-runnable (empty / shlex error / command not found) -> non-gating ADVISORY (demote)."""
+def _hook_ws_portability(result: AuditResult, brief_path_str: str) -> None:
+    """STATIC WS-1 portability gate (slice-047/ADR-038, B1+m1). Classify EACH
+    `;`-segment of every layer's `verification` via runnable_command.classify and
+    flag the layer when a segment is NON_PORTABLE_CONSOLE_SCRIPT -- a bare
+    `pytest tests/...` that depends on the ambient PATH and should be interpreter-
+    anchored. Decided BEFORE/independent of execution.
+
+    Scoped DELIBERATELY to non_portable_console_script ONLY (B1): architectural_
+    layers verifications are an OPEN domain (curl/node/docker/`python --version`
+    all classify as not_a_command), so gating not_a_command would cry-wolf on
+    every legit non-pytest smoke command. The open not_a_command class is governed
+    at RUNTIME instead (decidable-wrong -> STOP, undecidable not-runnable -> loud
+    advisory). NOT a general 'is this command portable?' gate."""
     for row in result.rows:
         layer = str(row.entry.get("layer", ""))
         verification = str(row.entry.get("verification", "")).strip()
-        segments = [s.strip().strip("`").strip() for s in verification.split(";")]
-        segments = [s for s in segments if s]
-        if not segments:
+        exercised = row.status == "exercised"  # CR1: symmetric with the runtime pending policy
+        for seg in _segments(verification):  # m1: per top-level segment
+            if classify(seg).klass != NON_PORTABLE_CONSOLE_SCRIPT:
+                continue
+            if exercised:
+                result.violations.append(Violation(
+                    brief_path_str, row.index, "non-portable-verification", "Important",
+                    f"layer '{layer}': non-portable verification {seg!r} depends on the ambient "
+                    f"PATH (bare `pytest`); use the interpreter-anchored `<interp> -m pytest ...` "
+                    f"form so the WS-1 check runs regardless of PATH."))
+            else:
+                # CR1: a pending layer makes no reality claim -> a non-gating advisory,
+                # never a hard STOP (the static gate now agrees with the runtime policy).
+                result.advisories.append(
+                    f"layer '{layer}' (pending): non-portable verification {seg!r} depends on the "
+                    f"ambient PATH (bare `pytest`) — anchor it (`<interp> -m pytest ...`) before "
+                    f"marking the layer 'exercised'.")
+
+
+def _execute_verifications(result: AuditResult, repo_root: Path, brief_path_str: str,
+                           timeout: float | None) -> None:
+    """WS-1 3.1 (slice-047/ADR-038): RUN each layer's `verification` through the
+    SHARED fail-closed core (verification_core.run_verification) and apply the
+    M-add-1 option-(a) gating policy on an EXERCISED layer:
+      * PASS                       -> verified=True
+      * ABSENT (cited test absent) -> STOP (a layer claiming reality contact whose
+                                      cited test is not on this checkout did not
+                                      exercise anything -- decidable)
+      * FAIL, decidable-wrong      -> STOP (exited-nonzero / unparseable / timeout
+                                      / exec-error)
+      * FAIL, subkind not-runnable -> LOUD, LOGGED advisory, NOT a hard STOP. A
+                                      command-not-found is genuinely UNDECIDABLE (a
+                                      prose phantom and a missing foreign tool look
+                                      identical), so blocking it would false-fail a
+                                      legit env-dependent skeleton.
+    A `pending` layer makes no reality claim -> nothing is gating (informational).
+    The blanket advisory-demote the old immature loop applied to EVERY not-runnable
+    case (the M2 wrong-side failure) is gone -- decidable failures now STOP."""
+    for row in result.rows:
+        layer = str(row.entry.get("layer", ""))
+        verification = str(row.entry.get("verification", "")).strip()
+        exercised = row.status == "exercised"
+        if not verification:
             result.advisories.append(
-                f"layer '{layer}': verification is empty after parsing — cannot reality-check; "
+                f"layer '{layer}': verification is empty — cannot reality-check; "
                 f"falling back to the status marker ({row.status}).")
             result.executions.append({"layer": layer, "verified": None, "reason": "empty-verification"})
             continue
 
-        ok, runnable, detail = True, True, ""
-        for seg in segments:
-            try:
-                argv = shlex.split(seg, posix=True)
-            except ValueError as exc:
-                runnable = False
-                detail = f"verification not parseable as a command ({exc}): {seg!r}"
-                break
-            if not argv:
-                continue
-            try:
-                proc = subprocess.run(argv, cwd=str(repo_root), capture_output=True, text=True,
-                                      encoding="utf-8", errors="replace", timeout=timeout)
-            except FileNotFoundError:
-                runnable = False
-                detail = (f"verification command not found (looks like prose, not a runnable "
-                          f"command): {seg!r}")
-                break
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                ok, detail = False, f"verification could not complete ({exc}): {seg!r}"
-                break
-            if proc.returncode != 0:
-                tail = ((proc.stdout or "")[-300:] + (proc.stderr or "")[-300:]).strip()
-                ok, detail = False, f"verification exited {proc.returncode}: {seg!r}\n{tail}"
-                break
+        verdict = run_verification(verification, repo_root, timeout=timeout)
 
-        if not runnable:
-            result.advisories.append(f"layer '{layer}': {detail}")
-            result.executions.append(
-                {"layer": layer, "verified": None, "reason": "not-runnable", "detail": detail})
-        elif ok:
+        if verdict.status == "PASS":
             result.executions.append({"layer": layer, "verified": True})
-        else:
-            result.violations.append(Violation(brief_path_str, row.index, "verification-failed",
-                "Important", f"layer '{layer}': REALITY check failed — {detail}. WS-1 --execute ran "
+            continue
+
+        if verdict.status == "ABSENT":
+            if exercised:
+                result.violations.append(Violation(
+                    brief_path_str, row.index, "verification-absent", "Important",
+                    f"layer '{layer}': marked 'exercised' but its verification cites a test absent "
+                    f"on this checkout — {verdict.reason}. It cannot have exercised the layer."))
+                result.executions.append(
+                    {"layer": layer, "verified": False, "reason": "absent-tests", "detail": verdict.reason})
+            else:
+                result.advisories.append(f"layer '{layer}' (pending): {verdict.reason}")
+                result.executions.append(
+                    {"layer": layer, "verified": None, "reason": "absent-tests", "detail": verdict.reason})
+            continue
+
+        # verdict.status == "FAIL"
+        if verdict.subkind == "not-runnable":
+            # UNDECIDABLE (M-add-1 a): a LOUD advisory, never a hard STOP.
+            result.advisories.append(
+                f"layer '{layer}': NOT-RUNNABLE (loud advisory, NOT a STOP — a prose phantom and a "
+                f"missing tool are indistinguishable from the command string) — {verdict.reason}")
+            result.executions.append(
+                {"layer": layer, "verified": None, "reason": "not-runnable", "detail": verdict.reason})
+            continue
+
+        # decidable-wrong FAIL (exited-nonzero / unparseable / timeout / exec-error)
+        if exercised:
+            result.violations.append(Violation(
+                brief_path_str, row.index, "verification-failed", "Important",
+                f"layer '{layer}': REALITY check failed — {verdict.reason}. WS-1 --execute ran "
                 f"the verification and it did not pass."))
-            result.executions.append({"layer": layer, "verified": False, "detail": detail})
+            result.executions.append({"layer": layer, "verified": False, "detail": verdict.reason})
+        else:
+            result.advisories.append(f"layer '{layer}' (pending): {verdict.reason}")
+            result.executions.append(
+                {"layer": layer, "verified": None, "reason": verdict.subkind, "detail": verdict.reason})
 
 
 def _format_human(result: AuditResult, spec: VariantSpec) -> str:

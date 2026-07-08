@@ -1,6 +1,6 @@
 ---
 name: commit-slice
-description: "Generate an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, ADRs, shippability.json). Dispatches message rendering to a Haiku subagent (COST-1). Supports three mutually exclusive modes: --merge (solo-dev local merge + safe-delete), --push (shared rebase + push + gh-aware PR create + non-blocking auto-merge, degrading gracefully to push + printed hint), --sync-after-pr (post-PR cleanup, runnable from the main tree). No-flag default: generate and show only. Also writes a per-slice changelog.json audit record into the archived slice folder (Step 4.5); never writes to the code repo root EXCEPT the opt-in CI ship receipt (.aisdlc/receipts/, Step 4.8 — emitted only when the repo carries the aisdlc-merge-gate workflow)."
+description: "Generate an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, ADRs, shippability.json). Renders the message INLINE (the old COST-1 Haiku dispatch was removed — spawn overhead exceeded the savings). Supports three mutually exclusive modes: --merge (solo-dev local merge + safe-delete), --push (shared rebase + push + gh-aware PR create + non-blocking auto-merge, degrading gracefully to push + printed hint), --sync-after-pr (post-PR cleanup, runnable from the main tree). No-flag default: generate and show only. Also writes a per-slice changelog.json audit record into the archived slice folder (Step 4.5); never writes to the code repo root EXCEPT the opt-in CI ship receipt (.aisdlc/receipts/, Step 4.8 — emitted only when the repo carries the aisdlc-merge-gate workflow)."
 when_to_use: "Trigger phrases: /commit-slice, 'generate commit message', 'audit commit', 'slice commit message', '/commit-slice --merge', '/commit-slice --push', '/commit-slice --sync-after-pr'. Run after /reflect (which archives the slice). User-invoked only — never auto-advanced into."
 argument-hint: "[--merge | --push | --sync-after-pr]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, AskUserQuestion, Skill
@@ -33,7 +33,12 @@ If two or more flags passed: STOP — "Mode flags `--merge`, `--push`, `--sync-a
 
 Default: most recently archived slice (highest `slice-NNN` under `<vault>/slices/archive/`).
 `--sync-after-pr`: current `slice/*` branch (no archive lookup needed).
-If multiple uncommitted slices exist under `--merge`: ask user which to commit.
+
+**Multiple archived-UNCOMMITTED slices** (parallel siblings — the timestamp default has a known wrong-sibling
+failure mode): under `--merge`, ASK the user which to commit (gate). Under **no-flag and `--push`**, never
+target silently — print one line first: _"N archived-uncommitted slices exist — targeting `<slice-NNN>` (most
+recent). Say the slice id to override."_ (Detect via `stranded_slice_audit` / multiple archive folders whose
+branches still exist.)
 
 Prerequisite: archived slice folder has `reflection.json` (slice completed) — or active slice has `build-log.json` for mid-slice commits. If neither: STOP, tell user to run `/reflect` first.
 
@@ -124,17 +129,17 @@ Output schema by example → `examples/changelog.json`. The script writes `<slic
 path. On exit 2 (slice folder not found): surface the message but do **NOT** block the flow — the changelog.json is
 an audit artifact, never a gate. This skill writes nothing to the code repo root.
 
-## Step 4.6 — product-doc refresh hook (Theme 6: auto-maintain docs as slices ship)
+## Step 4.6 — release-skill doc refresh hook (Theme 6: auto-maintain docs as slices ship)
 
-If `<vault>/doc-manifest.json` exists, this project maintains product docs with `/product-doc`, and the slice you
+If `<vault>/doc-manifest.json` exists, this project maintains product docs with `/release`, and the slice you
 just shipped may have made them stale — the per-slice `changelog.json` from Step 4.5 is the CHANGELOG's source.
 **Offer** a refresh (don't force, don't auto-run — it writes to the repo root):
 
-> "Slice shipped. Product docs are maintained here — refresh them? `/product-doc --docs changelog` reassembles the
+> "Slice shipped. Product docs are maintained here — refresh them? `/release --docs changelog` reassembles the
 >  CHANGELOG from the per-slice entries; if this slice changed user-facing behavior, add `readme,guide` to also
 >  refresh those."
 
-Skip silently when `doc-manifest.json` is absent (the project doesn't generate docs yet — `/product-doc` is how to
+Skip silently when `doc-manifest.json` is absent (the project doesn't generate docs yet — `/release` is how to
 start). This is a reminder, never a gate; never block the commit flow on it. `/drift-check`'s `stale-doc` category
 is the backstop for docs that drift when this hook is declined.
 
@@ -165,7 +170,8 @@ Both `--merge` (5b) and `--push` (5c) reach the **REBASED** rung through this ON
 so the rebase + conflict gate behave IDENTICALLY in both modes —
 `parallel_conflict_resolver.py` is invoked UNCHANGED (extracting the rebase into a script
 was rejected: its hard part, the PCR-2b gate, is interactive). Resolve the INTEGRATION branch
-(slice-022: slices rebase ONTO `uat`, not the released trunk; rebase does not advance master, so the
+(slice-022/061: slices rebase ONTO the integration branch `aisdlc-uat` — legacy `uat` accepted as
+back-compat in an ai-sdlc-managed repo — not the released trunk; rebase does not advance master, so the
 read-only resolution is correct):
 ```bash
 default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root .)
@@ -239,18 +245,49 @@ No git operations are executed.
 2. Show message + `git status` (files to be staged) on current slice branch.
    Confirm: "Commit on `<current branch>`? (yes/no)" → yes: `git add <files_from_build-log>` + `git commit -m "..."`.
 
-2.1. **WT-clean post-commit guard**: `git status --porcelain` MUST return empty after sub-step 2. If non-empty: STOP — "WT non-empty after commit. Unexpected uncommitted files: `<list>`. Commit or discard before proceeding." Vacuous on PSQ-3 re-entry (WT already clean).
+2.1. **WT-clean post-commit guard**: `git status --porcelain` MUST return empty after sub-step 2. If non-empty: STOP — "WT non-empty after commit. Unexpected uncommitted files: `<list>`. Expected set = `build-log.json.files_changed` — a listed file means you forgot to stage it (add + amend is NOT allowed; make a follow-up commit); an UNlisted file is likely a generated artifact (inspect, then discard or .gitignore). Resolve before proceeding." Vacuous on PSQ-3 re-entry (WT already clean).
 
 2.5. **PSQ-3 rebase** (ADR-068): run the **Shared rebase section** (§ *Shared — rebase onto default*, above) to
    bring the slice branch onto `<default>`. On a clean / fast-forward rebase (or a clean A3 merge-into-branch
    fallback) → proceed to sub-step 3. On a blocked / aborted rebase (PCR-2b STOP, SOAD-1 abort/cancel) the shared
    section has already halted — do NOT proceed.
 
+2.7. **Integration-health gate** (slice-059 / SC-093 / ADR-056 — `--merge` ONLY): the 2.5 rebase produced the
+   exact about-to-merge state (the slice branch replayed onto the current integration-branch tip). BEFORE advancing to the
+   step-3 merge, re-run the full shippability catalog against THAT post-rebase state and **REFUSE the merge on
+   red** — so per-slice green can never merge into an integration branch made red by an already-landed sibling break. This runs
+   from the slice **worktree** (still the cwd here, BEFORE step-3's `cd "$main_tree"`), so it tests the post-rebase
+   tip; because the merge is strictly downstream, a refusal here means the merge simply never runs and the integration branch is
+   left untouched **by placement** (no rollback). It reuses `shippability_runner.run_catalog` → `verification_core`
+   (the SAME check `/validate-slice` Step 6 runs) via `integration_health_gate.py`; it never re-implements the
+   suite. (Not wired into 5c `--push` — that path does not advance the integration branch locally; its integration-health
+   enforcement is the CI required-check, out of scope. M-add-1.)
+   ```bash
+   wt="$(git rev-parse --show-toplevel | tr -d '\r')"   # cwd is the post-rebase worktree here (pre-step-3 cd)
+   VAULT="${AI_SDLC_VAULT_ROOT:-$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+   # Pass --skip-integration-health "<reason>" ONLY if the user invoked /commit-slice --merge with that explicit
+   # modifier (a NON-EMPTY reason is required; a blank reason is rejected as a usage error — deny-by-default).
+   gate_out="$($PY "${CLAUDE_SKILL_DIR}/scripts/integration_health_gate.py" --repo-root "$wt" --catalog "$VAULT/shippability.json" --json)"; gate_rc=$?
+   gate_action="$(printf '%s' "$gate_out" | $PY -c "import json,sys; print(json.load(sys.stdin).get('action','?'))" 2>/dev/null)"
+   ```
+   - **`gate_rc` is any non-zero** (`action` `refuse` = red rows named, or `refuse-unrunnable` = fail-closed: the
+     suite could not be evaluated) → **STOP — do NOT proceed to step 3.** Print the gate's report (the failing
+     rows / cause), append a `<ts> FINDING: integration-health gate REFUSED (<action>) — <reason>` line to
+     `build-log.json` **Events** (fail-visible), and leave the integration branch + the worktree untouched. To merge anyway, the
+     user re-runs `/commit-slice --merge --skip-integration-health "<reason>"` (the override is explicit + logged,
+     never silent).
+   - **`gate_rc` is 0 and `gate_action` is `overridden`** → the user pulled the andon cord: append a
+     `<ts> DEVIATION: integration-health gate OVERRIDDEN — reason: <reason>` line to `build-log.json` **Events**,
+     surface a LOUD warning to the user, then proceed to step 3. (Exit 0 alone cannot distinguish this from a clean
+     pass — that is why the wiring reads the JSON `action`, never the exit code alone. M-add-2.)
+   - **`gate_rc` is 0 and `gate_action` is `proceed`** → full suite green against the post-rebase tip; append a
+     `<ts> TEST: integration-health gate PASSED` line to `build-log.json` **Events** and proceed to step 3.
+
 3. **Switch to main tree + merge** (BRANCH-2 worktree collision fix): resolve main tree path:
    ```bash
    main_tree=$(git worktree list --porcelain | awk '/^worktree / {print $2; exit}')
    ```
-   If empty: STOP — "main-tree-unresolvable." `cd "$main_tree"`. **Resolve the integration branch as a WRITE target (slice-022 M3)** — `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --write --repo-root .)`; on non-zero exit (uat absent) **STOP**: "integration branch uat absent; refusing to merge a slice into the released trunk — establish uat first" (NEVER fall back to master for a write — a `--merge` advances `$default`). Then `git checkout "$default"` + `git merge --no-ff slice/NNN-<name> -m "Merge slice/NNN-<name>: <intent>"`. If conflict: STOP with manual resolution hint (no recovery flow in v1).
+   If empty: STOP — "main-tree-unresolvable." `cd "$main_tree"`. **Resolve the integration branch as a WRITE target (slice-022 M3 / slice-061 M-add-2)** — `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --write --repo-root .)`; on non-zero exit (no `aisdlc-uat` AND no ai-sdlc-managed `uat` — a full trunk-degrade, keyed on resolution SOURCE) **STOP**: "no integration branch; refusing to merge a slice into the released trunk — establish aisdlc-uat first" (NEVER fall back to master for a write — a `--merge` advances `$default`). Then `git checkout "$default"` + `git merge --no-ff slice/NNN-<name> -m "Merge slice/NNN-<name>: <intent>"`. If conflict: STOP with manual resolution hint (no recovery flow in v1).
 
 4. Confirm: "Confirm merge + delete? (yes/no)" — on no: ABORT cleanly, leave merged branch intact.
 
@@ -287,13 +324,13 @@ direct-merge path was dropped at slice-008 TRI-1 (ADR-006); nothing merges local
    runs ON the slice branch, so the worktree IS the cwd — pass `--repo-root .` (do NOT reference a `$wt` from
    another block):
    ```bash
-   # slice-022 (B1): pr_flow self-resolves the INTEGRATION branch (uat) for the PR base + rebase target.
+   # slice-022/061 (B1): pr_flow self-resolves the INTEGRATION branch (aisdlc-uat; legacy uat as back-compat) for the PR base + rebase target.
    # Do NOT pass --default -- an inline origin/HEAD=master would OVERRIDE the swapped resolver.
    $PY "${CLAUDE_SKILL_DIR}/scripts/pr_flow.py" --confirmed \
        --branch slice/NNN-<name> --repo-root . --json
    ```
-   (pr_flow self-resolves the integration branch from `--repo-root` via `resolve_integration_branch` — uat when
-   present, the released trunk otherwise.) `pr_flow.py` pushes (`git push -u origin slice/NNN-<name>` — never force-push, never skip
+   (pr_flow self-resolves the integration branch from `--repo-root` via `resolve_integration_branch` — aisdlc-uat
+   (or legacy uat in an ai-sdlc-managed repo) when present, the released trunk otherwise.) `pr_flow.py` pushes (`git push -u origin slice/NNN-<name>` — never force-push, never skip
    hooks) → creates the PR with `gh pr create --base <default> --head <branch> --fill` (the `--fill` is REQUIRED so
    the title/body come from the slice commits — `gh pr create` is otherwise interactive; gh present + GitHub origin,
    else it prints the hint) → enables non-blocking auto-merge ONLY when `.permissions.push==true`, **verifying the
@@ -319,37 +356,55 @@ target slice itself, so the owner need not `cd` into the slice worktree.
 2. Origin remote present.
 
 **Cleanup flow:**
-1. **Resolve the target slice** (runs from anywhere):
+1. **Resolve the integration branch** (slice-022 M-add-1 / slice-061): `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root .)`. A slice merges to the integration branch `aisdlc-uat` (legacy `uat` as back-compat), so the classifier below (`git cherry origin/<default>` / `git merge-base origin/<default>`) and the post-merge `git checkout <default>` + `git pull --ff-only origin <default>` target `origin/<default>` / `<default>`, NOT the released trunk. STOP exit 2 if it does not resolve.
+2. `git fetch --prune origin <default>` (fresh refs so the classifier's `git cherry` / `git merge-base` against `origin/<default>` are accurate; explicit refspec required).
+3. **Resolve the target slice + its classification** — resolve-only; the merge-state classifier AND the single-sourced `authorize_remote_delete` (gh PR merged-state primary) run HERE, in Python. **§5d NEVER recomputes Signal A/B in bash** (M1/ADR-052 — the classification has exactly one home):
    ```bash
    $PY "${CLAUDE_SKILL_DIR}/scripts/resolve_sync_target.py" --repo-root . --vault "$AI_SDLC_VAULT_ROOT" --json
    ```
-   (Add `--slice slice-NNN` to target a specific slice.) `resolve_sync_target.py` is resolve-only (never deletes):
-   explicit `--slice` → archive-aware by-id; on a `slice/*` branch → resolves self (back-compat); else auto-detects
-   from local `slice/*` refs, **EXCLUDING worktree-backed in-flight slices** [M4], and two-signal-merged over the
-   survivors. Read the plan's `status`:
-   - `resolved` → use its `slice` / `branch` / `worktree_path` as `<branch>` below.
+   (Add `--slice slice-NNN` to target a specific slice.) Explicit `--slice` → archive-aware by-id; on a `slice/*`
+   branch → resolves self (back-compat); else auto-detects from local `slice/*` refs, **EXCLUDING worktree-backed
+   in-flight slices** [M4], merged over the survivors. Read the plan's `status`:
+   - `resolved` → use its `slice` / `branch` / `worktree_path` / `state` / `remote_delete_authorized` / `evidence`.
    - `ambiguous` → AskUserQuestion among `candidates` (or re-run with `--slice`); NEVER auto-pick.
    - `none` → STOP with the plan's `reason` (nothing merged-and-not-in-flight to clean). Pass `--slice` to clean a
      worktree-backed merged slice explicitly.
-2. `git fetch --prune origin <default> <branch>` (explicit refspec required for Signal B).
-3. **Resolve the integration branch** (slice-022 M-add-1): `default=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root .)`. A slice merges to `uat`, so the two-signal merged-detection below (`git cherry origin/<default>` / `git merge-base origin/<default>`) and the post-merge `git checkout <default>` + `git pull --ff-only origin <default>` target `origin/uat` / `uat`, NOT the released trunk. STOP exit 2 if it does not resolve.
-4. **Two-signal merged-state detection** on the RESOLVED `<branch>` (unchanged):
-   - **Signal A**: `git ls-remote --exit-code origin <branch>` returns non-zero (remote absent).
-   - **Signal B** (two-pass):
-     - Pass 1: `git cherry origin/<default> <branch>` → no `+` lines → YES.
-     - Pass 2 (fallback when Pass 1 has `+` lines): compute `BASE=$(git merge-base origin/<default> <branch>)` + `FILES=$(git diff --name-only BASE..<branch>)`.
-       - Empty-FILES guard: if FILES empty → Signal B = NO; STOP with diagnostic.
-       - Perf bound: if `BASE..origin/<default>` > 500 commits → STOP with diagnostic.
-       - Predicate: any commit C on `BASE..origin/<default>` whose touched-file set ⊇ FILES AND tree-state at FILES paths equals `<branch>^{tree}` → Signal B = YES (squash-merge detected).
-   - Both signals must be YES to proceed. (This assumes head-branch auto-delete is ON — Signal A = remote gone;
-     hardening the auto-delete-OFF case is **SC-018**, deferred at slice-008 TRI-1.)
-   - Signal A=NO: STOP — "Remote slice branch still exists. PR may be unmerged."
-   - Signal B=NO: STOP — "Slice commits not on `origin/<default>`. Re-run after PR merges."
-5. Confirm: "PR appears merged + remote-deleted. Confirm cleanup (checkout `<default>` + pull --ff-only + safe-delete `<branch>`)? (yes/no)"
-6. On yes (order load-bearing): `git checkout <default>` → `git pull --ff-only origin <default>` (NEVER a bare `git pull`) → idempotent worktree-remove guard (identical to 5b sub-step 5, using the plan's `worktree_path` when set) → `git branch -d <branch>` (safe-delete). From the main tree, no `cd` into the slice worktree is needed.
-7. Show `git log -1` + `git log --graph --oneline -5`.
+4. **Branch PURELY on the plan's `state`** (the sole selector — do NOT recompute the signals in bash, M1):
+   - `unmerged` → STOP — "Slice commits not on `origin/<default>`. Re-run after the PR merges."
+   - `in-flight-excluded` → STOP — "Target is worktree-backed (in-flight in this clone). Finish the slice first, or pass `--slice` to force."
+   - `merged-remote-absent` → **4a (auto-delete-ON local cleanup)** below.
+   - `merged-remote-lingering` → **4b (auto-delete-OFF remote cleanup)** below.
 
-**Critical rules — `--sync-after-pr`**: NEVER force-delete a branch (safe-delete only), NEVER omit `--ff-only`, NEVER omit the explicit fetch refspec, NEVER skip the both-signal AND, NEVER skip git hooks.
+   **4a — `merged-remote-absent` (auto-delete ON): LOCAL cleanup, NO remote push.**
+   <!-- SYNC-5D-ONPATH:BEGIN (local-only cleanup via the gh-gated local-delete actuator; zero remote push) -->
+   Confirm: "PR merged + remote branch already deleted. Confirm local cleanup (checkout `<default>` + pull --ff-only + informed local delete of `<branch>`)? (yes/no)"
+   On yes (order load-bearing): `git checkout <default>` → `git pull --ff-only origin <default>` (NEVER a bare `git pull`) → idempotent worktree-remove guard (identical to 5b sub-step 5, using the plan's `worktree_path` when set) → **the named local-delete actuator** (SC-092 / ADR-054): it safe-deletes first, and on a squash-merge refusal it force-completes the local cleanup ONLY when the reused `authorize_remote_delete` confirms the PR is authoritatively MERGED — otherwise it STOPs (fail-closed; the never-force floor is preserved for the un-merged case). The one force op lives in the scanned actuator, never inlined here:
+   ```bash
+   $PY "${CLAUDE_SKILL_DIR}/scripts/local_branch_delete.py" --branch <branch> --repo-root . --json
+   ```
+   Read the result JSON: `safe-deleted` / `force-deleted` / `noop-already-absent` (exit 0) → done; `refused` (exit 3) → STOP with the `reason` (fail-closed — the local branch is untouched, a re-run can re-target); `force-delete-failed` (exit 4) → STOP, surface the `reason` (never swallowed). **NO `git push --delete` is issued on this path.** From the main tree, no `cd` into the slice worktree is needed. (This actuator is reached only after the step-4 classify gate resolved `merged-remote-absent` — i.e. the merge signal already held; SC-092 keeps it downstream of that gate.)
+   <!-- SYNC-5D-ONPATH:END -->
+
+   **4b — `merged-remote-lingering` (auto-delete OFF): REMOTE cleanup, evidence-gated, irreversible-last.**
+   The remote head branch still exists but the PR is MERGED. If the plan's `remote_delete_authorized` is NOT `true`, **STOP with the plan `evidence` reason** (fail-closed — gh absent / non-GitHub origin / PR not MERGED ⇒ zero `push --delete`; M-add-2 — an OPEN PR protects a slice in-flight in another clone). Otherwise:
+   <!-- SYNC-5D-LINGERING:BEGIN (M-add-1 / AC3 evidence-rendering confirmation region) -->
+   i. **Evidence-rendering confirmation** (M-add-1 — an evidence check, NOT a rubber-stamp): render the authoritative evidence straight from the plan `evidence` — "PR #`<evidence.pr_number>` is MERGED (mergedAt `<evidence.merged_at>`) but its remote branch `<branch>` still **lingers** (head-branch auto-delete OFF). Confirm cleanup: checkout `<default>` + pull --ff-only + local safe-delete, then `git push origin --delete <branch>` (irreversible remote delete)? (yes/no)". On **no** → NO delete of any kind; STOP.
+   <!-- SYNC-5D-LINGERING:END -->
+   <!-- SYNC-5D-4BORDER:BEGIN (CR1/CR2 / ADR-053 / SC-092: remote actuator FIRST, then the gh-gated local-delete actuator; squash refusal handled fail-closed) -->
+   ii. On yes (order load-bearing — **ADR-053 corrects ADR-052's ordering**): reversible steps FIRST → the remote-delete actuator runs **WHILE THE LOCAL BRANCH REF IS STILL LIVE** (its independent Signal-B re-verify reads the local `<branch>` — code-review CR1) → the local branch is deleted LAST. Concretely: `git checkout <default>` → `git pull --ff-only origin <default>` → idempotent worktree-remove guard (as 5b sub-step 5) → **THEN the named actuator, the ONLY remote-delete path** (before any local branch delete):
+      ```bash
+      $PY "${CLAUDE_SKILL_DIR}/scripts/remote_branch_delete.py" --branch <branch> --repo-root . --json
+      ```
+      It RE-CALLS `authorize_remote_delete` at point-of-use (independent gh re-check + Signal-B on the live local ref, B2) before issuing exactly `git push origin --delete <branch>`. Read the result JSON: `deleted` / `noop-already-absent` (exit 0) → continue to the local delete; `refused` (exit 3) → STOP with `reason` (authorization failed at point-of-use — fail-closed; the local branch is untouched, so a re-run can re-target — M4); `push-failed` (exit 4) → STOP, surface the `reason` + the literal `recovery_command` (`git push origin --delete <branch>`, re-runnable — M4). NEVER swallow a partial.
+   iii. **Local cleanup LAST via the named local-delete actuator** (after the remote actuator succeeded — the ordering keeps the local ref LIVE for the remote actuator's Signal-B re-verify, CR1/ADR-053): the informed local delete (SC-092 / ADR-054) safe-deletes first and, on the **squash-merge** refusal (aisdlc-v2's own model, so safe-delete legitimately sees the branch as "not fully merged" — code-review CR2), it force-completes the cleanup ONLY when the reused `authorize_remote_delete` confirms the PR is authoritatively MERGED — otherwise it STOPs (fail-closed; the never-force floor is preserved for the un-merged case). The one force op lives in the scanned actuator, never inlined here:
+      ```bash
+      $PY "${CLAUDE_SKILL_DIR}/scripts/local_branch_delete.py" --branch <branch> --repo-root . --json
+      ```
+      Read the result JSON: `safe-deleted` / `force-deleted` / `noop-already-absent` (exit 0) → done (no leftover local branch); `refused` (exit 3) → STOP with the `reason` (authorization failed at point-of-use — fail-closed; the local branch is untouched, so a re-run can re-target); `force-delete-failed` (exit 4) → STOP, surface the `reason` (never swallowed). NEVER swallow a partial. (The actuator is reached only after the step-4 classify gate resolved `merged-remote-lingering` — the merge signal already held — so SC-092 keeps it downstream of that gate.)
+   <!-- SYNC-5D-4BORDER:END -->
+5. Show `git log -1` + `git log --graph --oneline -5`.
+
+**Critical rules — `--sync-after-pr`**: NEVER inline a local force op in this skill — the ONLY local force-completion is the gh-MERGED-gated `local_branch_delete.py` actuator (SC-092 / ADR-054: deny-by-default, safe-delete first, force-completes ONLY on an authoritative gh MERGED verdict via the reused `authorize_remote_delete`; fail-closed on gh-absent / non-GitHub / non-MERGED; its one force op is scanned + line-scoped-permitted, never written here); NEVER omit `--ff-only`, NEVER omit the explicit fetch refspec, NEVER recompute the merge signals in bash (branch on the plan `state` — M1); the remote-delete actuator runs BEFORE the local-delete actuator (CR1 — its Signal-B re-verify needs the live local ref); issue the remote `git push origin --delete` ONLY via `remote_branch_delete.py`, ONLY on `merged-remote-lingering` with `remote_delete_authorized: true`, ONLY after the evidence-rendering yes (fail-closed on gh absent / non-GitHub — M-add-2); the local-delete actuator is reached ONLY downstream of the step-4 classify gate (the merge signal already held); NEVER skip git hooks.
 
 ## Step 6 — mark the candidate shipped + archive it (CAND-1)
 
@@ -357,15 +412,26 @@ Run this **only when a commit was actually created** (modes `--merge` / `--push`
 `validated` in `candidates.json`; now that the code has landed, mark it `shipped` and move it to the archive so
 the live backlog stays small (Direction #3) and a `shipped` candidate ALWAYS means committed code.
 
-1. Read `<vault>/candidates.json`, find the candidate whose `slice` matches this slice; set its `status` to `"shipped"`.
-2. Append the shipped entry to `<vault>/archive/candidates.json`:
+> **The move is TWO per-file-locked writes, not one atomic cross-file move** — an interrupt between them
+> leaves the candidate in BOTH files (the live copy reads shipped-but-live, which `candidates_top` classifies
+> `other` and silently drops from every bucket). The sequence below is SELF-HEALING: the archive append is
+> idempotent (`--unique-key id` — a re-run that finds the id already archived is the interrupted-earlier-run
+> signature, not an error), so **on any interrupt simply re-run Step 6 from the top**; `/archive`'s sweep is
+> the backstop that detects a candidate present in both files (archive wins).
+
+1. Read `<vault>/candidates.json`, take the candidate whose `slice` matches this slice, set its `status` to
+   `"shipped"` in the COPY you are about to archive (write it to `"$T/shipped-candidate.json"` — never the CWD).
+2. Append the shipped copy to the archive, then remove it from the live file (ONE block, one `$T`):
    ```bash
-   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file archive/candidates.json --array candidates --content-file shipped-candidate.json
-   ```
-3. Remove it from `<vault>/candidates.json` via CAS-rewrite (scratch files in a temp dir, NEVER the repo CWD —
-   they'd be one `git add -A` from being committed):
-   ```bash
-   T="$(mktemp -d)"
+   # slice-026: per-run temp dir UNDER $PY's gettempdir() so a git-bash write + a Windows-Python
+   # read resolve to the SAME real path (bare `mktemp -d` returns /tmp/..., which Windows-Python
+   # reads at a DIFFERENT path -> CAS divergence). The SAME $PY on both sides keeps it self-consistent.
+   TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+   T="$(mktemp -d "$TMPD/aisdlc-commit.XXXXXX")"
+   # (write the shipped candidate copy to "$T/shipped-candidate.json" now)
+   $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file archive/candidates.json --array candidates --unique-key id --content-file "$T/shipped-candidate.json"; arc=$?
+   # arc=0: archived. arc=2 with a "unique-key conflict" on stderr: ALREADY archived by an
+   # interrupted earlier run -> proceed to the removal (self-healing). Any OTHER arc=2: STOP.
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" read    --file candidates.json --out-file "$T/base.bin"
    # drop the shipped candidate from candidates[], write to "$T/updated.json", then:
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" rewrite --file candidates.json --base-file "$T/base.bin" --content-file "$T/updated.json"
@@ -391,9 +457,11 @@ story is the keystone deliverable — it reaches the owner's phone). The `Skill`
 relayed from Remote Control — but every git state change is gated behind this skill's explicit yes/no confirmations,
 NOT a frontmatter flag.) **Do NOT remove the grant.**
 
-**Fire-and-forget — NEVER a gate (must-not-defer):**
+**Fire-and-forget — NEVER a gate (must-not-defer):** ("fire-and-forget" is the CONTRACT, not literal
+concurrency — the Skill tool runs `/slice-story` in-conversation; what the contract means is that its outcome
+can never gate, block, or roll back the already-completed commit.)
 - The commit/merge/push has ALREADY completed; the story refresh is a downstream side-effect, not part of the
-  commit. Do **NOT await** the forked narrator inside the commit flow.
+  commit.
 - If `/slice-story` errors / times out / its narrator fails: surface ONE line — _"Story refresh failed — the
   shipped story was not updated; the commit/merge/push already completed."_ — and CONTINUE. Never block, abort,
   or roll back anything on a story-refresh failure.

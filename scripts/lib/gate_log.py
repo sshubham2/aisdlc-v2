@@ -25,7 +25,12 @@ the default is correct for every current gate). The single source of truth is
 Verdict row shape (default `--kind verdict`; optional fields OMITTED, never written
 as null — matches the vault's "omit empty" convention so absence reads cleanly):
     {at, slice, gate, verdict, findings_count, reality_contact
-     [, findings_real][, findings_noise][, mode][, tier][, cross_domain][, approach_divergence]}
+     [, findings_real][, findings_noise][, mode][, tier][, cross_domain][, approach_divergence][, note]}
+
+`note` (optional, both kinds) is a short free-text context marker for degraded-input
+runs — e.g. `crg-context:unavailable` when /design-slice ran its tournament without
+blast-radius context — so readers like /pulse can surface "N recent slices designed
+degraded" without parsing per-slice artifacts. Never load-bearing for the math.
 
 The `design-tournament` gate (3.3) is INFORMATIONAL — it raises no findings
 (findings_count 0); its row carries `approach_divergence` (how diverse the blind
@@ -41,7 +46,7 @@ catches = Σ findings_real on the gate's verdict rows. Readers (`/pulse`,
 `/critic-calibrate`) MUST filter `kind == "miss"` OUT of the precision/raised math.
 Miss row shape:
     {at, slice, gate, kind:"miss", reality_contact, severity, caught_by
-     [, ref][, mode][, tier]}
+     [, ref][, mode][, tier][, note]}
 Emitted by `/reflect` (Step 3, per MISSED critique finding; caught_by build/validate),
 or for a post-ship escape attributed to the introducing slice:
 
@@ -52,8 +57,10 @@ or for a post-ship escape attributed to the introducing slice:
 
 `findings_real` + `findings_noise` (plan Phase 0.2) make per-gate PRECISION
 computable. They are known at append time for the gates that triage their own
-findings (today: `critique`, from the TRI-1 dispositions — accepted-* = real,
-overridden = noise); other gates omit them.
+findings (today: `critique` + `critique-review`, from the TRI-1 dispositions —
+accepted-* = real, overridden = noise; the `critique-review` row classifies ONLY
+the meta-Critic's `^M-add-` dispositions via `triage_precision.py`, slice-052/ADR-045);
+other gates omit them.
 
 Two output modes (mirrors drift-check/build_entry.py):
   - default: print the row JSON to STDOUT -> pipe into `vault_edit append --stdin`.
@@ -178,6 +185,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                    help="(design-tournament gate, 3.3) how diverse the blind designers were — a "
                         "per-pair summary, e.g. 'practice~expert:overlapping; practice~crossdomain:disjoint'. "
                         "Lets /pulse --full track whether the expert lens is earning its cost over a project.")
+    p.add_argument("--note", default=None,
+                   help="optional short free-text context marker (e.g. 'crg-context:unavailable' "
+                        "when a tournament ran without blast-radius context); written only when "
+                        "non-empty, never load-bearing for the precision/recall math")
     p.add_argument("--at", default=None, help="ISO-8601 timestamp (default: now, UTC)")
     p.add_argument("--out", default=None,
                    help="write the row to this file and print the path "
@@ -224,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         if args.ref and args.ref.strip():
             row["ref"] = args.ref.strip()
-        for k in ("mode", "tier"):
+        for k in ("mode", "tier", "note"):
             v = getattr(args, k)
             if v is not None and str(v).strip():
                 row[k] = v.strip()
@@ -266,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
             row["findings_real"] = args.findings_real
         if args.findings_noise is not None:
             row["findings_noise"] = args.findings_noise
-        for k in ("mode", "tier"):
+        for k in ("mode", "tier", "note"):
             v = getattr(args, k)
             if v is not None and str(v).strip():
                 row[k] = v.strip()

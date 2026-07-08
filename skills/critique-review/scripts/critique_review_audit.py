@@ -30,7 +30,8 @@ each `assessments[].finding` should reference a finding id that exists in
 violation).
 
 NFR-1 mtime carry-over was REMOVED (3.9 — it was dead for every post-install user).
-`--no-carry-over` is still accepted as a no-op for CLI compatibility.
+`--no-carry-over` is still accepted as a no-op for CLI compatibility ONLY — no
+carry-over machinery exists anywhere in this module anymore.
 
 v2 shape (schema by example `skills/critique-review/examples/critique-review.json`):
 
@@ -67,7 +68,6 @@ if str(_REPO) not in sys.path:
 import argparse
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
 from pathlib import Path
 
 from scripts.lib import _stdout
@@ -109,7 +109,6 @@ class AuditResult:
     assessment_count: int = 0
     missed_count: int = 0
     violations: list[CRViolation] = field(default_factory=list)
-    carry_over_exempt: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -118,7 +117,6 @@ class AuditResult:
             "assessment_count": self.assessment_count,
             "missed_count": self.missed_count,
             "violations": [v.to_dict() for v in self.violations],
-            "carry_over_exempt": self.carry_over_exempt,
             "summary": {
                 "violation_count": len(self.violations),
                 "consistent": len(self.violations) == 0,
@@ -151,10 +149,7 @@ def _load_critique_finding_ids(slice_folder: Path) -> set[str] | None:
     return ids
 
 
-def audit_review_file(
-    review_path: Path,
-    skip_if_carry_over: bool = True,
-) -> AuditResult:
+def audit_review_file(review_path: Path) -> AuditResult:
     """Audit a critique-review.json file against DR-1."""
     result = AuditResult()
 
@@ -273,12 +268,6 @@ def audit_review_file(
 
 
 def _format_human(result: AuditResult) -> str:
-    if result.carry_over_exempt:
-        return (
-            "Critique-review audit: slice is carry-over exempt "
-            "(mission-brief.json predates DR-1 release).\n"
-        )
-
     if not result.violations:
         return (
             f"Critique-review audit: clean. Verdict: {result.verdict or '?'} "
@@ -308,17 +297,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument(
         "--no-carry-over", action="store_true",
-        help="Disable mtime-based carry-over exemption",
+        help="Accepted as a NO-OP for CLI compatibility (carry-over was removed in 3.9)",
     )
     args = parser.parse_args(argv)
 
     target: Path = args.target
     review_path = target / "critique-review.json" if target.is_dir() else target
 
-    result = audit_review_file(
-        review_path,
-        skip_if_carry_over=not args.no_carry_over,
-    )
+    result = audit_review_file(review_path)
 
     if args.json:
         sys.stdout.write(json.dumps(result.to_dict(), indent=2) + "\n")

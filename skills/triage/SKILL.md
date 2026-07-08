@@ -56,20 +56,73 @@ test -n "$PY" && test -f "$PY"                          && echo "venv: OK"   || 
 "${CRG:-code-review-graph}" --version >/dev/null 2>&1   && echo "crg: OK"    || echo "crg: MISSING (optional)"
 test -f "${CLAUDE_SKILL_DIR}/../../agents/critique.md"  && echo "agents: OK" || echo "agents: MISSING"
 test -f "${CLAUDE_SKILL_DIR}/../slice/SKILL.md"         && echo "skills: OK" || echo "skills: MISSING"
+# Greenfield-guard probe (evidence, not vibes): LOC of tracked source files. >500 -> route to /adopt.
+loc=$(git ls-files -- '*.py' '*.ts' '*.tsx' '*.js' '*.jsx' '*.go' '*.java' '*.rb' '*.rs' '*.c' '*.cpp' '*.cs' '*.php' '*.swift' '*.kt' 2>/dev/null | tr '\n' '\0' | xargs -0 -r cat 2>/dev/null | wc -l)
+echo "existing tracked source LOC: ${loc:-0}"
 ```
+
+If the LOC probe reports **>500**, STOP and suggest `/adopt` instead (the Critical-rules greenfield guard,
+now measured rather than guessed; a non-git dir reports 0 and proceeds — Step 0.5 handles git).
 
 If `venv`, `agents`, or `skills` are MISSING — **STOP**. Tell the user the prerequisite is missing and point
 them to the install docs. Do NOT proceed with missing prerequisites.
 
 `crg: MISSING` is advisory only (code-review-graph is optional; skip the Step 5b-pre offer if absent).
 
+## Step 0.5 — git-at-open gate (slice-058 / ADR-055 / SC-107 — run BEFORE any vault write)
+
+The external vault keys on a hash of its LOCATOR — `sha256(cwd)` before git exists, `sha256(<git-common-dir>)`
+after. So opening the pipeline in a NON-git dir and running `git init` LATER silently re-keys the vault to a
+fresh empty store (the SC-107 field incident: /triage+/discover pre-git → `git init` → empty phantom vault →
+`/slice` sees no candidates). Close it at the source: gate on git HERE, **before the first vault artifact is
+written** (Step 5a). Probe git with a bare `git rev-parse` (no new tool):
+```bash
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 && echo "GIT_OK" || echo "NON_GIT"
+```
+
+- **`GIT_OK`** → already a git work tree; the top-of-file `$VAULT` injection is valid. Proceed to Step 1.
+- **`NON_GIT`** → HALT and offer via `AskUserQuestion` (3 outcomes; the actuator NEVER self-consents to `git init`):
+  - **Run `git init` now (recommended)** — the consented, fail-closed actuator (list-form, no `shell=True`,
+    canonical root re-verify):
+    ```bash
+    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" git-init --root .
+    ```
+    A **non-zero exit** (exit 3 = git-init failure / not-a-directory / permission-denied / post-init root
+    mismatch) → **STOP, write NO vault artifact**, surface the reason. Exit 0 → the vault is now git-keyed;
+    **RE-RESOLVE `$VAULT`** (next block).
+  - **Decline (fail-closed)** → **STOP. Write NO vault artifact.** State plainly: "The vault would key on this
+    directory path and silently orphan if you run `git init` later — refusing to create a fragile pre-git vault.
+    Run `git init` (or re-run and accept), then /triage."
+  - **Proceed without git anyway (explicit informed skip)** → the sanctioned escape hatch for a genuinely
+    non-git / throwaway workflow. Proceed, but WARN concretely: "This vault keys on the current directory path.
+    If you run `git init` later — and the stranded-slice audit AND the Step-5b-pre code-review-graph install both
+    prompt you to — the vault RE-KEYS, orphans, and re-running /triage will NOT find it (it looks FRESH and
+    overwrites an empty store). You would have to hand-write the tier-2 pin to recover."
+
+**Post-gate re-resolution (B1 — mandatory when `git init` just ran).** Shell vars do NOT persist across skill
+bash blocks and the top-of-file `!`-injection resolved `$VAULT` **PRE-git** (cwd-keyed). After a consented
+`git init` the vault path CHANGED — re-resolve it in a bash BODY step and use THIS value for the Step-1 re-triage
+detection AND every Step-5 vault write. **Do NOT reuse the load-time injected `$VAULT` for any write.**
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+[ -z "$VAULT" ] && { echo "STOP: vault unresolved after git init." >&2; exit 2; }
+if [ -f "$VAULT/triage.json" ]; then echo "RE_TRIAGE (existing vault: $VAULT)"; else echo "FRESH (vault: $VAULT)"; fi
+```
+Re-evaluate FRESH vs RE_TRIAGE (Step 1) against THIS re-resolved `$VAULT`, not the stale load-time injection.
+
 ## Step 1 — Detect re-triage
 
-If the injected `triage.json` is NOT `"NOT_FOUND"`: this is a **re-triage**. Read the existing mode and
-risks. Ask: "What changed? Does this require a mode change?" Only update what's different; append a new
-`history` entry. Skip Step 2 mode logic if mode is unchanged.
+Branch on the UX-2 injection's three-state signal (or the Step-0.5 B1 re-resolution when `git init` just ran —
+that value supersedes the load-time injection):
 
-If `"NOT_FOUND"`: fresh project — continue to Step 2.
+- **`RE_TRIAGE (…)`** → this is a **re-triage**. Read the existing mode and risks (the injection printed
+  `triage.json`). Ask: "What changed? Does this require a mode change?" Only update what's different; append a
+  new `history` entry (Step 5a re-triage path). Skip Step 2 mode logic if mode is unchanged.
+- **`FRESH (…)`** → genuinely new project — continue to Step 2.
+- **`VAULT_UNRESOLVED`** → you already STOPped at the UX-2 rule above (never guess; point at `/ai-sdlc:setup`).
+
+(There is no `"NOT_FOUND"` sentinel anymore — that was the pre-3.19.7 bare-`cat` behavior whose false-fresh
+signal caused the data-loss incident the UX-2 block documents.)
 
 ## Step 2 — Parse explicit mode argument
 
@@ -106,7 +159,7 @@ Pick mode:
 | **Standard** | everything else (default) |
 
 **What mode actually controls (be honest with the user).** Mode is NOT the per-slice review cost — that is set
-by each slice's **risk tier** (`/slice` Step 3a; the design tournament + `/critique` key on tier, not mode). Mode
+by each slice's **risk tier** (`/slice` Step 3a; `/critique` keys on tier, not mode — the design tournament now runs all 3 designers on every slice regardless of tier, ADR-018). Mode
 controls three things: (1) the **default tier** for new slices — Minimal ⇒ `low` (small work is cheap by default;
 bump up for risky cuts), Standard/Heavy ⇒ `medium`; (2) **vault structure** — Heavy creates components/contracts/
 threat-model/etc., Standard/Minimal stay thin; (3) **Heavy's compliance floor** — Heavy forces `critic_required`
@@ -142,15 +195,13 @@ From the conversation, identify risks. For each risk tag reversibility:
 
 Compute score = likelihood × impact (low=1 / med=2 / high=3 → 1..9).
 Band: 1–2 = low, 3–4 = medium, 6–9 = high.
+(`risk_register_audit.py` is the ENFORCEMENT authority for this rubric — the restatement here is orientation
+for writing correct values; if this prose and the audit ever disagree, the audit wins.)
 
 For each HIGH-band risk, decide whether a `/risk-spike` is warranted; note it in `mitigation`.
 
-After writing, validate with:
-```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py"
-```
-Exit 0 = scores/bands/statuses are valid. Non-zero = fix the flagged entries and re-run before continuing
-(score must equal likelihood×impact; band must match; status/id/required-fields must be well-formed).
+(The register is validated by the audit at the END of Step 5a, after the file is actually written —
+not here; there is nothing on disk to audit yet.)
 
 ## Step 5 — Write vault skeleton
 
@@ -186,13 +237,31 @@ have: `id`, `title`, `likelihood`, `impact`, `status`, `reversibility`, `score`,
 or the audit will reject. These are project-open single-shot writes (no parallel-append hazard).
 
 On **re-triage**: append a new `history` entry to `triage.json` via
-`$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" --file triage.json --array history --json '<entry>'`.
-Update `risk-register.json` via `scripts.lib.vault_edit update --file risk-register.json --array risks --id <R-NN> --set ...` (or `append` for a new risk) for any changed/new risks.
+`$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file triage.json --array history --json '<entry>'`
+(no `--vault` flag — 4.6.1: the env var is not exported; `vault_edit` resolves internally at call time, which
+equals the B1 post-init re-resolution).
+Update `risk-register.json` via `scripts.lib.vault_edit update --file risk-register.json --array risks --id <R-NN> --set ...` (or `append` for a new risk — pre-mint its id via `vault_edit alloc --file risk-register.json --kind r`, never model-mint "next R-NN") for any changed/new risks.
+
+**Validate the register (moved here from Step 4 — it audits the file you JUST wrote):**
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py"
+```
+Exit 0 = scores/bands/statuses are valid. Non-zero = fix the flagged entries and re-run before continuing
+(score must equal likelihood×impact; band must match; status/id/required-fields must be well-formed).
 
 **Pin the vault (4.7, FRESH only).** After the FRESH writes, record the tier-2 git-common-dir pin so a later
-repo move/rename does NOT orphan this vault (the pin survives a rename; `_vault_paths` reads it at tier 2):
+repo move/rename does NOT orphan this vault (the pin survives a rename; `_vault_paths` reads it at tier 2).
+**slice-058/M1 — guard on git presence + check the exit:** on the explicit-skip (pre-git) branch there is no
+git-common-dir to pin into, so do NOT call write-pin there (git-absent would return the benign exit 2, which is
+NOT a failure here); on the git path, a **genuine** pin failure (exit 3) must STOP — never leave the vault
+silently unpinned or mis-pinned:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" write-pin
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" write-pin; rc=$?
+  [ "$rc" = 0 ] || { echo "STOP: vault_admin write-pin failed (rc=$rc) — surface + fix; do not leave the vault unpinned." >&2; exit "$rc"; }
+else
+  echo "note: pre-git explicit-skip path — no git-common-dir to pin into; the vault is fragile until \`git init\` (see the Step 0.5 warning)."
+fi
 ```
 It also drops a `.source-repo` back-ref in the vault (for `vault_admin list`'s orphan detection) and WARNs if a
 same-name / different-hash sibling vault already exists (a likely prior-rename orphan to migrate + clean up).
@@ -210,9 +279,12 @@ If yes:
 "${CRG:-code-review-graph}" build --repo .
 ```
 
-If the directory is not a git repo and `code-review-graph install` fails with a git error: **STOP**. Ask:
-"This isn't a git repo yet. Run `git init` yourself, then re-run /triage, or skip the git-hook step for now?"
-Do NOT run `git init` or `git config`. Repo creation is the user's decision.
+If the directory is not a git repo and `code-review-graph install` fails with a git error: this means the user
+took the **Step 0.5 explicit-skip (pre-git) path** (the git-at-open gate offers a consented `git init`; reaching
+here git-less means they declined it for a throwaway workflow). The CRG git-hook install needs a repo — note it in
+`triage.json` `deferred_steps` and skip it, or offer to re-run the Step 0.5 `git init` now (consented, via
+`vault_admin.py git-init --root .`). Git-at-open is owned by Step 0.5; this skill offers a **consented** init there
+rather than refusing outright — but the init is still the user's decision (the actuator never self-consents).
 
 If no or crg is absent: note in `triage.json` `deferred_steps` — can be installed later.
 
@@ -252,7 +324,7 @@ Claude Code only notifies on options prompts; a free-text question blocks silent
 
 ## Vault discipline
 
-- ADRs (`<vault>/decisions/ADR-*.json`) are append-only — supersede with a new ADR, never edit in place
+- ADRs (`<vault>/decisions/ADR-*.json`) are append-only — supersede with a new ADR, never edit in place -- enforced by the **adr-append-only** gate (ADR-APPEND-1 at `/build-slice` pre-finish), not just convention
 - Mid-build deviations → update active slice's `design.json` + note in `build-log.json`
 - Run `/drift-check` before commit
 
@@ -280,7 +352,7 @@ only notifies on options prompts; a bare ask blocks silently.
 
 **Testing**: inside an active slice, "tests pass" means `/validate-slice` passed (incl. shippability).
 
-ADRs are append-only (supersede, don't edit). Run `/drift-check` before commit.
+ADRs are append-only (supersede, don't edit) -- enforced by the adr-append-only gate (ADR-APPEND-1). Run `/drift-check` before commit.
 ```
 
 ## Step 6 — Tell user what's next (mode-specific)
@@ -300,7 +372,9 @@ its assumptions.
 2. `/heavy-architect` (comprehensive upfront vault: components, contracts, threat model, cost)
 3. `/user-test` if B2C
 4. `/slice` to start the build loop
-5. Periodic: `/sync` every 5–10 slices; `/reduce` every 5 slices
+5. Periodic: `/sync` every 5–10 slices; `/reduce` every 5 slices — also STAMP these into `triage.json` as
+   `"cadences": {"sync_every_slices": "5-10", "reduce_every_slices": 5}` (this checklist is otherwise the only
+   place the cadences exist; the stamp lets `/pulse` nag from data instead of prose)
 
 Remind: "I created/updated `./CLAUDE.md` (~20 lines) with the hard rule and vault discipline. It keeps
 me on the pipeline across sessions. If you ever want me to bypass, say so explicitly."
@@ -312,7 +386,11 @@ me on the pipeline across sessions. If you ever want me to bypass, say so explic
 - **Do NOT state the mode silently.** State rationale; wait for confirmation before writing.
 - **Do NOT write files until Step 5** (mode confirmed).
 - **Re-triage**: append via `vault_edit` — never overwrite history.
-- **NEVER run `git init` or `git config`.** Repo creation is the user's decision.
+- **git-at-open is a CONSENTED gate, not a silent init (slice-058 / ADR-055).** Step 0.5 offers `git init` via
+  `AskUserQuestion` BEFORE any vault write and runs it only on the user's explicit choice (the `vault_admin
+  git-init` actuator NEVER self-consents); repo creation is still the user's decision. Do NOT silently run `git
+  init` / `git config`, and do NOT write a vault artifact while the dir is non-git and the user has not accepted
+  the init or explicitly chosen to skip.
 - **Greenfield only**: if the user has >500 LOC of existing code, STOP and suggest `/adopt` instead.
 
 ## Mode quick reference

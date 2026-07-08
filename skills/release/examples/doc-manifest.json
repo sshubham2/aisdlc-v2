@@ -1,0 +1,71 @@
+{
+  "_schema": "aisdlc/doc-manifest@1",
+  "_note": "Provenance anchor written by /release into <vault>/doc-manifest.json (single-shot raw-write). Records which product docs were generated, the CRG public-surface snapshot each was grounded in, and the source commit — so /drift-check can flag a doc as 'stale-doc' when the code surface it documented no longer matches reality (Phase 4 / Theme 6). The docs themselves are markdown DELIVERABLES in the CODE repo (README.md, CHANGELOG.md, docs/*), NOT vault JSON; only this manifest lives in the vault.",
+  "at": "<ts>",
+  "source_commit": "08f217c",
+  "public_surface": {
+    "entry_points": [
+      "cli: aisdlc"
+    ],
+    "exports": [
+      "build_backlog",
+      "vault_edit"
+    ],
+    "endpoints": []
+  },
+  "public_surface_unverified": [
+    {
+      "token": "cli: aisdlc",
+      "reason": "not-indexed"
+    }
+  ],
+  "docs": [
+    {
+      "path": "README.md",
+      "kind": "readme",
+      "generated_at": "<ts>",
+      "grounded_in": [
+        "crg:scripts/lib/build_backlog.py::build_backlog",
+        "vault:concept.json"
+      ],
+      "grounding_unverified": [
+        {
+          "token": "crg:scripts/lib/build_backlog.py::nonexistent_flag",
+          "reason": "symbol-absent"
+        }
+      ],
+      "grounding_check": {
+        "ran": true,
+        "crg_reachable": true,
+        "graph_last_updated": "<ts>",
+        "graph_stale": false,
+        "public_surface_verified": true
+      }
+    },
+    {
+      "path": "CHANGELOG.md",
+      "kind": "changelog",
+      "generated_at": "<ts>",
+      "grounded_in": [
+        "vault:slices/archive/*/changelog.json"
+      ]
+    },
+    {
+      "path": "docs/api-reference.md",
+      "kind": "api-reference",
+      "generated_at": "<ts>",
+      "grounded_in": [
+        "crg:scripts/lib/vault_edit.py::vault_edit"
+      ]
+    },
+    {
+      "path": "docs/user-guide.md",
+      "kind": "user-guide",
+      "generated_at": "<ts>",
+      "grounded_in": [
+        "vault:concept.json",
+        "crg:src/cli.py::main"
+      ]
+    }
+  ]
+}

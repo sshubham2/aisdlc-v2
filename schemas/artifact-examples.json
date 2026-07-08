@@ -71,7 +71,7 @@
     "rows": [{
       "id": "SHIP-007", "slice": "slice-019", "kind": "test",
       "description": "Webhook signature verification rejects tampered payloads.",
-      "machine_cmd": "pytest tests/bugs/test_webhook_sig.py -q",
+      "machine_cmd": "python -m pytest tests/bugs/test_webhook_sig.py -q",
       "critical_path": true, "added": "<ts>"
     }]
   },
@@ -118,7 +118,7 @@
       { "assumption": "A2", "statement": "One SSE server fans out to the expected concurrent viewers.", "spike_ref": "spike-sse-fanout", "verdict": "conditional", "constraints": ["holds to ~120 concurrent connections per instance -- shard or move to managed pub/sub above that"] }
     ],
     "cross_domain_transfer": {
-      "_note": "Optional (Phase 2.1). Present only when this design imports a pattern from another domain. Tier-gated: omit on low/mechanical slices. status per invariant: holds (reasoned true here) | must-verify (empirically decidable, not yet proven -> a /critique focus + re-spike candidate) | fails (precondition does not hold here -> that part of the analogy dropped).",
+      "_note": "Optional (Phase 2.1). Present only when this design imports a pattern from another domain. Omit when no cross-domain pattern was selected (tier-independent -- the crossdomain designer runs on every slice). status per invariant: holds (reasoned true here) | must-verify (empirically decidable, not yet proven -> a /critique focus + re-spike candidate) | fails (precondition does not hold here -> that part of the analogy dropped).",
       "source_domain": "distributed systems / lattice theory",
       "pattern": "CRDT-style convergent replica: each client view is an eventually-consistent set of who-is-here",
       "rationale": "Presence is a converging-replica problem, not a request/response one — importing CRDT convergence avoids a brittle hand-rolled sync.",
@@ -129,7 +129,7 @@
       ]
     },
     "tournament": {
-      "_note": "Optional (Phase 3). Present only when the tier-gated multi-designer tournament ran (omit on low/mechanical single-flight slices). selected: core|partial|none. decidable_disagreements (verdict pending here) are adjudicated by the post-synthesis /risk-spike --mode design (reality fills go/no-go); taste_disagreements fall through to /critique + the user. channeled_experts feeds the /critique expert-independence guard (the Critic must be a DIFFERENT expert). approach_divergence (3.3) classifies each designer-PAIR's proposals as identical|overlapping|disjoint — it MEASURES the 'diverse at generation' claim instead of asserting it; the synthesis also appends it to a design-tournament gate-log row so /pulse --full can track, over a project, whether the expert lens earns its cost (if practice~expert is identical/overlapping on most high-tier slices, drop to 2 designers).",
+      "_note": "Phase 3. Present on every slice (the 3-designer tournament runs regardless of tier). selected: core|partial|none. decidable_disagreements (verdict pending here) are adjudicated by the post-synthesis /risk-spike --mode design (reality fills go/no-go); taste_disagreements fall through to /critique + the user. channeled_experts feeds the /critique expert-independence guard (the Critic must be a DIFFERENT expert). approach_divergence (3.3) classifies each designer-PAIR's proposals as identical|overlapping|disjoint — it MEASURES the 'diverse at generation' claim instead of asserting it; the synthesis also appends it to a design-tournament gate-log row so /pulse --full can track, over a project, whether the expert lens earns its cost (if practice~expert is identical/overlapping on most slices, surface for human review of the always-3 policy -- it never auto-drops a designer).",
       "tier": "high",
       "designers": ["designer-practice", "designer-crossdomain", "designer-expert"],
       "proposals": [
@@ -244,7 +244,7 @@
   },
   "drift-log": {
     "_schema": "aisdlc/drift-log@1",
-    "_note": "Append-only audit (R-32). Categories: drift | unspecified-code | stale-claim | stale-doc (stale-doc = a /product-doc-generated doc drifted from code, via doc-manifest.json).",
+    "_note": "Append-only audit (R-32). Categories: drift | unspecified-code | stale-claim | stale-doc (stale-doc = a /release-generated doc drifted from code, via doc-manifest.json).",
     "entries": [{ "at": "<ts>", "trigger": "slice-021", "category": "stale-claim", "finding": "ADR-008 claims WebSocket; code uses SSE.", "resolution": "superseded by ADR-014" }]
   },
   "gate-log": {
@@ -274,7 +274,7 @@
   "sync-log": {
     "_schema": "aisdlc/sync-log@1",
     "_note": "Heavy-mode bidirectional reconciliation record (append-only).",
-    "runs": [{ "at": "<ts>", "regenerated": ["components/orders.json", "contracts/webhook.json"], "drift": [{ "claim": "retired R-3", "reality": "only simple case retired", "action": "updated risk-register" }] }]
+    "runs": [{ "at": "<ts>", "mode": "full", "regenerated": ["components/orders.json", "contracts/webhook.json"], "drift": [{ "claim": "retired R-3", "reality": "only simple case retired", "action": "updated risk-register" }], "csp1": { "violations": 1, "resolved": 1, "kinds": ["missing-ref"] } }]
   },
   "changelog": {
     "_schema": "aisdlc/changelog@1",
@@ -298,12 +298,13 @@
   },
   "doc-manifest": {
     "_schema": "aisdlc/doc-manifest@1",
-    "_note": "Provenance anchor written by /product-doc into <vault>/doc-manifest.json (single-shot raw-write). Records which product docs were generated, the CRG public-surface snapshot each was grounded in, and the source commit — so /drift-check can flag a doc as 'stale-doc' when the code surface it documented no longer matches reality (Phase 4 / Theme 6). The docs themselves are markdown DELIVERABLES in the CODE repo (README.md, CHANGELOG.md, docs/*), NOT vault JSON; only this manifest lives in the vault.",
+    "_note": "Provenance anchor written by /release into <vault>/doc-manifest.json (single-shot raw-write). Records which product docs were generated, the CRG public-surface snapshot each was grounded in, and the source commit — so /drift-check can flag a doc as 'stale-doc' when the code surface it documented no longer matches reality (Phase 4 / Theme 6). The docs themselves are markdown DELIVERABLES in the CODE repo (README.md, CHANGELOG.md, docs/*), NOT vault JSON; only this manifest lives in the vault.",
     "at": "<ts>",
     "source_commit": "08f217c",
     "public_surface": { "entry_points": ["cli: aisdlc"], "exports": ["build_backlog", "vault_edit"], "endpoints": [] },
+    "public_surface_unverified": [{ "token": "cli: aisdlc", "reason": "not-indexed" }],
     "docs": [
-      { "path": "README.md", "kind": "readme", "generated_at": "<ts>", "grounded_in": ["crg:scripts/lib/build_backlog.py::build_backlog", "vault:concept.json"], "grounding_unverified": [{ "token": "crg:scripts/lib/build_backlog.py::nonexistent_flag", "reason": "symbol-absent" }], "grounding_check": { "ran": true, "crg_reachable": true, "graph_last_updated": "<ts>", "graph_stale": false, "public_surface_verified": false } },
+      { "path": "README.md", "kind": "readme", "generated_at": "<ts>", "grounded_in": ["crg:scripts/lib/build_backlog.py::build_backlog", "vault:concept.json"], "grounding_unverified": [{ "token": "crg:scripts/lib/build_backlog.py::nonexistent_flag", "reason": "symbol-absent" }], "grounding_check": { "ran": true, "crg_reachable": true, "graph_last_updated": "<ts>", "graph_stale": false, "public_surface_verified": true } },
       { "path": "CHANGELOG.md", "kind": "changelog", "generated_at": "<ts>", "grounded_in": ["vault:slices/archive/*/changelog.json"] },
       { "path": "docs/api-reference.md", "kind": "api-reference", "generated_at": "<ts>", "grounded_in": ["crg:scripts/lib/vault_edit.py::vault_edit"] },
       { "path": "docs/user-guide.md", "kind": "user-guide", "generated_at": "<ts>", "grounded_in": ["vault:concept.json", "crg:src/cli.py::main"] }
@@ -334,7 +335,7 @@
     "_note": "Heavy: upfront infra cost per component at 1K/10K/100K users (compute/storage/network/third-party), with monthly + per-user totals per scale. Human-authored (locked-at: heavy-architect); refined as reality lands.",
     "currency": "USD",
     "components": [
-      { "name": "api-server", "scales": {
+      { "name": "api-server", "fidelity": "estimated", "scales": {
         "1k":   { "compute": 50,   "storage": 10,  "network": 5,   "third_party": 15,  "total_monthly": 80,   "per_user": 0.08 },
         "10k":  { "compute": 320,  "storage": 60,  "network": 40,  "third_party": 90,  "total_monthly": 510,  "per_user": 0.051 },
         "100k": { "compute": 2600, "storage": 500, "network": 380, "third_party": 700, "total_monthly": 4180, "per_user": 0.0418 } } }
@@ -384,10 +385,17 @@
   },
   "user-test": {
     "_schema": "aisdlc/user-test@1",
-    "_note": "Real-user validation findings (mockup / prototype / working slice). Surfaced risks append to risk-register.json; surfaced work becomes candidates.",
-    "test": "checkout-flow-mockup", "mode": "prototype", "date": "<ts>", "participants": 1,
+    "_note": "Real-user validation findings (mockup / prototype / working slice). Surfaced risks append to risk-register.json; surfaced work becomes candidates. Real-user signal = participants + findings[] tagged source:'real-user' (slice-044 / ADR-034); the OPTIONAL heuristic_walkthrough sibling is a weaker model-only pre-flight screen that NEVER counts as real-user validation.",
+    "test": "checkout-flow-mockup", "mode": "prototype", "date": "<ts>", "participants": 1, "preflight_used": true,
     "tasks": [{ "task": "complete a purchase", "result": "stuck", "observation": "user could not find the pay button" }],
-    "findings": [{ "kind": "stuck", "detail": "pay button below the fold", "becomes_candidate": "SC-030", "becomes_risk": null }]
+    "findings": [{ "kind": "stuck", "detail": "pay button below the fold", "source": "real-user", "becomes_candidate": "SC-030", "becomes_risk": null }],
+    "heuristic_walkthrough": {
+      "_note": "OPTIONAL model-only pre-flight screen (slice-044). Written by /user-test Step 2.5 via scripts/lib/user_test_gate.ingest_heuristic_walkthrough(); a WEAKER 'heuristic' color, structurally separate from the real-user signal and never read by is_real_user_validated() (ADR-034). Absent on a real-user-only session; a status:'skipped' shape appears when the sim agent was unavailable/failed (AC4).",
+      "source": "sim-agent", "color": "heuristic", "status": "ok",
+      "echo_chamber_caveat": "This artifact was itself AI-generated, so a model reviewing it shares its blind spots (echo chamber). Treat these heuristic findings as especially weak and confirm everything with the real-user session.",
+      "disclaimed_scopes": ["cross-screen-state", "efficiency", "motivational-dropout"],
+      "findings": [{ "id": "H1", "kind": "ambiguous-instruction", "heuristic": "Match between system and the real world", "observation": "the primary button label is jargon a first-time user is unlikely to recognize", "evidence_quote": "Reconcile selected entries", "confidence": "medium", "predicts_interaction": false, "drafts_observation_question": "Show me what you'd expect to happen when you press this button." }]
+    }
   },
   "story-sections": {
     "_schema": "aisdlc/story-sections@1",
@@ -446,5 +454,16 @@
       { "term": "server-sent events (SSE)", "plain": "a one-way live feed the browser keeps open to receive updates the moment they happen." }
     ],
     "generated_at": "<ts>"
+  },
+  "reality-gates": {
+    "_schema": "aisdlc/reality-gates@1",
+    "_note": "Repo-tracked per-project declared reality gates (slice-062/SC-095/ADR-059) at <repo-root>/.aisdlc/reality-gates.json -- DISTINCT from the external per-machine ~/.aisdlc/<slug>-<hash>/ vault (same basename, opposite intent: this file is committed + travels to teammates + CI). Checks are grouped by surface {security,nfr,ops}; each gate is {id, command (SCMD-1 <interp>-anchored), description?}. An absent OR all-empty manifest is a structural no-op. A declared gate SHOULD invoke a stack tool via `<interp> -m <module>`, NOT cite a slice-local tests/*.py path (which would trip fail-closed under the parallel-slice model, ADR-021 divergence). Runtime validator: scripts/lib/reality_gate_runner.py (malformed -> REFUSE exit 3). artifact_lint --self-check covers only THIS canonical example shape, never the live repo instance. The concrete gates (bandit/pip-audit/schemathesis/latency/telemetry) are out of scope here -> SC-097 + feedback #6/#12.",
+    "gates": {
+      "security": [
+        { "id": "bandit", "command": "<interp> -m bandit -q -r .", "description": "example only -- Python SAST; concrete gates ship in SC-097" }
+      ],
+      "nfr": [],
+      "ops": []
+    }
   }
 }

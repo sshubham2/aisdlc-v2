@@ -17,7 +17,7 @@ v2 shape (`<vault>/shippability.json`; schema by example
         {
           "id": "SHIP-007", "slice": "slice-019", "kind": "test",
           "description": "...",
-          "machine_cmd": "pytest tests/bugs/test_webhook_sig.py -q",
+          "machine_cmd": "python -m pytest tests/bugs/test_webhook_sig.py -q",
           "critical_path": true, "added": "<ts>"
         }
       ]
@@ -61,10 +61,7 @@ if str(_REPO) not in sys.path:
 
 from scripts.lib import _pyfn, _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
-
-# `tests/<...>.py` token (repo-relative test path). Backticks/quotes are
-# stripped per-token before this is applied to the post-`pytest` segment.
-_TEST_PATH_RE = re.compile(r"tests/\S+?\.py")
+from scripts.lib.verification_core import _extract_test_tokens  # noqa: F401  slice-047/ADR-038: relocated to the shared core, re-exported here (single source of truth)
 
 
 @dataclass(frozen=True)
@@ -161,34 +158,12 @@ def _find_repo_root(start: Path) -> Path:
     return start.resolve().parent
 
 
-# A pytest `::`-selector immediately following a matched test path, e.g.
-# `::TestClass::test_method` or `::test_fn[case]`. Bounded by whitespace /
-# backtick / quote.
-_SELECTOR_RE = re.compile(r"""\A(::[^\s`"']+)""")
-
-
-def _extract_test_tokens(command: str) -> list[tuple[str, str | None]]:
-    """Return `(file_token, raw_selector|None)` pairs after the `pytest` kw.
-
-    Scope to the post-`pytest` segment so an interpreter path and `-m pytest`
-    prefix are never mistaken for test paths. The `::`-selector is CAPTURED (not
-    split away) so the function-level layer can verify the cited test function
-    exists. The file token itself is backtick/quote-stripped and `::`-free.
-    """
-    idx = command.find("pytest")
-    if idx == -1:
-        return []
-    segment = command[idx + len("pytest"):]
-    pairs: list[tuple[str, str | None]] = []
-    for m in _TEST_PATH_RE.finditer(segment):
-        tok = m.group(0).strip("`").strip().strip('"').strip("'")
-        tok = tok.split("::", 1)[0].strip()
-        if not tok:
-            continue
-        sel_match = _SELECTOR_RE.match(segment[m.end():])
-        selector = sel_match.group(1) if sel_match else None
-        pairs.append((tok, selector))
-    return pairs
+# `_extract_test_tokens` (+ its `_TEST_PATH_RE` / `_SELECTOR_RE` helpers) were
+# RELOCATED to scripts.lib.verification_core (slice-047 / ADR-038) so the
+# lib-resident brief_variants_audit can share the SAME token extraction the
+# catalog ABSENT pre-check uses; it is re-exported via the import at the top, so
+# the function-level audit below (and every existing importer, incl. the runner)
+# keeps resolving it unchanged.
 
 
 def _load_rows(catalog_path: Path) -> list[dict]:

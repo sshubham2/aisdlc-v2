@@ -1,7 +1,8 @@
 ---
 name: design-slice
-description: "Produces a just-enough per-slice design (design.json) via a tier-gated DESIGN TOURNAMENT: on medium/high/novel slices it spawns 2-3 BLIND designer subagents (practice, cross-domain, expert), then reality-grounds a single synthesis (CRG-fit / spike-ability / reversibility / simplest-that-works) with a composition-coherence pass; low/mechanical slices use a single inline flight (zero added cost). Queries code-review-graph for blast-radius, runs the project-frame synthesizer, tags every new ADR with reversibility. Empirically-decidable tournament disagreements + must-verify cross-domain invariants gate a post-synthesis /risk-spike --mode design before /critique."
+description: "Produces a just-enough per-slice design (design.json) via a DESIGN TOURNAMENT that runs on EVERY slice regardless of risk_tier: it spawns all 3 BLIND designer subagents (practice, cross-domain, expert), then reality-grounds a single synthesis (CRG-fit / spike-ability / reversibility / simplest-that-works) with a composition-coherence pass. Queries code-review-graph for blast-radius, runs the project-frame synthesizer, tags every new ADR with reversibility. Empirically-decidable tournament disagreements + must-verify cross-domain invariants gate a post-synthesis /risk-spike --mode design before /critique."
 when_to_use: "Trigger after /risk-spike (feasibility) passes, before /critique. Phrases: '/design-slice', 'design this slice', 'spec the current slice', 'design the slice'. Reads <vault>/slices/slice-NNN/mission-brief.json. Per-slice only — for upfront Heavy-mode vault use /heavy-architect."
+argument-hint: "[slice-id]"
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, AskUserQuestion, Skill
 ---
 
@@ -10,21 +11,35 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, AskUserQuestion, Skil
 Design ONLY what THIS slice needs to ship. Not full architecture. Output feeds `/critique`.
 
 **Generate diversely · select against reality · review independently.** The brilliant design is a *generation*
-event, sampled once today and lost. So on slices that warrant it, design-slice runs a **tournament**: 2–3 *blind*
+event, sampled once today and lost. So design-slice runs a **tournament** on EVERY slice: all 3 *blind*
 designers generate independently (the ceiling), then a sighted synthesis selects against reality (the floor).
 
 > Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / git config `aisdlc/vault-root`).
 
-## Live state — injected
+## Resolve the active slice (run this FIRST)
 
-Active slice mission brief:
-```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$AI_SDLC_VAULT_ROOT"
+Run the `bash` block below **first** and read the printed brief — it resolves the active slice in a BODY
+step that BINDS an explicit `/design-slice slice-NNN` `$ARG`. A `!`-injection runs at skill-LOAD *before*
+`${ARGUMENTS}` binds, so it CANNOT resolve a named slice (SC-064 / ADR-022). Use the resolved slice's
+**folder** for the `<active-slice>` placeholder in Step 0.5 and the Step-1 reads.
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --slice "$ARG"; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --repo-root .; fi   # SC-064: resolution moved from a `!`-injection to this BODY step so $ARG binds. active_slice_brief is exit-0-always so the no-arg AMBIGUOUS note degrades VISIBLY, never an exit-4 HALT (ADR-022 design-slice carve-out -- M-add-2). reflection-lookup + Step-0.5 project-frame stay branch-resolved advisory context (SC-063 scope).
 ```
 
-Nearest prior slice + relevant past reflections (lexical match via vault JSON — shared designer context):
-```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reflection_lookup.py" --vault "$AI_SDLC_VAULT_ROOT" --from-mission-brief
+## Prior-lesson recall — resolve in a BODY step (feeds the shared designer context)
+
+Graded prior-lesson recall (`reflection_lookup.py`, slice-063 / SC-096) — the past slices + reflections most
+relevant to THIS mission, surfaced by the default `tfidf-cosine` scorer. **Run this as a BODY step, NOT a
+`!`-injection (M-add-1):** a `!`-injection runs at skill-LOAD before `${ARGUMENTS}` binds, so it cannot pass
+`--slice` and — under parallel in-flight slices resolved from a non-worktree context — hits the ambiguous-active
+path and returns nothing (the exact incident this closes; SC-064/ADR-022 precedent). This body block binds the
+explicit `/design-slice slice-NNN` `$ARG` and passes `--slice`, degrading to `--from-mission-brief` (branch/cwd
+resolution) only when no slice arg was given. Capture its stdout as the "Nearest prior slice + relevant
+reflections" block in the Step-1 designer context.
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reflection_lookup.py" --vault "$VAULT" --slice "$ARG" --scorer tfidf-cosine; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reflection_lookup.py" --vault "$VAULT" --from-mission-brief --scorer tfidf-cosine; fi
 ```
 
 ## Step 0 — graph context (before designing)
@@ -37,10 +52,15 @@ Query code-review-graph for blast-radius and reachability of the modules this sl
 If `.code-review-graph/` is missing or stale: `"${CRG:-code-review-graph}" build` (or `update`). If BOTH CRG
 and the `grep_vault.py` fallback below are unavailable/fail, proceed with the advisory note
 `(blast-radius context unavailable)` — the designers work without prior-art context; never a gate.
+**Record the degradation, don't just tolerate it**: carry it to Step 5 — set
+`tournament.crg_context: "unavailable"` in `design.json` (omit the field when context was available)
+AND add `--note "crg-context:unavailable"` to the Step-5 design-tournament gate-log row, so `/pulse`
+can surface "N recent slices designed without CRG context" instead of the degradation staying silent.
 
 For conceptual matches not found by CRG keyword search, fall back to:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/grep_vault.py" --vault "$AI_SDLC_VAULT_ROOT" --pattern "<concept>" --dir slices/archive
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is NOT exported -- resolve per block (vars don't persist across bash blocks)
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/grep_vault.py" --vault "$VAULT" --pattern "<concept>" --dir slices/archive
 ```
 
 **Keep a short blast-radius summary** — it becomes part of the shared context every designer gets.
@@ -62,30 +82,20 @@ At this point `design.json` does not exist yet; the Impact section will be missi
 
 Capture stdout — it is shared designer context too.
 
-## Step 1 — the design tournament (tier-gated)
+## Step 1 — the design tournament (always 3 blind designers)
 
-Read `risk_tier` from the injected mission-brief. Pick the tournament size — **the tournament is insurance; do
-not buy platinum on a $5 slice:**
+Read `risk_tier` from the mission-brief resolved by the body step above — you still record it in `tournament.tier`, and it still drives
+the downstream `/critique` + `/critique-review` gates and the Step-8 design-spike triggers. **But the tournament
+runs on EVERY slice regardless of risk_tier — generation breadth is always maximal: spawn all 3 blind designers
+(`designer-practice` + `designer-crossdomain` + `designer-expert`) feeding the Step-2 reality-grounded synthesis.**
+There is no single-flight short-circuit and no tier-scaled designer count — tier no longer sizes the tournament
+(ADR-018). The cost guard is the Step-2 synthesis + `/reduce` (a forced cross-domain analogy is discarded at
+selection via `transfer_found: false`, never adopted), and the retained `approach_divergence` measurement (Step 2
+item 5) keeps the always-3 cost honest.
 
-| Tier | Designers | Path |
-|------|-----------|------|
-| **low / mechanical** (typo, config, rename, obvious CRUD) | **1 (inline)** | **Single flight** — use the "Single flight" path just below, then skip Step 2 (synthesis) → Step 3. No agents spawned, no design spike. **Zero added cost.** |
-| **medium** | **2 blind**: `designer-practice` + `designer-crossdomain` | Tournament |
-| **high / novel / irreversible** | **3 blind**: + `designer-expert` | Tournament + mandatory coherence pass + design spike **iff** the synthesis left a `pending` decidable disagreement or a `must-verify` invariant (Step 8) |
+### The tournament — spawn the 3 BLIND designers
 
-**Escalate within medium → full 3** when the slice is genuinely *novel* (no similar prior slice in the injected
-reflections) or locks an *irreversible* ADR — those are exactly the slices where the expert lens earns its cost.
-
-### Single flight (low / mechanical only — today's behavior)
-
-Compare mission-brief.json to existing vault + code-graph output and design inline. List ONLY what this slice
-introduces (components, contracts, data-model deltas, new ADRs). **Do not list things this slice doesn't touch.**
-Skip the cross-domain hunt — forcing an analogy on a trivial cut is noise. Go straight to Step 3. No `tournament`
-block is written; no design spike runs.
-
-### Tournament (medium / high) — spawn BLIND designers
-
-Spawn the tier-appropriate designers **in a single message (parallel)** via the **Agent tool**
+Spawn all three designers **in a single message (parallel)** via the **Agent tool**
 (`subagent_type: "designer-practice"` / `"designer-crossdomain"` / `"designer-expert"`). The personas carry their
 own epistemology, procedure, and output schema — **do NOT re-state them here.** Pass every designer the **same**
 context block, and **nothing else** — they must not see each other's output (blind = the diversity you're paying for):
@@ -101,15 +111,15 @@ Mode: <Minimal | Standard | Heavy>   Risk tier: <low | medium | high>
 <stdout of project_frame_synth, or "(project-frame unavailable)">
 
 # Nearest prior slice + relevant reflections
-<the injected reflection_lookup output>
+<the body-resolved reflection_lookup output (from the Prior-lesson recall BODY step above)>
 
 # CRG blast-radius / reachability
 <your Step 0 summary>
 ```
 
 **Await the real agents — never fabricate a designer's output.** Each returns one `aisdlc/design-proposal@1`
-JSON object. If a designer errors or returns null, synthesize from those that returned; if **all** fail, fall
-back to the "Single flight" inline design above and note it.
+JSON object. If a designer errors or returns null, synthesize from those that returned; if **all** fail, design
+inline from the mission-brief + the Step-0 context and note that all designers failed.
 
 **Persist the raw proposals BEFORE synthesizing (tournament path only).** Raw-Write
 `<vault>/slices/slice-NNN-<name>/design-proposals.json`:
@@ -136,7 +146,9 @@ You now hold 2–3 independent proposals. Compose **one** design — this is the
    keep one and redesign the seam; record it in `coherence_check`.
 3. **Classify the disagreements.**
    - **Empirically decidable** (does the API support X? is it fast enough? does the integration actually work?)
-     → add to `tournament.decidable_disagreements` with `verdict: "pending"` **only when the losing answer would
+     → add to `tournament.decidable_disagreements` with `verdict: "pending"` (each entry is
+     `{question, verdict: "pending", spike: "pending"}` — the Step-8 design spike overwrites both, filling the
+     go/no-go `verdict` and the `spike: spike-<name>` ref) **only when the losing answer would
      force a re-synthesis** — a different component boundary, contract, or data model. A cheap question whose
      answer doesn't change the design (it just needs to hold) is NOT a decidable disagreement; let `/build-slice`'s
      smoke gate settle it. **Reality adjudicates the material ones** at the post-synthesis design spike (Step 8) —
@@ -151,10 +163,12 @@ You now hold 2–3 independent proposals. Compose **one** design — this is the
    **pair**, classify how different their proposals actually were: `identical` (same approach modulo wording),
    `overlapping` (shared core, differing details), or `disjoint` (materially different approaches). Record one
    entry per pair into `tournament.approach_divergence`. This is the empirical check on the tournament's whole
-   premise — and the **decision rule** it feeds: if a project's `designer-practice ~ designer-expert` pair comes
-   back `identical`/`overlapping` on **most high-tier slices**, the expert lens is converging on practice and not
-   earning its spawn cost → **drop to 2 designers** (the medium-tier default) for this project. `/pulse --full`
-   surfaces the cross-slice aggregate from the design-tournament gate-log row (Step 5).
+   premise, and it is **advisory only — a monitor, not a controller (ADR-018):** keep MEASURING it into
+   `tournament.approach_divergence` and the design-tournament gate-log row every slice, but it **never auto-drops a
+   designer** — generation is always 3. If a project's `designer-practice ~ designer-expert` pair comes back
+   `identical`/`overlapping` on **most slices**, that is surfaced for **human review** of the always-3 policy via
+   `/pulse --full`; it does not change the spawn set on its own. `/pulse --full` surfaces the cross-slice aggregate
+   from the design-tournament gate-log row (Step 5).
 
 The synthesized design is "what's new for this slice." **Thin-vault discipline**: reference code locations, don't
 duplicate them; design ONLY what this slice ships. The vault grows with the system, not ahead of it.
@@ -173,19 +187,37 @@ If the design is clear, skip this step.
 
 ## Step 4 — tag every new ADR with reversibility
 
-For each decision this slice locks: first MINT the number IN-LOCK — `ADR=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --vault "$AI_SDLC_VAULT_ROOT" --file candidates.json --kind adr)` (prints `ADR-NNN`, bumps `counters.adr`; NEVER hand-pick the number) — then create `<vault>/decisions/$ADR.json` (schema: `examples/adr.json`) with `id` = `$ADR`. Key
+For each decision this slice locks: first MINT the number IN-LOCK — `VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"; ADR=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --vault "$VAULT" --file candidates.json --kind adr)` (prints `ADR-NNN`, bumps `counters.adr`; NEVER hand-pick the number) — then create `<vault>/decisions/$ADR.json` (schema: `examples/adr.json`) with `id` = `$ADR`. Key
 fields: `id`, `title`, `status: "accepted"`, `reversibility` (cheap|expensive|irreversible),
 `supersedes`/`superseded_by` (null if n/a), `slice`, `date`, `context`, `decision`, `consequences`.
 
 **SVW-1 note**: ADR files are new-file creates (`write_semantics: create`) — raw-write is correct. Do NOT
 overwrite an existing ADR — always write a NEW file (supersede via `supersedes`).
 
+**ADR-append seal (ADR-023 / SC-019):** immediately after writing the new `$ADR.json`, baseline it (SCOPED to
+that id) so the append-only gate carries its content fingerprint, then VERIFY the decisions set is clean:
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # AI_SDLC_VAULT_ROOT is NOT exported (4.6.1); adr_append_only_audit EXITS 2 on an empty --vault (unlike vault_edit/grep_vault, which fall back to the computed VAULT_ROOT) -- resolve it here or the VERIFY below false-STOPs on every mint
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$VAULT" --seal "$ADR"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$VAULT"
+```
+`--seal "$ADR"` is SCOPED to the just-minted id ONLY -- never blanket (a blanket re-seal on every mint would
+re-open the trust window and launder an unrelated unsealed edit). **Treat ANY non-zero VERIFY here as STOP** and
+surface it, do NOT seal over it: **exit 1** = a PRIOR ADR was edited in place out-of-band; **exit 4** = a prior
+sealed ADR was DELETED from disk out-of-band (ADR-049). With precedence 2>4>1>3>0 a co-occurring deletion+edit
+returns the scalar 4, so inspect `--json result['tampered']` too before acting -- a masked tamper is still listed
+there. (A project that already had ADRs *before* adopting this gate runs `adr_append_only_audit.py --vault
+"$VAULT" --backfill` ONCE to baseline them — resolve `$VAULT` as above.)
+
 Reversibility tags:
 - **cheap** — 1-hour change: UI tokens, log format, library swap
 - **expensive** — framework, DB engine, contract shape with multiple consumers: lock only if THIS slice needs it
 - **irreversible** — identity model, tenant model, primary entity shape: lock only after a spike confirmed it
 
-ADRs are append-only — supersede with a new ADR, never edit one in place.
+ADRs are append-only — supersede with a new ADR, never edit one in place. This is **enforced** by the
+`adr-append-only` gate (`scripts/lib/adr_append_only_audit.py`, ADR-023): the scoped `--seal` above records the
+new ADR's fingerprint, and the `/build-slice` pre-finish gate (ADR-APPEND-1) fails if any sealed ADR's immutable
+content later changes.
 
 ## Step 5 — write design.json
 
@@ -196,41 +228,43 @@ Key fields:
 - `components_touched` + `components_detail` (`name`, `responsibility`, `lives_at`, `key_interactions`)
 - `contracts` (`name`, `kind`, `auth_model`, `error_cases`, `notes`) · `data_model_deltas` · `wiring_matrix` (WIRE-1)
 - `adrs` — ADR ids locked by this slice · `auth_model` · `error_model`
-- `assumptions_proven` — **only when the claimed candidate has spiked assumptions**: the spike→design evidence
-  cross-ref, a PURE PASS-THROUGH of the candidate's assumptions where `spike_status == "proven"` — per
-  assumption `{assumption: <id>, statement: <statement>, spike_ref: <spike_ref>, verdict: <spike_verdict>,
-  constraints: <spike_constraints>}` (exact mapping: `id`→`assumption`, `statement`→`statement`,
-  `spike_ref`→`spike_ref`, `spike_verdict`→`verdict`, `spike_constraints`→`constraints`; no renames, no other
-  source — the candidate row IS the source, the spike FILE under `<vault>/spikes/` stays the full-evidence
-  authority). `verdict` is `go` or `conditional` (a `no-go` assumption never passes through); include
-  `constraints` ONLY when the verdict is `conditional` (non-empty, per the candidate's `spike_constraints` —
-  ADR-002: a CONDITIONAL spike's named constraints are design inputs, surface them where the design reads).
-  **Legacy candidate rows without `spike_verdict`**: OMIT both fields — absent = unknown, **never default-fill
-  a verdict**. **Omit the whole block** when no assumption has `spike_status == "proven"` (absent = "no spiked
-  assumptions", never an error). artifact_lint enforces the shape (verdict enum + the conditional⇒non-empty-
-  constraints co-constraint).
+- `assumptions_proven` — **only when the claimed candidate has spiked assumptions**: a PURE PASS-THROUGH of the
+  candidate's assumptions where `spike_status == "proven"`, one row per assumption —
+  `{assumption: <id>, statement, spike_ref, verdict: <spike_verdict>, constraints: <spike_constraints>}`
+  (field-for-field from the candidate row, no renames, no other source; the spike FILE under `<vault>/spikes/`
+  stays the full-evidence authority). A `no-go` assumption never passes through; a CONDITIONAL verdict's
+  constraints are design inputs (ADR-002) — surface them where the design reads. **Legacy rows without
+  `spike_verdict`**: omit `verdict`/`constraints` — absent = unknown, never default-fill. **Omit the whole
+  block** when no assumption is proven (absent = "no spiked assumptions", never an error). `artifact_lint` is
+  the shape AUTHORITY (verdict enum + the conditional⇒non-empty-constraints co-constraint) — don't re-derive
+  the co-constraints here or in downstream prose.
 - `cross_domain_transfer` — **only if the selected design imports a cross-domain pattern** (from
   `designer-crossdomain`): `source_domain`, `pattern`, `rationale`, `invariants[]` (each
   `{precondition, status: holds|must-verify|fails, evidence}`). Omit when no transfer was selected. The
   `must-verify` invariants are what the design spike and `/critique` check.
-- `tournament` — **only on the tournament path** (omit on single-flight low-tier slices): `tier`, `designers[]`,
+- `tournament` — **present on every slice** (the 3-designer tournament always runs): `tier`, `designers[]`,
   `proposals[]` (`designer`, `approach`, `selected: core|partial|none`), `channeled_experts[]`,
   `selection_rationale`, `coherence_check`, `decidable_disagreements[]`, `taste_disagreements[]`,
-  `approach_divergence[]` (3.3 — per designer-pair `{pair, divergence: identical|overlapping|disjoint}`).
+  `approach_divergence[]` (3.3 — per designer-pair `{pair, divergence: identical|overlapping|disjoint}`),
+  `crg_context: "unavailable"` **only when Step 0 degraded** (both CRG and the grep_vault fallback failed;
+  omit when blast-radius context was available — absent = available).
 - `at` — ISO-8601 timestamp
 
-**Gate-log the divergence (tournament path only — 3.3).** After writing design.json, append one *informational*
-`design-tournament` gate-log row so "diverse at generation" is measurable across slices (skip on single-flight
-low-tier slices — no tournament ran):
+**Gate-log the divergence (every slice — 3.3).** After writing design.json, append one *informational*
+`design-tournament` gate-log row so "diverse at generation" is measurable across slices (the tournament runs on
+every slice, so this row is always written):
 
 ```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is NOT exported -- resolve per block
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate design-tournament --slice slice-NNN-<name> \
     --verdict <most-divergent pair: identical|overlapping|disjoint> --findings-count 0 \
     --approach-divergence "practice~crossdomain:<d>; practice~expert:<d>; crossdomain~expert:<d>" \
-    --mode <minimal|standard|heavy> --tier <medium|high> \
+    --mode <minimal|standard|heavy> --tier <low|medium|high> \
   | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+        --vault "$VAULT" --file gate-log.json --array entries --stdin
+# Add --note "crg-context:unavailable" (before the pipe) when Step 0 degraded — the row is
+# how /pulse sees that the tournament ran without blast-radius context.
 ```
 
 This row raises no findings (it is informational, not a verdict/finding gate — `/pulse` excludes it from the
@@ -242,8 +276,10 @@ explicit `exemption` with substring `"rationale:"`. build-slice treats null-exem
 ## Step 6 — Heavy mode extras
 
 Standard / Minimal: skip. Heavy only:
-- Update `<vault>/threat-model.json` if this slice changes the attack surface.
-- Update `<vault>/cost-estimation.json` if it changes the infrastructure footprint.
+- Update `<vault>/threat-model.json` if this slice changes the attack surface (schema:
+  `schemas/artifact-examples.json` → `"threat-model"`).
+- Update `<vault>/cost-estimation.json` if it changes the infrastructure footprint (schema:
+  `schemas/artifact-examples.json` → `"cost-estimation"`).
 - Update `<vault>/components/<name>.json` + `<vault>/contracts/<name>.json` for substantively changed
   components/contracts (schema: `examples/component.json`, `examples/contract.json`).
 - **Expert-lens vocabulary annotation (audit-tier toggle — roadmap Theme 7; strictly OFF the generation path).**
@@ -295,14 +331,18 @@ invariants, logs a **high** reality-contact gate row, and then:
   specific composition failed). Re-run Step 2 with the failed branch excluded, sourcing the full proposals from
   `<slice>/design-proposals.json` (written in Step 1 — do NOT rely on conversation memory; after a
   compaction/restart that file is the only complete record). Do NOT re-spawn the designers.
+  **Bound the loop to ≤2 re-synthesis rounds:** each round drops the failed branch, so it converges fast; if a
+  2nd design spike still returns NO-GO, HALT and surface to the user — a persistent NO-GO is a feasibility
+  problem, not a composition one (reconsider the candidate / discuss a fallback), not another silent re-synthesis.
 
-**Single-flight low-tier slices never reach Step 8.**
+**Step 8 is condition-gated, never tier-gated:** a slice with no pending decidable disagreement and no
+`must-verify` invariant has nothing for reality to adjudicate — it skips Step 8 and goes straight to Step 9.
 
 ## Step 9 — confirm and auto-advance
 
 Report:
 ```
-Design complete — slice NNN. Tournament: <none (single-flight) | 2 designers | 3 designers>. Wrote: design.json,
+Design complete — slice NNN. Tournament: 3 designers. Wrote: design.json,
 ADR-NNN (count), milestone.json (stage: design). Next: <design spike | /critique | /build-slice>.
 ```
 
@@ -329,7 +369,7 @@ Then advance — **do not wait for the user** unless Step 3 clarifying questions
 - Designers anchoring on each other (sequential or shared-context-leaking spawns) — that's not a tournament.
 - Selecting the "most elegant" proposal — taste regresses to popular/over-engineered.
 - Frankenstein composition: gluing pieces with contradictory consistency/error/concurrency models.
-- Running the full 3-designer tournament + design spike on a typo (tier-gate exists for this).
+- Running the post-synthesis design spike (Step 8) when nothing is pending — it gates on decidable disagreements / must-verify invariants, never on tier.
 - Speculative interfaces / pre-defined "phase 2" contracts / ADRs for trivial choices.
 
 ## Pipeline position

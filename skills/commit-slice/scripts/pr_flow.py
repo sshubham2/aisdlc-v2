@@ -290,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
                          "(the human push/PR confirmation gate).\n")
         return 2
 
-    # slice-022: PRs base on the INTEGRATION branch (uat), not the released trunk.
+    # slice-022/061: PRs base on the INTEGRATION branch (aisdlc-uat), not the released trunk.
     default = args.default or resolve_integration_branch(args.repo_root)
     if not default:
         sys.stderr.write("pr_flow: could not resolve the integration branch.\n")

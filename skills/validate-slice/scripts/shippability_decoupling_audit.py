@@ -30,7 +30,7 @@ prose-free machine_cmd grammar, is the live SCMD-1 surface and is fully ported.
 v2 catalog shape (`<vault>/shippability.json`; schema by example
 `skills/repro/examples/shippability.json`):
 
-    {"rows": [{"id": "SHIP-007", "machine_cmd": "pytest tests/x.py -q", ...}]}
+    {"rows": [{"id": "SHIP-007", "machine_cmd": "python -m pytest tests/x.py -q", ...}]}
 
 Usage:
     python shippability_decoupling_audit.py <vault>/shippability.json
@@ -46,7 +46,6 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,44 +56,35 @@ if str(_REPO) not in sys.path:
 
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
+from scripts.lib.runnable_command import (  # slice-046/ADR-035: the single source of truth
+    NON_PORTABLE_CONSOLE_SCRIPT,
+    NOT_A_COMMAND,
+    classify,
+)
 from shippability_path_audit import _find_repo_root  # noqa: F401 (re-exported for the runner)
+from scripts.lib.verification_core import (  # noqa: F401  slice-047/ADR-038: relocated to the shared core
+    _segments,        # re-exported here for the runner + _check_machine_cmd (single source of truth)
+    _split_top_level,
+)
 
 # --- (a) machine-stable command grammar -------------------------------------
-# Each ;-separated segment, trimmed, must FULL-MATCH this anchored shape. The
-# leading anchor (segment starts with an interpreter token OR the bare `pytest`
-# keyword) is the mechanism that rejects a prose cell. v2 machine_cmd strings
-# may be bare `pytest tests/... -q` (the example form) OR interpreter-anchored
-# `<interp>|python|.../python.exe -m pytest tests/...`.
-_INTERP = r"(?:<interp>|python3?|[^\s;]*python(?:3)?(?:\.exe)?)"
-_SEGMENT_RE = re.compile(
-    rf"^(?:{_INTERP}(?:\s+-W\s+\S+)?\s+-m\s+)?pytest\s+"
-    r"(?:tests/\S+?\.py(?:::\S+)?|tests/\S*)"  # BB-27: \S* (not \S+) also accepts a bare directory target `pytest tests/`
-    r"(?:\s+\S+)*$"
-)
-
-# slice-011: a valid NON-pytest interpreter command is also a legitimate
-# machine_cmd (the live slice-001 row-1 is `python -c "..."`). Accept two TIGHT
-# forms while still rejecting prose (must-not-defer): `<interp> -c "<quoted
-# code>"` — the code MUST be a single quoted token, so bare `-c <free text>` is
-# rejected as prose (M1) — and `<interp> <script>.py [args]` where each trailing
-# arg is flag- or path-like (`-x`, `--out`, `a/b`, `x=1`), so a bare-word arg
-# like `and then review` is rejected as prose (M1). The leading-interpreter
-# anchor stays the first line of defence; this only widens WHAT a real command
-# may look like, never to free text. Verified against the prose+valid+malformed
-# battery before commit (APED-1).
-_NONPYTEST_CMD_RE = re.compile(
-    rf"^{_INTERP}\s+"
-    r"(?:"
-    r"-c\s+(?:\"(?:[^\"\\]|\\.)*\"|'[^']*')(?:\s+(?:-\S+|\S*[/\\.=:]\S*))*"
-    r"|"
-    r"\S+\.py(?:\s+(?:-\S+|\S*[/\\.=:]\S*))*"
-    r")\s*$"
-)
+# slice-046 / ADR-035: the machine_cmd grammar (the `_INTERP` anchor + the
+# portable-pytest / bare-pytest / non-pytest-interpreter productions) was LIFTED
+# into scripts/lib/runnable_command.py as the single source of truth, and NARROWED
+# by one production — the pytest form's interpreter prefix is now MANDATORY, so a
+# bare `pytest` console-script (no interpreter prefix) is classified non-portable
+# instead of accepted (it false-FAILs the regression on a host where the bare
+# console-script is off PATH). `_check_machine_cmd` below delegates per-segment to
+# `runnable_command.classify`, which SUBSUMES the old prose-rejection grammar
+# (interpreter-led prose stays rejected — critique M1). The segmentation helpers
+# (`_segments`/`_split_top_level`) were relocated to scripts.lib.verification_core
+# (slice-047/ADR-038) + re-exported above -- the runner AND the lib-resident
+# brief_variants_audit now share ONE canonical splitter.
 
 
 @dataclass(frozen=True)
 class Violation:
-    kind: str          # "missing-machine-cmd" | "prose-segment"
+    kind: str          # "missing-machine-cmd" | "prose-segment" | "non-portable-command"
     row: str           # catalog row id
     detail: str
     index: int = 0
@@ -149,61 +139,10 @@ def _machine_cmd_cell(row: dict) -> str | None:
     return s or None
 
 
-def _split_top_level(machine_cmd: str) -> list[str]:
-    """Split on `;` ONLY at quote-depth 0, honoring single-quote, double-quote,
-    and POSIX backslash-escape rules so the boundaries match
-    `shlex.split(posix=True)` (the SRSC-1 runner's tokenizer). A `;` inside a
-    quoted span — or a backslash-escaped `\\;` outside quotes — is part of the
-    command, NOT a separator. This is the slice-011 fix for the naive
-    `machine_cmd.split(";")` that shredded a `python -c "...;...;..."` row."""
-    out: list[str] = []
-    buf: list[str] = []
-    quote: str | None = None       # None | "'" | '"'
-    escaped = False                # previous char was an unescaped backslash
-    for ch in machine_cmd:
-        if escaped:
-            buf.append(ch)
-            escaped = False
-        elif quote is None:
-            if ch == "\\":
-                buf.append(ch)
-                escaped = True
-            elif ch in ("'", '"'):
-                quote = ch
-                buf.append(ch)
-            elif ch == ";":
-                out.append("".join(buf))
-                buf = []
-            else:
-                buf.append(ch)
-        elif quote == "'":          # single quotes: literal, no escapes (POSIX)
-            buf.append(ch)
-            if ch == "'":
-                quote = None
-        else:                       # double quotes: backslash escapes the next char
-            if ch == "\\":
-                buf.append(ch)
-                escaped = True
-            else:
-                buf.append(ch)
-                if ch == '"':
-                    quote = None
-    out.append("".join(buf))
-    return out
-
-
-def _segments(machine_cmd: str) -> list[str]:
-    """Split a machine_cmd into its TOP-LEVEL `;`-separated segments (quote- and
-    escape-aware — see `_split_top_level`), then strip a surrounding markdown
-    backtick fence + ws from EACH segment (JSON values rarely fence, but a
-    hand-authored row might). A `;` inside quotes is NEVER a separator, so a
-    single `python -c "import sys; a=1; b=2"` is ONE segment, not shredded."""
-    out: list[str] = []
-    for raw in _split_top_level(machine_cmd):
-        seg = raw.strip().strip("`").strip()
-        if seg:
-            out.append(seg)
-    return out
+# `_split_top_level` + `_segments` were RELOCATED to scripts.lib.verification_core
+# (slice-047 / ADR-038) so the lib-resident brief_variants_audit can share the SAME
+# canonical splitter the runner uses; they are re-exported via the import above so
+# `_check_machine_cmd` (and every existing importer) keeps resolving them unchanged.
 
 
 def _check_machine_cmd(result: AuditResult, index: int, row_id: str,
@@ -224,12 +163,18 @@ def _check_machine_cmd(result: AuditResult, index: int, row_id: str,
             f"machine_cmd has zero parseable segments: {cell!r}", index))
         return None
     for seg in segs:
-        if not (_SEGMENT_RE.fullmatch(seg) or _NONPYTEST_CMD_RE.fullmatch(seg)):
+        verdict = classify(seg)
+        if verdict.klass == NON_PORTABLE_CONSOLE_SCRIPT:
+            result.violations.append(Violation(
+                "non-portable-command", row_id,
+                f"non-portable machine_cmd — {verdict.reason}: {seg!r}", index))
+            return None
+        if verdict.klass == NOT_A_COMMAND:
             result.violations.append(Violation(
                 "prose-segment", row_id,
                 f"segment is not an interpreter-anchored command "
-                f"(pytest, or `<interp> -c \"...\"` / `<interp> <script>.py`; "
-                f"prose/narrative rejected): {seg!r}", index))
+                f"(`<interp> -m pytest ...`, or `<interp> -c \"...\"` / `<interp> <script>.py`; "
+                f"bare console-scripts + prose/narrative rejected): {seg!r}", index))
             return None
     return cell
 

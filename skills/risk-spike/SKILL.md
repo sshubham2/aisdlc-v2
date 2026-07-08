@@ -2,7 +2,7 @@
 name: risk-spike
 description: "In-loop slice spike gate with TWO modes. FEASIBILITY (default, step-0): reads the picked candidate's blocking assumptions from candidates.json, spawns field-recon, proves each with throwaway code on real environments; all proven -> /design-slice, any FAILED -> candidate blocked until a fallback is re-spiked. DESIGN (--mode design, post-synthesis): reads the synthesized design.json's pending decidable_disagreements + must-verify cross-domain invariants and lets REALITY adjudicate the tournament; all GO -> /critique, any NO-GO -> back to /design-slice to re-synthesize. Records verdicts into candidates.json/risk-register.json/spikes/ (feasibility) or design.json (design)."
 when_to_use: "Trigger phrases: /risk-spike, 'spike the risks', 'prove the assumptions', 'run feasibility spike', 'design spike'. Feasibility mode is auto-triggered by /slice as step-0 of every slice; design mode is auto-triggered by /design-slice after tournament synthesis. Also user-invokable: pass --mode design to adjudicate a design composition, or a candidate/risk id to re-spike a specific feasibility assumption."
-argument-hint: "[--mode feasibility|design] [SC-NNN | R-NN | all]"
+argument-hint: "[--mode feasibility|design] [slice-NNN | SC-NNN | R-NN | all]"
 allowed-tools: Read, Write, Edit, Bash, Agent, AskUserQuestion, Skill
 ---
 
@@ -11,7 +11,13 @@ allowed-tools: Read, Write, Edit, Bash, Agent, AskUserQuestion, Skill
 The reality-grounded spike gate runs in TWO places in the slice loop — **the crown jewel is split, not diluted:
 one spike before design, one after.** Both prove things against the *real* environment with throwaway code.
 
-> Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/` (`$AI_SDLC_VAULT_ROOT` / git `aisdlc/vault-root`).
+> Vault root `<vault>/` resolves to the external store `~/.aisdlc/<project>-<hash>/`. 4.6.1: `AI_SDLC_VAULT_ROOT`
+> is NOT exported — bundled scripts resolve the vault internally, so no `--vault` flag is passed anywhere in this
+> skill; where a bash block itself needs the path it derives `VAULT` via `_vault_paths.py --path` (the 6b pattern).
+>
+> Spike artifacts live in three sibling homes under `<vault>/spikes/`: the verdict artifact
+> `spikes/spike-<name>.json` (Step 4), field-recon `spikes/spike-<name>/field-recon.json` (Step 2.5), and
+> throwaway code `spikes/code/spike-<name>/` (Step 3). `grep_vault --dir spikes` sweeps all three.
 
 ## Mode — feasibility (default) or design
 
@@ -38,8 +44,7 @@ Candidate picked by `/slice`; verdicts advance to `/design-slice` (all GO) or bl
 ## Active candidate — injected
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" query --vault "$AI_SDLC_VAULT_ROOT" \
-    --file candidates.json --array candidates --where status=spiking
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" query --file candidates.json --array candidates --where status=spiking
 ```
 
 If the injection returns empty and no argument was supplied, ask with `AskUserQuestion`:
@@ -61,9 +66,11 @@ audit trail; no spike artifact is written) — set `progress: design` in candida
 For each assumption under test:
 
 1. Check for prior spikes in the VAULT (spike artifacts live in the external store, which CRG does not index):
-   `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/grep_vault.py" --vault "$AI_SDLC_VAULT_ROOT" --pattern "<technology>" --dir spikes`
-   — skip re-spiking something already proven in a prior slice if the environment hasn't changed. (Use CRG only
-   for prior *code* touching the same technology.)
+   `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/grep_vault.py" --pattern "<technology>" --dir spikes`
+   — skip re-spiking something already proven in a prior slice if the environment hasn't changed. **"Unchanged"
+   is checked, not assumed**: compare the prior artifact's `date`/`method`/`evidence` (the platform/API version it
+   recorded) against field-recon's current survey (Step 2.5); if they diverge, or the artifact predates a platform
+   change field-recon surfaces, re-spike. (Use CRG only for prior *code* touching the same technology.)
 2. Produce a minimal test spec (10–30 lines). Must state:
    - **Real runtime** — not a local mock; actual platform / device / API
    - **Exact scopes / permissions / credentials** the real flow uses
@@ -118,6 +125,8 @@ If the target environment is available (connected device, local server, cloud ac
    Be honest. Do NOT soften a NO-GO into CONDITIONAL because it's inconvenient.
 
 If the environment is NOT available: stop, tell the user exactly what setup is needed, do not fabricate results.
+Also record the stall in the slice's `milestone.json` — `current_focus: "Spike blocked on environment: <exactly
+what's needed>"` — so `/pulse` renders "blocked on environment" (waiting on the user), distinct from "spike pending".
 
 ## Step 4 — write spike artifact
 
@@ -138,7 +147,7 @@ All writes route through `vault_edit` (SVW-1) for append/CAS files:
 
 **Update `<vault>/risk-register.json`** — for each linked risk:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --vault "$AI_SDLC_VAULT_ROOT" \
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update \
     --file risk-register.json --array risks --id <R-NN> \
     --set status=<retired|blocking|conditional> \
     --set notes="spike <name>: <one-line rationale>"
@@ -148,7 +157,7 @@ Status mapping: GO → `retired`; NO-GO → `blocking`; CONDITIONAL → `conditi
 
 **Update `<vault>/candidates.json`** — for each assumption:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --vault "$AI_SDLC_VAULT_ROOT" \
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update \
     --file candidates.json --array candidates --id <SC-NNN> \
     --assumption <A-id> \
     --set spike_status=<proven|failed> \
@@ -170,7 +179,7 @@ non-conditional verdict carrying non-empty constraints as a violation.
 
 On all assumptions proven — set `status: active`, `progress: design`, append history entry:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --vault "$AI_SDLC_VAULT_ROOT" \
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update \
     --file candidates.json --array candidates --id <SC-NNN> \
     --set status=active \
     --set progress=design \
@@ -180,7 +189,7 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --vault "$AI_SD
 On any failed assumption — set `status: blocked`, `progress: blocked`, record `fallback` (required — discuss
 with user if not already known), append history entry:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --vault "$AI_SDLC_VAULT_ROOT" \
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update \
     --file candidates.json --array candidates --id <SC-NNN> \
     --set status=blocked \
     --set progress=blocked \
@@ -223,6 +232,8 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
         --vault "$VAULT" --file gate-log.json --array entries --stdin
 # --reality-proxy (§2.7): the WEAKEST proxy used across this run's spikes — a simulator green
 # must never be indistinguishable from a real-device green in the measurement spine.
+# The row is deliberately COARSE — one row per run, aggregate verdict + weakest proxy;
+# per-assumption verdicts/proxies live in candidates.json + the spike artifacts.
 ```
 
 ---
@@ -241,7 +252,8 @@ Read the active slice's `design.json` (the active slice is resolved via `active_
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"   # slice-014: no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently skipping
+ARG=""; for a in ${ARGUMENTS[@]}; do printf '%s' "$a" | grep -qE '^slice-[0-9]' && { ARG="$a"; break; }; done   # slice-031: scan ALL positionals for the first slice-shaped token (arg0 is often --mode/SC-NNN/R-NN). ${ARGUMENTS[@]} unquoted: iterates every element under an ARRAY binding AND word-splits under a SCALAR binding — bare $ARGUMENTS would see only element 0 of an array
+if [ -n "$ARG" ]; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi   # slice-014: no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently skipping
 $PY -c "import json,sys; sd=sys.argv[1]; f=(sd+'/design.json') if sd else None; d=json.load(open(f,encoding='utf-8')) if f else {}; t=d.get('tournament',{}); dd=[x for x in t.get('decidable_disagreements',[]) if x.get('verdict','pending')=='pending']; mv=[i for i in (d.get('cross_domain_transfer') or {}).get('invariants',[]) if i.get('status')=='must-verify']; print(json.dumps({'design':f,'decidable_disagreements':dd,'must_verify_invariants':mv},indent=2))" "$SDIR"
 ```
 
@@ -288,9 +300,9 @@ with a single writer here, so `Edit` is safe):
 
 ## Step D6b — record gate outcome (measurement spine)
 
-The design spike is **high** reality-contact (throwaway code on the real environment). Set `--cross-domain` when
-the design carries a `cross_domain_transfer` (Phase 2.3 validity-ratio signal — did reality confirm the borrowed
-pattern?):
+Same row shape as feasibility 6b — the design spike runs the same throwaway-code-on-real-environment tests, so
+its green carries the same graduated strength. Set `--cross-domain` when the design carries a
+`cross_domain_transfer` (Phase 2.3 validity-ratio signal — did reality confirm the borrowed pattern?):
 
 ```bash
 SLICE_DIR="$(dirname "<design.json path from D1>")"
@@ -298,9 +310,12 @@ CD=""; $PY -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1],encoding
 # verdict: go = all targets held · no-go = any failed · findings-count = number of NO-GO targets
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate risk-spike --slice "$(basename "$SLICE_DIR")" \
-    --verdict <go|no-go|conditional> --findings-count <N failed> --reality-contact high $CD \
+    --verdict <go|no-go|conditional> --findings-count <N failed> $CD \
+    --reality-proxy <real-device|real-account|real-sandbox|staging|local-real-data|simulator|docs-only> \
   | $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
-        --vault "$AI_SDLC_VAULT_ROOT" --file gate-log.json --array entries --stdin
+        --file gate-log.json --array entries --stdin
+# --reality-proxy (§2.7): the WEAKEST proxy used across this run's design spikes — same rule as
+# feasibility 6b. No --reality-contact: gate_log already stamps risk-spike as high contact.
 ```
 
 ## Critical rules

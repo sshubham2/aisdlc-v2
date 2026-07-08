@@ -16,19 +16,21 @@ Produces the Heavy-mode irreducible architecture vault. Does NOT pre-generate `c
 ## Prerequisite state — injected
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" --vault "$AI_SDLC_VAULT_ROOT" --file triage.json --fields mode,project_id
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" --file triage.json --fields mode,project_id 2>/dev/null || echo "UNRESOLVABLE"
 ```
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py" --json --filter-band high
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/risk_register_audit.py" --json --filter-band high 2>/dev/null || echo "(no risk register yet)"
 ```
 
 Spike outcomes (retire evidence for assumptions proven by `/risk-spike`):
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" --vault "$AI_SDLC_VAULT_ROOT" --glob "spikes/spike-*.json" --fields id,assumption,result,decision,adrs_raised
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" --glob "spikes/spike-*.json" --fields id,assumption,result,decision,adrs_raised 2>/dev/null || echo "(no spikes yet)"
 ```
 
-**ABORT if** `triage.json` `mode` is not `"heavy"` — suggest `/triage --re-triage`. Tell the user clearly.
+**ABORT if** the first injection printed `UNRESOLVABLE` (no vault / no `triage.json` — run `/triage` first) or
+`triage.json` `mode` is not `"heavy"` — suggest `/triage --re-triage`. Tell the user clearly. (The abort keys on
+the clean sentinel / the mode value, never on raw tool error text.)
 
 **Do NOT abort on open HIGH risks.** Open HIGH-band risks (lowercase `band: "high"` in the register) are
 **expected** here: in v2, `/risk-spike` is an in-loop gate that runs **inside `/slice`, downstream of this
@@ -44,10 +46,18 @@ Spike results loaded above inform architecture decisions: proven assumptions str
 If `/adopt` was run (brownfield — codebase exists), seed the component inventory from the code graph BEFORE writing
 any files. Query via `code-review-graph` MCP tools:
 
-1. If `.code-review-graph/` is absent or stale: `code-review-graph build` (or `update`) from the project root.
+1. If `.code-review-graph/` is absent or stale: `"${CRG:-code-review-graph}" build --repo .` (or `update`) from
+   the project root — NEVER the bare name: on the documented Windows venv/pinned-`$PY` setup the entry point is
+   off PATH and a bare probe false-negatives as missing, silently degrading this seed on exactly the
+   compliance-grade projects Heavy serves.
 2. Use `code-review-graph` MCP tools to list top-level modules, identify god-nodes, and cluster by community.
 3. Produce a draft component list: each god-node or high-fan-in module → one component candidate.
 4. Carry this draft into Step 2 (decomposition) as seed — it adds WHAT (from graph); you add WHY (from concept).
+
+**If `/adopt` (Heavy) already reverse-engineered the vault:** its `fidelity`-marked artifacts are the seed of
+record — read them and build on them; do NOT re-derive a competing decomposition from the raw graph. Where your
+Step-2 decomposition would disagree with adopt's inventory, name the deviation to the user in the Step-1 scope
+gate instead of silently double-authoring.
 
 For greenfield: skip; generate from `concept.json` and actors in Step 2.
 
@@ -73,7 +83,7 @@ Read `<vault>/concept.json` and `<vault>/actors/*.json`. Present a planned outli
 Read all existing ADRs before decomposing components; they constrain what you may and may not decide:
 
 ```!
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" --vault "$AI_SDLC_VAULT_ROOT" --glob "decisions/ADR-*.json" --fields id,status,title,decision,consequences
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_read.py" --glob "decisions/ADR-*.json" --fields id,status,title,decision,consequences 2>/dev/null || echo "(ADR read failed — check the vault, do not decide against unknown constraints)"
 ```
 
 If the vault has no ADRs yet, this injection returns an empty list — proceed normally.
@@ -119,6 +129,11 @@ For each component, estimate infrastructure costs at three scales: 1K / 10K / 10
 compute, storage (DB + object + CDN), network (egress, inter-AZ), third-party services (auth, analytics,
 monitoring). Include total monthly + per-user cost per scale.
 
+Every component row carries a `"fidelity"` field: `"estimated"` (the default — these numbers are
+model-estimated, not quotes) or `"grounded"` ONLY when a figure traces to a real bill / published price /
+vendor quote (name the source in a sibling `"source"` field). The compliance trail must stay honest about
+which numbers are guesses — same discipline as `/adopt`'s `fidelity` marks on reverse-engineered artifacts.
+
 Write `<vault>/cost-estimation.json`. Schema by example: `examples/cost-estimation.json`.
 
 ## Step 6: Requirements
@@ -144,9 +159,20 @@ identified in `concept.json` / `triage.json`.
 Write `<vault>/diagrams.json` — Mermaid diagram strings as JSON fields (not rendered files).
 Schema by example: `examples/diagrams.json`.
 
-## Step 9: Completion summary
+## Step 9: Lint the written artifacts, then completion summary
 
-After all files are written, present:
+Before the summary, lint everything just written (catches enum/shape misses NOW instead of as CSP-1 findings
+at the next `/sync`; same closing discipline as `/reflect` pre-archive):
+
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --dir "$VAULT" --skip-unknown
+```
+
+Non-zero → fix the named violations in the files THIS run wrote and re-lint before presenting the summary
+(pre-existing violations in files this run did not touch: report them, don't fix them here).
+
+After all files are written and lint is clean for this run's files, present:
 
 - Files written (list with paths)
 - Component count, actor count, REQ-N range, NFR-N range, threat count

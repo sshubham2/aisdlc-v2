@@ -136,13 +136,74 @@ def test_ws_execute_fail(tmp_path):
 
 
 def test_ws_execute_prose_is_advisory(tmp_path):
-    # prose verification (command not found) degrades to a non-gating advisory, never a hard fail
+    # slice-047/ADR-038 M-add-1 option (a): a NOT-RUNNABLE verification (command not
+    # found) on an exercised layer is genuinely undecidable (a prose phantom and a
+    # missing foreign tool are indistinguishable from the string), so it stays a
+    # NON-gating advisory -- but a LOUD, surfaced one, NOT the old silent demote and
+    # NOT a hard STOP. This test deliberately does NOT invert (M1): the prose-advisory
+    # behavior is preserved, only made loud.
     r = audit(_brief(tmp_path, {"variants": {"walking_skeleton": True},
               "architectural_layers": [{"layer": "A", "verification": "this is prose not a command",
                                         "status": "exercised"}]}),
               SPECS["walking_skeleton"], execute=True, root=tmp_path)
+    assert not r.violations                       # never a hard STOP (M-add-1 a)
+    assert r.advisories                           # but surfaced, not silent
+    assert any("not a stop" in a.lower() for a in r.advisories)  # LOUD: explicitly says it is not a STOP
+
+
+def test_ws_pending_layer_not_runnable_is_non_gating(tmp_path):
+    # M1 sibling: a PENDING layer makes no reality claim, so a not-runnable (or any)
+    # verification on it is never gating -- it stays a non-gating note.
+    r = audit(_brief(tmp_path, {"variants": {"walking_skeleton": True},
+              "architectural_layers": [{"layer": "A", "verification": "this is prose not a command",
+                                        "status": "pending"}]}),
+              SPECS["walking_skeleton"], execute=True, root=tmp_path)
     assert not r.violations
-    assert r.advisories
+
+
+def test_ws_static_gate_flags_only_non_portable_console_script(tmp_path):
+    # AC2 + B1: the STATIC portability gate flags a bare-pytest non_portable_console_
+    # script DETERMINISTICALLY (independent of execution / PATH), but does NOT
+    # cry-wolf on a legit non-pytest smoke command (curl/node/docker -> not_a_command).
+    # We assert on the STATIC kind specifically so the result is independent of
+    # whether any foreign tool happens to be installed on the test host.
+    bare = audit(_brief(tmp_path, {"variants": {"walking_skeleton": True},
+                 "architectural_layers": [{"layer": "API", "verification": "pytest tests/x.py",
+                                           "status": "exercised"}]}),
+                 SPECS["walking_skeleton"], execute=True, root=tmp_path)
+    assert "non-portable-verification" in _kinds(bare)   # bare-pytest -> flagged, deterministically
+
+    foreign = audit(_brief(tmp_path, {"variants": {"walking_skeleton": True},
+                    "architectural_layers": [{"layer": "API", "verification": "curl localhost/health",
+                                             "status": "exercised"}]}),
+                    SPECS["walking_skeleton"], execute=True, root=tmp_path)
+    assert "non-portable-verification" not in _kinds(foreign)  # curl is NOT cry-wolfed
+
+
+def test_ws_static_gate_pending_nonportable_is_advisory_not_stop(tmp_path):
+    # CR1 (code-review): the STATIC gate is symmetric with the runtime pending policy.
+    # A PENDING layer makes no reality claim, so a non-portable bare-pytest verification
+    # on it is a NON-gating advisory, NOT a hard STOP -- only an EXERCISED layer's
+    # non-portable verification gates. (The same brief marked exercised DOES gate.)
+    r = audit(_brief(tmp_path, {"variants": {"walking_skeleton": True},
+              "architectural_layers": [{"layer": "API", "verification": "pytest tests/x.py",
+                                        "status": "pending"}]}),
+              SPECS["walking_skeleton"], execute=True, root=tmp_path)
+    assert "non-portable-verification" not in _kinds(r)       # pending -> not gated
+    assert any("non-portable" in a.lower() for a in r.advisories)  # but surfaced as an advisory
+
+
+def test_ws_exercised_absent_test_is_stopped(tmp_path):
+    # An exercised layer whose verification cites a test ABSENT on this checkout did
+    # not exercise anything -> a gating STOP (decidable), distinct from the foreign-
+    # command undecidable case above. Uses an interpreter-anchored form so the STATIC
+    # portability gate is NOT the thing that fires -- isolating the ABSENT->STOP path.
+    r = audit(_brief(tmp_path, {"variants": {"walking_skeleton": True},
+              "architectural_layers": [{"layer": "data", "verification": "python -m pytest tests/absent_here.py",
+                                        "status": "exercised"}]}),
+              SPECS["walking_skeleton"], execute=True, root=tmp_path)
+    assert "verification-absent" in _kinds(r)
+    assert "non-portable-verification" not in _kinds(r)  # the anchored form is portable
 
 
 # ── exploratory_charter (ETC-1) ───────────────────────────────────────────────────

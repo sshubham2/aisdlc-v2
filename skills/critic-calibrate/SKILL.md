@@ -38,7 +38,7 @@ Parse `--window N` from invocation args; default N=15.
 List the last N archived slice folders:
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
-ls -t "${VAULT}/slices/archive/" | head -N
+ls -t "${VAULT}/slices/archive/" | head -n <N>
 ```
 
 For each folder, read `<vault>/slices/archive/<folder>/reflection.json`. Extract the `critic_calibration` and `missed_by_critic` fields. Concatenate into one block tagged by slice id.
@@ -54,11 +54,14 @@ shipped per version; this skill **never writes it** — project-specific checks 
 
 Read `<vault>/critic-calibration-log.json` if it exists (schema: `examples/critic-calibration-log.json`, `@3`):
 - `active_checks[]` — the checks ALREADY live in this project's overlay. Pass them so the agent proposes only
-  NET-NEW checks (never a duplicate of an active check or of the base `agents/critique.md`). Note the highest
-  existing `CC-NNN` id (Step 4a assigns the next one).
+  NET-NEW checks (never a duplicate of an active check or of the base `agents/critique.md`).
 - `calibration_notes[]` — the LIGHTEN signals ALREADY recorded (Phase 4.1). Pass them so the agent never
-  re-proposes a lighten already in effect. Note the highest existing `CN-NNN` id (Step 4c assigns the next one).
+  re-proposes a lighten already in effect.
 - `runs[]` — past runs for the effectiveness pass. Missing file or empty `runs` → pass `"no prior runs"`.
+
+(CC/CN/GS ids are NOT hand-assigned from this read — Step 4 mints each one in-lock via
+`vault_edit alloc --kind cc|cn|gs`, so a re-run or a stale read can never collide ids. This read is
+context for the agent + the dedup keys, nothing more.)
 
 **1d. Effectiveness data**
 
@@ -68,11 +71,17 @@ For each prior accepted proposal in the log: count miss instances in that catego
 
 Calibration runs in BOTH directions: **ADD** the checks the Critic was missing (1a–1d above), and **LIGHTEN** the
 model-on-model gates/checks that have added no value. Hand the agent the recent gate-log rows for the
-**model-on-model gates ONLY** — it computes precision and quiet-rate and proposes any lightening:
+**model-on-model gates ONLY**, PLUS the per-gate precision/recall from the SHIPPED helper
+(`triage_precision.gate_precision_recall` — the SAME computation `/pulse` uses; deterministic, not
+model-eyeballed), and it proposes any lightening. **`critique-review` precision is now computable** here: once its
+rows carry `findings_real` (slice-052/ADR-045), the helper includes it, so DR-1 is measured on gate-log data, not
+mined from reflection prose:
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
 $PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; M={'critique','critique-review','code-review'}; print(json.dumps([e for e in rows if e.get('gate') in M and e.get('kind') != 'miss'],indent=2))" "$VAULT"
+# per-gate precision/recall via the shipped, tested computation (absent findings_real -> UNKNOWN, never 0):
+for g in critique critique-review code-review; do $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/triage_precision.py" --gate-precision --gate "$g" --gate-log "$VAULT/gate-log.json"; done
 ```
 
 **HARD RULE — the reality spine never lightens.** The filter passes ONLY `critique` / `critique-review` /
@@ -211,31 +220,45 @@ plugin version). A project-side edit would be **lost on the next plugin upgrade*
 Writes to `<vault>/critic-calibration-log.json` (all SVW-1 via `vault_edit`; none overwrite prior data):
 
 **4a. Upsert each accepted/modified proposal into `active_checks[]`** — the small, deduped overlay `/critique` reads.
-Assign a stable `id` = next `CC-NNN` after the highest existing (you read `active_checks` in Step 1c). Append **only**
-checks whose `id`/text is not already present (dedup using that Step-1c read) so a re-run never duplicates or clobbers
-an existing check:
+The `id` is MINTED IN-LOCK (never model-computed from the Step-1c read), and the append carries a mechanical
+`--unique-key check` dedup so a re-run after a partial failure never duplicates a check (a same-text conflict
+exits 2 fail-visible instead of silently doubling):
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" \
-    --file critic-calibration-log.json --array active_checks --json '{
-      "id": "CC-NNN", "check": "<imperative, specific check>",
+CC=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --file critic-calibration-log.json --kind cc)
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+    --file critic-calibration-log.json --array active_checks --unique-key check --json '{
+      "id": "'"$CC"'", "check": "<imperative, specific check>",
       "category": "<pattern name>", "evidence": ["slice-NNN", ...], "added_at": "<ISO-8601>"
     }'
 ```
 
-A **rejected** proposal that names an already-active check → retire it (remove that one element). A plain new
-rejection adds nothing. Retire is the ONLY case that mutates an existing element; everything else is append-only.
+A **rejected** proposal that names an already-active check → RETIRE it with the wired one-element removal
+(SVW-1 locked; fail-visible if the id doesn't exist):
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" remove \
+    --file critic-calibration-log.json --array active_checks --id CC-NNN
+```
+
+A plain new rejection adds nothing. Retire is the ONLY case that mutates an existing element; everything else is
+append-only. (The retired id is never re-issued — the allocator's seed floor also scans `runs[]` history.)
 
 **4b. Append the full run to `runs[]`** — the append-only audit history (every run, even zero-proposal):
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" \
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
     --file critic-calibration-log.json --array runs --json '{
       "at": "<ISO-8601 timestamp>", "window": <N>,
       "patterns": [ { "category": "<name>", "slices": ["slice-NNN", ...] } ],
-      "proposals": [ { "text": "<proposed check>", "decision": "accepted|modified|rejected", "check_id": "CC-NNN|null" } ]
+      "proposals": [ { "text": "<proposed check>", "decision": "accepted|modified|rejected", "check_id": "CC-NNN|null" } ],
+      "sampled_audit": { "suggested": true, "user_response": "ran|declined|n/a" }
     }'
 ```
+
+`sampled_audit` is the §2.6 record as a STRUCTURED field (queryable, not a prose note): whether the 1i
+sampled low-tier `/critique --force` suggestion was surfaced and what the user chose — a decline is data too.
+Omit the field when 1i didn't apply this run.
 
 Each proposal in the run carries `"kind": "add"|"lighten"` and the id it produced (`check_id` for ADD, `note_id`
 for a dimension/gate LIGHTEN, or the retired `check_id` for an active-check LIGHTEN).
@@ -247,13 +270,15 @@ small (all `/critique` loads); `runs[]` grows but `/critique` never reads it.
 **4c. Persist each accepted LIGHTEN proposal (Phase 4.1)** — two cases:
 
 - **Target is a model-on-model dimension/gate** (`critique` / `critique-review` / `code-review`) → append a
-  `calibration_notes[]` entry. Assign the next `CN-NNN` after the highest existing (read in Step 1c); dedup by
-  target (never two notes for the same gate+dimension):
+  `calibration_notes[]` entry. The `id` is minted in-lock; the dedup ("never two notes for the same
+  gate+dimension") is MECHANICAL via the composite `--unique-key` (a same-target conflict exits 2 fail-visible):
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" \
-    --file critic-calibration-log.json --array calibration_notes --json '{
-      "id": "CN-NNN", "target_gate": "critique", "target_dimension": "<dimension name/number>",
+CN=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --file critic-calibration-log.json --kind cn)
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+    --file critic-calibration-log.json --array calibration_notes \
+    --unique-key target_gate --unique-key target_dimension --json '{
+      "id": "'"$CN"'", "target_gate": "critique", "target_dimension": "<dimension name/number>",
       "signal": "low-precision|quiet", "window": <N>, "precision": <0-1 or null>,
       "evidence": ["slice-NNN", ...],
       "note": "<what /critique should do: weight this dimension lighter on low-tier; do NOT inflate>",
@@ -261,22 +286,28 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SD
     }'
 ```
 
-- **Target is a noisy project `active_check` (CC-NNN)** → RETIRE it (remove that one element from `active_checks`,
-  the same path 4a uses to retire a rejected active check). Retiring the check IS the lightening — no note needed.
+- **Target is a noisy project `active_check` (CC-NNN)** → RETIRE it with `vault_edit remove` (the same wired
+  path 4a uses for a rejected active check). Retiring the check IS the lightening — no note needed:
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" remove \
+    --file critic-calibration-log.json --array active_checks --id CC-NNN
+```
 
 **NEVER** write a `calibration_note` targeting `risk-spike` or `validate-slice` — the reality spine does not lighten.
 If the agent ever proposed one, drop it (agent bug); do not persist it.
 
-**4d. Persist each accepted GATE-SKIP proposal (Phase 3.2)** — append a `gate_skips[]` entry. Assign the next
-`GS-NNN` after the highest existing (read in Step 1c); dedup by `target_gate` (one skip per gate). This is the ONLY
-overlay array `/critique` reads to decide whether to *run* a model gate (`active_checks`/`calibration_notes` only
-shape an in-progress review). It targets a model-on-model gate ONLY — the same `{critique, critique-review,
-code-review}` set the 1e filter passes:
+**4d. Persist each accepted GATE-SKIP proposal (Phase 3.2)** — append a `gate_skips[]` entry. The `id` is minted
+in-lock; "one skip per gate" is MECHANICAL via `--unique-key target_gate` (a second skip for the same gate exits
+2 fail-visible). This is the ONLY overlay array `/critique` reads to decide whether to *run* a model gate
+(`active_checks`/`calibration_notes` only shape an in-progress review). It targets a model-on-model gate ONLY —
+the same `{critique, critique-review, code-review}` set the 1e filter passes:
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault "$AI_SDLC_VAULT_ROOT" \
-    --file critic-calibration-log.json --array gate_skips --json '{
-      "id": "GS-NNN", "target_gate": "critique-review", "action": "skip",
+GS=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --file critic-calibration-log.json --kind gs)
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+    --file critic-calibration-log.json --array gate_skips --unique-key target_gate --json '{
+      "id": "'"$GS"'", "target_gate": "critique-review", "action": "skip",
       "precision": <0..0.2>, "runs_observed": <N >= 8>, "real_blockers_caught": 0,
       "evidence": ["slice-NNN", ...], "rationale": "<one line>",
       "user_accepted_at": "<ISO-8601>"

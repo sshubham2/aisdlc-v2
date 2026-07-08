@@ -47,13 +47,15 @@ and it **offers** (never forces) a handoff to `/repro` → `/slice` for confirme
 Skill args arrive as the `$ARGUMENTS` substitution (0-based `${ARGUMENTS[N]}`); `"$@"`/`$1` do NOT carry
 them, and shell vars do NOT persist across ```bash blocks — re-derive in every block.
 
-Parse with a single `for a in $ARGUMENTS` scan (NOT `set --`/`$1`/`$@` — Claude Code pre-substitutes
-those positional tokens in the markdown, so they would expand wrong/empty; an `expect` flag captures a
-flag's value on the next iteration):
+Parse with a single scan over unquoted `${ARGUMENTS[@]}` (NOT `set --`/`$1`/`$@` — Claude Code
+pre-substitutes those positional tokens in the markdown, so they would expand wrong/empty; and NOT bare
+`$ARGUMENTS`, which under an ARRAY binding expands to element 0 only — every flag after the path would be
+silently defaulted. `${ARGUMENTS[@]}` unquoted iterates every element under an array binding AND word-splits
+under a scalar one. An `expect` flag captures a flag's value on the next iteration):
 
 ```bash
 TARGET=""; TOP=40; SINCE=""; REPORT=0; PARALLEL=0; expect=""
-for a in $ARGUMENTS; do
+for a in ${ARGUMENTS[@]}; do
   if [ -n "$expect" ]; then
     case "$expect" in top) TOP="$a" ;; since) SINCE="$a" ;; esac
     expect=""; continue
@@ -82,7 +84,7 @@ changed since it was built) would mis-rank risk and feed finders wrong reachabil
 the code as it is *now*. Independence from `/diagnose` is deliberate — bug-hunt owns its own graph.
 
 ```bash
-TARGET="$PWD"; for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+TARGET="$PWD"; for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done   # ${ARGUMENTS[@]} unquoted: array-safe AND scalar-safe
 OUT="$TARGET/bug-hunt-out"; mkdir -p "$OUT/findings" "$OUT/sections" "$OUT/summary" "$OUT/.tmp"
 rm -rf "$OUT/.code-review-graph"                       # discard any prior graph — force a fresh build
 # Isolate bug-hunt's own graph in $OUT via the CRG_DATA_DIR env var — it mutates NO global CRG registry
@@ -110,8 +112,14 @@ risky units rather than sweeping everything uniformly:
 - **Boundaries** — request handlers, deserializers, SQL/exec/shell sinks, auth/permission checks (grep sinks).
 
 Partition the work-list into **K buckets** (K ≈ 4–8 by repo size), each a coherent slice of files/modules.
-Write the buckets to `$OUT/.tmp/worklist.json`. Log what was ranked OUT (the un-reviewed tail) — silent
-truncation reads as "covered everything" when it didn't.
+Write the buckets to `$OUT/.tmp/worklist.json` — shape (inline schema; keep it stable so re-runs diff cleanly):
+```json
+{ "_schema": "aisdlc/bug-hunt-worklist@1", "target": "<TARGET>", "at": "<ts>", "top": <TOP>,
+  "buckets": [ { "id": "<bucket-slug>", "sensitivity": "high|normal", "units":
+      [ { "path": "<file>", "symbols": ["<fn>", …], "rank_signals": {"centrality": …, "size": …, "churn": …, "boundary": …} } ] } ],
+  "unreviewed_tail": [ "<path>", … ] }
+```
+Log what was ranked OUT (the `unreviewed_tail`) — silent truncation reads as "covered everything" when it didn't.
 
 ## Step 4 — Fan out finder subagents (multi-finder, intent-aware)
 
@@ -153,7 +161,7 @@ new). Dedup (Step 6) collapses the overlap, so over-finding is cheap and under-f
 Save raw to `$OUT/.tmp/<bucket>.raw`, then write via the shared helper (3-attempt cap, same as diagnose):
 
 ```bash
-TARGET="$PWD"; for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+TARGET="$PWD"; for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done   # ${ARGUMENTS[@]} unquoted: array-safe AND scalar-safe
 OUT="$TARGET/bug-hunt-out"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/write_pass.py" \
     --pass "<bucket>" --out "$OUT" --raw-file "$OUT/.tmp/<bucket>.raw"
@@ -171,7 +179,7 @@ Two finder rounds + overlapping buckets produce duplicate findings. Collapse the
 (path + line span), independent of which finder/category produced them:
 
 ```bash
-TARGET="$PWD"; for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
+TARGET="$PWD"; for a in ${ARGUMENTS[@]}; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done   # ${ARGUMENTS[@]} unquoted: array-safe AND scalar-safe
 OUT="$TARGET/bug-hunt-out"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/finding_dedup.py" \
     --findings-dir "$OUT/findings" --out "$OUT/.tmp/merged.json" --format json --report
@@ -191,30 +199,60 @@ findings while the multi-finder breadth (Step 4) stops misses.
 
 - For HIGH/CRITICAL findings, use **3 refuters** and keep only if ≥2 say `real` (majority vote).
 - For MEDIUM/LOW, a single refuter suffices.
-- Annotate each surviving finding with `verdict: real` + the refuter's one-line justification; write the
-  survivors back to `$OUT/findings/` (overwrite the per-bucket files with the verified, merged set, or write
-  a single `$OUT/findings/00-verified.yaml` — your choice, keep it consistent with Step 8's assemble).
+- **Output contract (ONE shape, not "your choice"):**
+  1. Persist EVERY refuter verdict — kills included — to `$OUT/.tmp/refutes.json`
+     (`[{finding, refuter_votes: [{verdict, note}], kept}]`): the kill list is exactly the false-positive
+     calibration data a future finder-prompt tuning pass needs.
+  2. Move the raw per-bucket files to `$OUT/.tmp/raw-findings/` (audit trail — never deleted).
+  3. Write the survivors — each annotated `verdict: real` + the refuter's one-line justification — as the
+     SINGLE file `$OUT/findings/00-verified.yaml`. This becomes the only file under `findings/`, so Step 8's
+     `assemble.py` (which re-runs `finding_dedup` internally) consumes exactly one already-merged pass and
+     its dedup is a structural no-op — never the untested merge-of-merged path that overwriting per-bucket
+     files with `F-MRG-*` entries would exercise.
 
 Drop everything that fails the vote. Log the drop count.
 
 ## Step 8 — Route the results
 
-```bash
-TARGET="$PWD"; for a in $ARGUMENTS; do case "$a" in --*) ;; *) TARGET="$a"; break ;; esac; done
-OUT="$TARGET/bug-hunt-out"
-# Always: machine-readable verified findings.
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/assemble.py" --out "$OUT"   # only if --report (renders HTML)
+**Always — produce `findings.json`, the primary deliverable.** Convert the Step-7 verified set into
+`$OUT/findings.json` (via the Write tool, from `00-verified.yaml`'s content — a mechanical reshape, no new
+judgment). Shape:
+```json
+{ "_schema": "aisdlc/bug-hunt-findings@1", "target": "<TARGET>", "at": "<ts>",
+  "findings": [ <each verified merged finding, verbatim: id/F-MRG id, path, lines, severity, category,
+                 claim, verdict, refuter_note, merged_ids, seen_by_passes> ],
+  "dropped_by_refute": <N>, "unreviewed_tail": <M from Step 3> }
 ```
 
-- **Default (pipeline-native):** emit `$OUT/findings.json` (the verified, merged list) + a concise summary
-  to the user. Do **not** auto-write candidates.
-- **`--report`:** also render `$OUT/diagnosis.html` via the shared `assemble.py` (owner-facing deliverable;
-  same annotate → `/slice-candidates` round-trip as /diagnose).
+**Only with `--report` — render the HTML** (gated in code, not a comment; re-derive the flag array-safe):
+```bash
+TARGET=""; REPORT=0
+for a in ${ARGUMENTS[@]}; do case "$a" in --report) REPORT=1 ;; --*) ;; *) [ -z "$TARGET" ] && TARGET="$a" ;; esac; done
+[ -n "$TARGET" ] || TARGET="$PWD"
+OUT="$TARGET/bug-hunt-out"
+if [ "$REPORT" = 1 ]; then
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/assemble.py" --out "$OUT"
+else
+  echo "(no --report: findings.json is the deliverable; HTML render skipped)"
+fi
+```
+
+- **Default (pipeline-native):** `$OUT/findings.json` + a concise summary to the user. Do **not** auto-write
+  candidates.
+- **`--report`:** also renders `$OUT/diagnosis.html` via the shared `assemble.py` (owner-facing deliverable;
+  same annotate → `/slice-candidates` round-trip as /diagnose; it consumes the single `00-verified.yaml`).
 - **Offer, don't force.** For each confirmed **high/critical correctness-bug or security** finding, offer a
   declinable handoff: `/repro` (write the failing test first, per bug-fix discipline) → `/slice` (fix it).
-  Append accepted ones to `<vault>/candidates.json` via:
-  `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --vault <vault> candidates ...`
-  (source `{type: "bug-hunt-finding", ref: "<F-id>"}`).
+  Append accepted ones to `<vault>/candidates.json` in full (OMIT the `id` — the allocator mints `SC-NNN`
+  in-lock; a supplied id is rejected):
+  ```bash
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+      --file candidates.json --array candidates --json '{
+        "title": "<verb-object fix name>", "status": "candidate", "progress": "not-started",
+        "source": [{"type": "bug-hunt-finding", "ref": "<F-id>"}],
+        "history": [{"event": "created", "by": "bug-hunt", "at": "<ts>"}]
+      }'
+  ```
 
 ## Step 9 — Report to user
 

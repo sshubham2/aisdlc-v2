@@ -35,19 +35,21 @@ Do not accept "it's slow" or "it breaks". Require an actionable description:
 
 ## Step 2 — query the code graph
 
-Before writing the test, understand the buggy code area via CRG MCP tools. Use these three queries in order:
+Before writing the test, understand the buggy code area via the CRG **MCP tools** (CRG 2.3.x has no
+`search`/`impact-radius`/`review-context` verbs — the real tool names below match `/diagnose`'s authoritative
+verb→function map). Use these three queries in order:
 
 1. **Keyword/semantic search** — find the relevant module and symbol:
-   Call the CRG MCP tool `search` with keywords from the bug description (e.g., the endpoint path, function name,
-   or error message). Identify the file(s) and symbol(s) most likely involved.
+   Call `mcp__code-review-graph__semantic_search_nodes_tool` with keywords from the bug description (e.g., the
+   endpoint path, function name, or error message). Identify the file(s) and symbol(s) most likely involved.
 
 2. **Impact radius** — what the buggy symbol affects:
-   Call the CRG MCP tool `impact-radius` with the buggy symbol identified above. This surfaces callers,
-   dependents, and related paths that the test may need to exercise or stub.
+   Call `mcp__code-review-graph__get_impact_radius_tool` with the buggy symbol identified above. This surfaces
+   callers, dependents, and related paths that the test may need to exercise or stub.
 
-3. **Review context** — full context around the symbol:
-   Call the CRG MCP tool `review-context` with the buggy file path and symbol name to read the surrounding
-   logic. Use `Grep` / `Glob` / `Read` to examine source files as needed.
+3. **Surrounding context** — there is NO `review-context` tool: use the graph-traversal MCP tools
+   (the `query_graph` / `traverse_graph_func` family) when structural context helps, and plain
+   `Grep` / `Glob` / `Read` on the identified file(s) to read the surrounding logic.
 
 If CRG surfaces a past slice touching this area, check its `reflection.json` — this may be a regression.
 If so, note it: the shippability entry for that slice is incomplete.
@@ -62,7 +64,7 @@ catalog stays repo-root-relative `tests/bugs/test_<slug>.py` either way (Step 5)
 
 Write the test under `$ROOT/tests/bugs/` (or the project's bug-test convention). The test MUST:
 
-- Be runnable from project root with a single command (`pytest tests/bugs/test_<slug>.py -v`)
+- Be runnable from project root with a single command (`$PY -m pytest tests/bugs/test_<slug>.py -v` — interpreter-anchored so it runs regardless of PATH; ADR-035)
 - Target the specific bug trigger, not adjacent surface
 - Complete in <10 seconds (shippability catalog runtime budget — SCMD-1)
 - Have a clear assertion that passes when the bug is fixed
@@ -93,8 +95,13 @@ Run the test and verify it fails with the expected signature — from `$ROOT` (t
 bash block (a bare `cd` does NOT persist across SKILL.md bash blocks, and the test lives under `$ROOT/tests/bugs/`):
 
 ```bash
-( cd "${ROOT:-.}" && pytest tests/bugs/test_<slug>.py -v )
+ROOT="<target-root or .>"   # substitute EXPLICITLY: the --target-root value when /slice drove this in-loop, else "." — an unsubstituted default silently tests the WRONG tree for the in-loop case
+( cd "${ROOT:-.}" && time "$PY" -m pytest tests/bugs/test_<slug>.py -v )
 ```
+
+The `time` wrap measures the <10s runtime budget AT REPRO TIME (the catalog runs this row every
+`/validate-slice`; latency compounds) — if the failing run already takes ≥10s, slim the test (smaller fixture,
+tighter trigger) BEFORE cataloging it.
 
 If the test **passes**: STOP. Do NOT proceed. Either:
 - The bug is already fixed / env doesn't match
@@ -114,7 +121,7 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file shippabi
   "slice": "<placeholder-fix-slice-name>",
   "kind": "test",
   "description": "<one-line bug description>",
-  "machine_cmd": "pytest tests/bugs/test_<slug>.py -q",
+  "machine_cmd": "python -m pytest tests/bugs/test_<slug>.py -q",
   "critical_path": true,
   "added": "<ts>"
 }'
@@ -123,8 +130,13 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file shippabi
 Schema by example: `examples/shippability.json` (`aisdlc/shippability@1`).
 
 - `id`: OMIT it — the allocator mints `SHIP-NNN` in-lock (`vault_edit append` on `shippability.json`/`rows` rejects a caller-supplied id and fills it)
-- `slice`: placeholder fix-slice name (user confirms when `/slice` runs; update if they rename it)
-- `machine_cmd`: must be a single runnable command from project root (SCMD-1: no prose, no shell expansions)
+- `slice`: placeholder fix-slice name — reconciled at claim time: `/slice` Step 5.6 (which reads this exact row
+  to derive the relocation grant) updates it to the real claimed slice id, so the placeholder never persists
+- `machine_cmd`: must be a single runnable command from project root (SCMD-1: no prose, no shell expansions).
+  **Bare `python -m pytest` here is DELIBERATE, not an ADR-035 violation**: the catalog runner
+  (`verification_core`) anchors the interpreter itself at run time — do NOT bake `$PY` or an absolute
+  interpreter path into the row (it would break the row on any other machine). ADR-035's `$PY -m pytest`
+  form applies to commands run from SKILL prose (Step 4 above, the AC in Step 6), not to catalog rows.
 - `critical_path`: true for all bug repros
 - `added`: ISO-8601 timestamp
 
@@ -141,7 +153,7 @@ Shippability: SHIP-<N> appended to <vault>/shippability.json
 
 Run /slice "fix <short issue name>" next.
 The fix slice's mission-brief must include:
-  AC: pytest tests/bugs/test_<slug>.py passes
+  AC: $PY -m pytest tests/bugs/test_<slug>.py passes
   Out of scope: unrelated refactors
 ```
 

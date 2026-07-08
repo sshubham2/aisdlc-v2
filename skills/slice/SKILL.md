@@ -3,7 +3,7 @@ name: slice
 description: "Define + claim the next thinnest vertical cut. Reads the ranked candidates.json backlog, recommends the next cut, claims it (worktree + branch + pick-log), writes mission-brief.json + milestone.json, then auto-advances to /risk-spike (the in-loop spike gate). Use after /reflect (or after /discover for slice 1)."
 when_to_use: "Trigger phrases: /slice, 'define next slice', 'next slice', 'what should we build next'. First step of the per-slice loop."
 argument-hint: "[optional slice description or hint]"
-allowed-tools: Read, Grep, Glob, Bash, Write, AskUserQuestion
+allowed-tools: Read, Grep, Glob, Bash, Write, AskUserQuestion, Skill
 ---
 
 # /slice — define + claim the next cut
@@ -17,7 +17,7 @@ risks / diagnose findings / reflections / concept scope) — you do NOT re-run a
 
 Top live candidates (ranked; blocked-on-spike flagged):
 ```!
-$PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --vault "$AI_SDLC_VAULT_ROOT" --top 5
+$PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5
 ```
 
 Stranded-slice consult (R-26 — never define a slice on top of genuinely-stranded prior work):
@@ -45,8 +45,34 @@ says "you pick" / autonomous → take #1.
   heuristic) — note "doing SC-X with it would share the context rebuild" so the user can choose a slightly thicker,
   coherent cut over two thin ones that fight over the same seam.
 
+**Stale holds**: if the injected In-flight list flags a `[STALE HOLD]` (a `reserved` hold older than 24h that never
+upgraded to a claim), surface it before recommending. A stale hold owned by the CURRENT git identity is usually an
+abandoned pre-claim pick — offer to `--release` it (returns the candidate to the pickable pool); a hold owned by
+someone else needs coordination, never a force-release.
+
 **Candidate selection is a user-input gate**: HALT for the pick unless explicit intent was supplied or the user said
 "you pick".
+
+### Step 1.5 — reserve the pick (close the selection->claim window; ADR-016)
+The instant the candidate is settled (the Step-1 pick gate resolved), RESERVE it — a soft HOLD a parallel `/slice`
+immediately sees as in-flight, so it can never re-pick the candidate you are about to spend Steps 2-4 defining
+(the gap SC-053 closed). The reservation mints NO slice number and bumps NO counter (the number is issued only at
+the Step-5.1 claim), so a later cancel costs nothing:
+```bash
+$PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --candidate <SC-NNN> --reserve --repo-root .
+```
+(No `--vault` flag: 4.6.1 — `AI_SDLC_VAULT_ROOT` is no longer exported; the script resolves the
+vault internally, which is the actual mechanism. Same for every `claim_candidate`/`candidates_top`
+call in this skill.)
+It sets `status: reserved` / `progress: reserved` / `claimed_by` / `started_at`, is idempotent (a same-owner
+re-reserve is a no-op) and identity-checked (a candidate already reserved by someone else refuses — coordinate or
+pick another). Fail-visible on unset git identity (exit 1).
+
+**`--release` the reservation on EVERY pre-claim abandon** — the hold is live from here until the Step-5.1 claim
+upgrades it, so any exit before the claim must revert it (else it lingers `reserved`, invisible to other pickers):
+`$PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --candidate <SC-NNN> --release`.
+The pre-claim abandon exits are: a Step-2 "Not a bug" cancel · a Step-4 "too big → split" · the user re-selecting a
+different candidate · abandoning the define window. (Once the Step-5.1 claim commits, the Step-5 failure ladder owns rollback.)
 
 ## Step 2 — bug-fix prelude (BFRD-1)
 If the chosen candidate is a bug fix, a **failing repro test must exist first**. Treat it as a bug fix when ANY of:
@@ -64,8 +90,8 @@ Check `<vault>/shippability.json` for a row whose `machine_cmd` targets `tests/b
   by the row's recorded path, never a `tests/bugs/*` glob (ADR-012).
 - **No row → IN-LOOP repro**: distill a one-line repro description and confirm it via an `AskUserQuestion`
   (Confirm / Modify / Not-a-bug-cancel) **now, before any worktree exists** (so a "Not a bug" cancel costs nothing).
-  On Confirm/Modify → record the description for **Step 5.3** (which invokes `/repro` *after* the worktree exists, so
-  the test is born inside `$wt`); on "Not a bug" → fail-closed (re-scope).
+  On Confirm/Modify → record the description for **Step 5.4** (which invokes `/repro` *after* the worktree exists, so
+  the test is born inside `$wt`); on "Not a bug" → **`--release` the Step-1.5 reservation** (revert to `candidate`) and fail-closed (re-scope).
 
 One AC must assert "the failing repro test passes at slice end". (**WT-ROOT-1 / ADR-012:** the worktree is created in
 Step 5 BEFORE `/repro` runs — the in-loop test is written straight into `$wt` via `/repro --target-root`; a standalone
@@ -78,7 +104,7 @@ sweeping `tests/bugs/*`. This is the fix for the cross-slice repro-theft the old
   **Must-not-defer** (auth/validation/error paths/logging — EVERY slice). **Out of scope**. Mid-slice smoke gate.
 
 ### Step 3a — risk tier (the per-slice cost lever)
-Tier drives in-loop cost — the design-tournament size AND whether `/critique` runs — so pick it honestly:
+Tier drives in-loop cost — whether `/critique` runs (the design tournament runs all 3 designers on every slice regardless of tier; ADR-018) — so pick it honestly:
 `low` = pure CSS/copy/docs/test-only OR a genuinely small bug-fix / small feature; `medium` = a normal change;
 `high` = novel domain / first integration / irreversible / needs extra scrutiny.
 
@@ -100,15 +126,19 @@ are standard). Each opted-in flag activates its own build/validate gate, so only
 its cost. **Pre-suggest** by slice shape: a bug-fix → suggest `test_first`; a first integration / new transport →
 `walking_skeleton`; an unknown-shaped area → `exploratory_charter`; otherwise none.
 
-- **`test_first`** (TDD) — write the failing tests BEFORE the implementation. Activates TF-1 (build gate: the test
-  files must exist + cover the ACs) and TPHD-1 (test-plan harmonization).
+- **`test_first`** (TDD) — write the failing tests BEFORE the implementation. Activates TF-1 (the `/build-slice` pre-finish
+  gate) and TPHD-1 (test-plan harmonization). The producer **scaffolds a PENDING `test_first_plan[]` stub at `/slice`**
+  (Step 5.5 runs `scaffold_test_first_plan.py`), one `{ac, status: "PENDING", test_path, test_function}` row per AC. The
+  builder then fills each row's `test_path`/`test_function` and walks it to PASSING — the test bodies are **authored by the
+  builder at build** time, because the test functions do not exist yet at `/slice`. TF-1 requires **one PASSING row per AC**,
+  each pointing at a real on-disk test (the PENDING stub is a head start, never a gate bypass).
 - **`walking_skeleton`** (Cockburn) — the thinnest end-to-end cut that exercises EVERY architectural layer.
   Activates WS-1, which at `/validate-slice` **actually runs** each layer's verification command (`--execute`,
   reality contact — 3.1).
 - **`exploratory_charter`** — timeboxed exploration missions with recorded findings. Activates ETC-1 (each charter
   must end `completed` with findings, or `deferred` with a rationale).
 
-Write the result into `mission-brief.json` (Step 5.3):
+Write the result into `mission-brief.json` (Step 5.5):
 - Set `variants.<flag>: true` for each chosen discipline (default all `false` — a standard slice).
 - **walking_skeleton chosen** → also write `architectural_layers[]`: one row per layer the cut spans (`layer`,
   `component`, `verification` as a **runnable command** — like a shippability `machine_cmd`, since WS-1 `--execute`
@@ -116,46 +146,62 @@ Write the result into `mission-brief.json` (Step 5.3):
   fills the exact commands.
 - **exploratory_charter chosen** → also write `exploratory_charters[]`: one row per mission (`mission`, `timebox`,
   `status: "pending"`, `findings: ""`).
-- **test_first chosen** → no extra field; the ACs' tests are written first and TF-1 verifies them at build.
+- **test_first chosen** → the producer scaffolds a PENDING `test_first_plan[]` stub *here* at `/slice` (Step 5.5 runs `scaffold_test_first_plan.py`), one `{ac, status: "PENDING", test_path, test_function}` row per AC. The row bodies (`test_path`/`test_function` + the walk to PASSING) are **authored by the builder at build** time, because the test functions do not exist yet; the TF-1 pre-finish gate then requires one PASSING row per AC. (`/build-slice` re-runs the same scaffolder as an idempotent backstop for slices opened before this existed.) See the Shapes block below for its shape.
 
-Shapes (omitted from the standard mission-brief example — present only when opted in; `artifact_lint` validates
-their `status` enums when present): `architectural_layers[]` = `{layer, component, verification (a runnable
+Shapes (omitted from the standard mission-brief example — present only when opted in): `test_first_plan[]` = `{ac, status: "PENDING"|"WRITTEN-FAILING"|"PASSING",
+test_path, test_function}` -- its canonical shape is `SPECS['test_first']` in
+`scripts/lib/brief_variants_audit.py` (builder-authored at BUILD time, >=1 PASSING row per AC; NOT validated by
+`artifact_lint`); `architectural_layers[]` = `{layer, component, verification (a runnable
 command), status: "pending"|"exercised"}` (WS-1 docstring); `exploratory_charters[]` = `{mission, timebox,
-status: "pending"|"in-progress"|"completed"|"deferred", findings}` (ETC-1 docstring).
+status: "pending"|"in-progress"|"completed"|"deferred", findings}` (ETC-1 docstring). `artifact_lint` validates
+the `status` enums of `architectural_layers`/`exploratory_charters` when present.
 
 ## Step 4 — scope check
-≤5 ACs, ≤1 day, system stays shippable. If it exceeds → split.
+≤5 ACs, ≤1 day, system stays shippable. If it exceeds → **`--release` the Step-1.5 reservation** and split (the original SC-NNN returns to the pickable backlog; the sub-slices are picked fresh).
 
 ## Step 5 — claim + scaffold (BRANCH-3 worktree-at-pick; ADR-012 worktree-first repro ordering)
-Once the candidate is settled AND scope passes, in THIS order. The sequence is load-bearing: a bug-fix repro is born
+Once the candidate is settled AND scope passes, in THIS order (list item N below = **Step 5.N** everywhere this
+document cross-references it). The sequence is load-bearing: a bug-fix repro is born
 inside `$wt` (or relocated by the one explicit path), never grabbed from the main tree by a glob.
 
 1. **Claim FIRST — mint the slice number in-lock** (reserve-then-scaffold; [[ADR-013]]). The model NEVER
    computes a slice number — `claim_candidate` mints it inside the locked claim and returns it:
    ```bash
-   $PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --vault "$AI_SDLC_VAULT_ROOT" \
-       --candidate <SC-NNN> --name <verb-object> --json
+   $PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --candidate <SC-NNN> --name <verb-object> --json
    ```
    In ONE locked read-modify-write it bumps `counters.slice`, allocates `slice-NNN`, sets the candidate
    `status: spiking` / `progress: spike` / `claimed_by {git_user, git_email}` / `started_at` / `slice`, appends
    the `pick_log` entry, and RETURNS `{"slice": "slice-NNN", "folder": "slice-NNN-<name>"}`. Read `folder` for all
-   paths below. Fail-visible on unset git identity (exit 1).
+   paths below. Fail-visible on unset git identity (exit 1). This is the **CONFIRM** phase of the two-phase claim
+   (ADR-016): if the candidate was reserved at Step 1.5 (the normal path) the same locked write UPGRADES the
+   reservation `reserved → spiking` — **same-owner only**; a reservation held by a different git identity refuses
+   (exit 1, no slice number minted). A fresh `candidate`/`deferred` pick (no prior reservation) still claims directly.
 2. **Compute paths** from the RETURNED `folder`: `$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder <folder> --repo-root .` (line 1 = `$wt` path, line 2 = `slice/NNN-<name>`).
-3. **Resolve the integration base + create the worktree** (slice-022: slices branch off the integration branch `uat`, degrading visibly to the default trunk when uat is absent — never a hardcoded master):
+3. **Resolve the integration base + create the worktree** (slice-022/061: slices branch off the integration branch `aisdlc-uat` — legacy `uat` accepted as back-compat in an ai-sdlc-managed repo — degrading visibly to the default trunk when no integration branch exists; never a hardcoded master):
    ```bash
    base=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_git_default_branch.py" --integration --repo-root <main>)
    [ -z "$base" ] && { echo "STOP: cannot resolve the integration branch (git unusable)." >&2; exit 2; }
    git -C <main> worktree add <wt_path> -b slice/NNN-<name> "$base"
    ```
-   **Failure → wrapper-enforced compensation**: `$PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --vault "$AI_SDLC_VAULT_ROOT" --candidate <SC-NNN> --release` (reverts the claim to `candidate`; the counter is NOT decremented — monotonic-burn), then **STOP**.
+   **Failure → wrapper-enforced compensation**: `$PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --candidate <SC-NNN> --release` (reverts the claim to `candidate`; the counter is NOT decremented — monotonic-burn), then **STOP**.
 4. **In-loop repro (Step 2 "No row" path only)**: if BFRD-1 confirmed an in-loop repro is needed, invoke
    `/repro "<desc>" --target-root=<wt_path>` once via the Skill tool. `/repro` writes the failing test under
    `<wt_path>/tests/bugs/` (born on the slice branch) and confirms it fails there — **no relocation needed**.
-   (Non-bug-fix, or a standalone row already present → skip; that case is handled at 6.)
+   (Non-bug-fix, or a standalone row already present → skip; that case is handled at Step 5.6.)
 5. **Write the scaffold** to the **external vault store**:
    - `<vault>/slices/<folder>/mission-brief.json` (schema: `examples/mission-brief.json`)
    - `<vault>/slices/<folder>/milestone.json` (schema: `examples/milestone.json`; `stage: "spike"`, `next_action: "/risk-spike"`)
-   Failure → `--release` the claim (step 3) + `git -C <main> worktree remove <wt_path>`, then STOP.
+   - **If `variants.test_first` is true — scaffold the PENDING `test_first_plan[]` NOW (PRIMARY producer; slice-051/ADR-042).**
+     Immediately after writing mission-brief.json, run the shared scaffolder against it so the brief arrives at
+     `/build-slice` already carrying one PENDING row per AC (never hand-authored mid-build):
+     ```bash
+     $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/scaffold_test_first_plan.py" "<vault>/slices/<folder>/mission-brief.json"
+     ```
+     It appends one `{ac, status: "PENDING", test_path: "", test_function: ""}` row per declared AC (idempotent; a
+     cross-volume-safe same-directory atomic write). **Surface/halt on a non-zero exit** — the scaffold action is
+     observable, never fire-and-forget (must-not-defer). The builder fills each row's `test_path`/`test_function` and
+     walks it to PASSING at build.
+   Failure → `--release` the claim (the same wrapper-enforced compensation as Step 5.3) + `git -C <main> worktree remove <wt_path>`, then STOP.
 6. **Standalone repro relocation (Step 2 "Row present" path)** — a `/repro` ran *before* `/slice` and left the
    failing test untracked on the MAIN tree. Relocate the ONE test named by its shippability row into `$wt` —
    **capability-scoped, NEVER a `tests/bugs/*` glob** (ADR-012; the glob caused cross-slice theft). Derive the grant
@@ -163,14 +209,19 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
    the ones still untracked on the main tree:
    ```bash
    repo_root="$(git rev-parse --show-toplevel)"
-   cand=$($PY -c "
-   import sys, json, subprocess
-   sys.path.insert(0, 'skills/validate-slice/scripts')
+   VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is no longer exported -- resolve the vault per-invocation, never inline-read the bare env var
+   cand=$(VAULT="$VAULT" SKILL_DIR="${CLAUDE_SKILL_DIR}" REPO_ROOT="$repo_root" $PY -c "
+   import sys, os, json, subprocess
+   # Paths arrive via env, NEVER shell-interpolated into this source: a native Windows vault
+   # path inside a quoted Python literal is a SyntaxError, and a CWD-relative sys.path only
+   # works on the plugin's own repo. The sibling-skill dir is anchored off CLAUDE_SKILL_DIR.
+   sys.path.insert(0, os.path.join(os.environ['SKILL_DIR'], '..', 'validate-slice', 'scripts'))
    from shippability_path_audit import _extract_test_tokens
-   rows = json.load(open('$AI_SDLC_VAULT_ROOT/shippability.json')).get('rows', [])
+   with open(os.path.join(os.environ['VAULT'], 'shippability.json'), encoding='utf-8') as f:
+       rows = json.load(f).get('rows', [])
    paths = {t for r in rows for t,_ in _extract_test_tokens(r.get('machine_cmd','')) if t.startswith('tests/bugs/')}
    def untracked(p):  # scoped to the ONE grant path p -- never globs the whole tests/bugs/ folder
-       r = subprocess.run(['git','-C','$repo_root','ls-files','--others','--exclude-standard','--',p],capture_output=True,text=True)
+       r = subprocess.run(['git','-C',os.environ['REPO_ROOT'],'ls-files','--others','--exclude-standard','--',p],capture_output=True,text=True)
        return bool(r.stdout.strip())
    print('\n'.join(sorted(p for p in paths if untracked(p))))
    ")
@@ -187,14 +238,20 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
      The helper moves ONLY that file into `$wt` + stages it; it never enumerates `tests/bugs/`, so a sibling slice's
      untracked test is structurally safe. It exits non-zero + visibly on a missing worktree / missing named source /
      git-ignored path / stage failure (never a silent partial).
+   - **Reconcile the row's placeholder `slice` field** (you read the row to derive the grant, so you know its
+     `SHIP-NNN` id): `/repro` recorded a placeholder fix-slice name at catalog time — update it to the slice
+     just claimed, so the placeholder never persists in the catalog:
+     ```bash
+     $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --file shippability.json --array rows --id SHIP-NNN --set slice=slice-NNN-<name>
+     ```
 
 **Failure ladder (must-not-defer #1 — no silent partial scaffold; claim-first, so the claim is the FIRST committed state and the compensation is wrapper-enforced, not skippable prose):**
-- claim (1) fails → **STOP**; nothing else ran (no worktree, no scaffold).
-- worktree-add (3) fails → **wrapper-enforced compensation**: `claim_candidate.py --candidate <SC-NNN> --release` (revert the claim; counter not decremented — monotonic-burn), then STOP. No orphaned reservation.
-- `/repro` (4) aborts, or its "test unexpectedly passes" recovery fires → `--release` the claim + `git -C <main> worktree remove <wt_path>` + `git branch -D slice/NNN-<name>`; leave no scaffold.
-- scaffold (5) fails → `--release` the claim + roll the worktree back the same way.
+- claim (5.1) fails → **STOP**; nothing else ran (no worktree, no scaffold). If a Step-1.5 reservation is live, `--release` it — the claim/upgrade did not commit, so the hold must not linger `reserved`.
+- worktree-add (5.3) fails → **wrapper-enforced compensation**: `claim_candidate.py --candidate <SC-NNN> --release` (revert the claim; counter not decremented — monotonic-burn), then STOP. No orphaned reservation.
+- `/repro` (5.4) aborts, or its "test unexpectedly passes" recovery fires → `--release` the claim + `git -C <main> worktree remove <wt_path>` + `git branch -D slice/NNN-<name>`; leave no scaffold.
+- scaffold (5.5) fails → `--release` the claim + roll the worktree back the same way.
 
-The BFRD-1 Confirm/Not-a-bug gate (Step 2) runs BEFORE the Step-2 worktree-add, so cancelling a candidate as "Not a
+The BFRD-1 Confirm/Not-a-bug gate (Step 2) runs BEFORE the Step-5.3 worktree-add, so cancelling a candidate as "Not a
 bug" never orphans a worktree.
 
 ## Critical rules

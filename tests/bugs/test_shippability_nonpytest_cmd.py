@@ -145,10 +145,19 @@ def test_every_segment_is_shlex_parseable(cmd, _expected):
 _ACCEPTED = [
     'python -c "import sys; sys.exit(0)"',          # double-quoted -c
     "python -c 'a=1; b=2'",                          # single-quoted -c
-    'python -m pytest tests/x.py -q',                # existing pytest form (no regression)
-    'pytest tests/x.py',                             # bare pytest (no regression)
-    'python build.py',                               # bare script
+    'python -m pytest tests/x.py -q',                # interpreter-anchored pytest form
+    'python build.py',                               # bare script (interpreter-led -> portable)
     'python build.py --out dist/ data.json',         # script + flag/path-like args
+]
+
+# slice-046 / ADR-035: bare `pytest tests/...` (no interpreter prefix) is now NON-PORTABLE and
+# REJECTED — it was in _ACCEPTED in slice-011; this is the reconciliation (moved, not silently
+# deleted). The interpreter-anchored `python -m pytest ...` form above stays accepted.
+_REJECTED_NONPORTABLE = [
+    'pytest tests/x.py',
+    'pytest tests/x.py -q',
+    'pytest tests/bugs/test_webhook_sig.py::test_sig',
+    'pytest tests/',
 ]
 
 _REJECTED_PROSE = [
@@ -169,6 +178,23 @@ def test_scmd1_accepts_valid_commands(tmp_path: Path, cmd):
 def test_scmd1_rejects_prose_and_malformed(tmp_path: Path, cmd):
     vs = _violations(tmp_path, cmd)
     assert len(vs) >= 1, f"prose/malformed machine_cmd wrongly accepted: {cmd!r}"
+
+
+# ── slice-046 / ADR-035: bare-pytest console-script is non-portable (AC2 reconciliation) ──
+
+@pytest.mark.parametrize("cmd", _REJECTED_NONPORTABLE)
+def test_scmd1_rejects_bare_pytest_nonportable(tmp_path: Path, cmd):
+    """A bare `pytest tests/...` console-script is flagged as a `non-portable-command` violation
+    (NOT silently accepted, NOT mislabelled prose). This is the slice-011 grammar reconciliation:
+    the form moved from _ACCEPTED to rejected with a distinct, actionable violation kind."""
+    vs = _violations(tmp_path, cmd)
+    assert len(vs) >= 1, f"bare-pytest console-script wrongly accepted: {cmd!r}"
+    assert any(v.kind == "non-portable-command" for v in vs), (
+        f"bare pytest should be 'non-portable-command', got "
+        f"{[v.kind for v in vs]} for {cmd!r}"
+    )
+    # the violation must distinguish it from prose and name the portable form (must_not_defer)
+    assert any("interpreter-anchored" in v.detail or "ambient PATH" in v.detail for v in vs)
 
 
 # ── runner: a genuinely malformed cmd FAILs the row, never aborts (M-must-not-defer) ─

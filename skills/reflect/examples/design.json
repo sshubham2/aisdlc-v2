@@ -67,7 +67,7 @@
     }
   ],
   "cross_domain_transfer": {
-    "_note": "Optional (Phase 2.1). Present only when this design imports a pattern from another domain. Tier-gated: omit on low/mechanical slices. status per invariant: holds (reasoned true here) | must-verify (empirically decidable, not yet proven -> a /critique focus + re-spike candidate) | fails (precondition does not hold here -> that part of the analogy dropped).",
+    "_note": "Optional (Phase 2.1). Present only when this design imports a pattern from another domain. Omit when no cross-domain pattern was selected (tier-independent -- the crossdomain designer runs on every slice). status per invariant: holds (reasoned true here) | must-verify (empirically decidable, not yet proven -> a /critique focus + re-spike candidate) | fails (precondition does not hold here -> that part of the analogy dropped).",
     "source_domain": "distributed systems / lattice theory",
     "pattern": "CRDT-style convergent replica: each client view is an eventually-consistent set of who-is-here",
     "rationale": "Presence is a converging-replica problem, not a request/response one — importing CRDT convergence avoids a brittle hand-rolled sync.",
@@ -90,7 +90,7 @@
     ]
   },
   "tournament": {
-    "_note": "Optional (Phase 3). Present only when the tier-gated multi-designer tournament ran (omit on low/mechanical single-flight slices). selected: core|partial|none. decidable_disagreements (verdict pending here) are adjudicated by the post-synthesis /risk-spike --mode design (reality fills go/no-go); taste_disagreements fall through to /critique + the user. channeled_experts feeds the /critique expert-independence guard (the Critic must be a DIFFERENT expert). approach_divergence (3.3) classifies each designer-PAIR's proposals as identical|overlapping|disjoint — it MEASURES the 'diverse at generation' claim instead of asserting it; the synthesis also appends it to a design-tournament gate-log row so /pulse --full can track, over a project, whether the expert lens earns its cost (if practice~expert is identical/overlapping on most high-tier slices, drop to 2 designers).",
+    "_note": "Phase 3. Present on every slice (the 3-designer tournament runs regardless of tier). selected: core|partial|none. decidable_disagreements (verdict pending here) are adjudicated by the post-synthesis /risk-spike --mode design (reality fills go/no-go); taste_disagreements fall through to /critique + the user. channeled_experts feeds the /critique expert-independence guard (the Critic must be a DIFFERENT expert). approach_divergence (3.3) classifies each designer-PAIR's proposals as identical|overlapping|disjoint — it MEASURES the 'diverse at generation' claim instead of asserting it; the synthesis also appends it to a design-tournament gate-log row so /pulse --full can track, over a project, whether the expert lens earns its cost (if practice~expert is identical/overlapping on most slices, surface for human review of the always-3 policy -- it never auto-drops a designer).",
     "tier": "high",
     "designers": [
       "designer-practice",

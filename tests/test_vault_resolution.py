@@ -48,3 +48,43 @@ def test_frozen_env_would_mis_route(run_script, tmp_path):
     subprocess.run(["git", "-C", str(b), "init"], capture_output=True)
     r = run_script(RES, ["--path"], cwd=b, env={"AI_SDLC_VAULT_ROOT": "/repo/a/vault"})
     assert "repo" in r.stdout and "vault" in r.stdout  # tier-1 env wins, NOT repo B's own vault
+
+
+# ── slice-058 / SC-107 / ADR-055 — the tier-2 pin behavior AC4/AC5 relies on ──
+# Subprocess harness (per-process resolution) so the _RESOLVED memoization
+# (_vault_paths.py:275-284) never returns a stale cached tuple (critique m3).
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
+def test_pin_tier2_beats_computed_default(run_script, tmp_path):
+    # AC4: with the tier-2 pin present, resolution returns the PINNED path (source=config)
+    # and NOT the tier-3 computed default -> a later seed change cannot orphan a pinned vault.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init"], capture_output=True)
+    default = run_script(RES, ["--path"], cwd=repo).stdout.strip()
+    assert default  # no pin yet -> computed default
+
+    cfg = repo / ".git" / "aisdlc" / "vault-root"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    pinned = tmp_path / "my-pinned-vault"
+    cfg.write_text(str(pinned) + "\n", encoding="utf-8")
+
+    got = run_script(RES, ["--path"], cwd=repo).stdout.strip()
+    assert "my-pinned-vault" in got          # tier-2 config won
+    assert got != default                    # ...over the tier-3 computed default
+    human = run_script(RES, [], cwd=repo).stdout
+    assert "config" in human.lower()          # source named as the git-common-dir config
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
+def test_no_pin_resolution_unchanged(run_script, tmp_path):
+    # AC5: with NO pin, resolution falls to the tier-3 computed external-store default,
+    # deterministic across runs and unchanged by this slice (no regression).
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init"], capture_output=True)
+    a = run_script(RES, ["--path"], cwd=repo).stdout.strip()
+    b = run_script(RES, ["--path"], cwd=repo).stdout.strip()
+    assert a and a == b                       # deterministic computed default (no pin influence)
+    human = run_script(RES, [], cwd=repo).stdout
+    assert "default" in human.lower()          # tier-3 computed default

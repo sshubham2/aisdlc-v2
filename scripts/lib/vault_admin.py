@@ -20,12 +20,16 @@ Subcommands:
                           non-empty target unless --force (then the target is REPLACED). Prints a
                           write-pin reminder — an imported vault should be pinned to its new repo.
 
-Exit: 0 ok · 2 usage (not a git tree / unknown vault / unconfirmed delete / bad archive).
+Exit: 0 ok · 2 usage (not a git tree / unknown vault / unconfirmed delete / bad archive)
+      · 3 genuine failure (slice-058/ADR-055: a fail-visible pin-write / git-init-actuator
+        failure, DISTINCT from the benign exit-2 so a skill exit-check can tell them apart).
 """
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -38,9 +42,9 @@ if str(_PLUGIN_ROOT) not in sys.path:
 
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import (
-    _canonical, _git_common_dir, external_store_path, resolve_base,
+    _CONFIG_REL, _canonical, _git_common_dir, external_store_path, resolve_base,
 )
-from scripts.lib._vault_write import write_vault_root_config
+from scripts.lib._vault_write import read_vault_root_config, write_vault_root_config
 
 _SOURCE_MARKER = ".source-repo"  # written INSIDE the vault: the source repo root (orphan detection)
 
@@ -60,6 +64,74 @@ def _siblings(vault: Path) -> list[Path]:
             if p.is_dir() and p.name != me and _slug_of(p.name) == my_slug]
 
 
+def _git_common_dir_at(root: str) -> str | None:
+    """Absolute git-common-dir resolved for a SPECIFIC root — mirrors
+    ``_vault_paths._git_common_dir`` but runs ``git -C <root>`` so the git-init
+    re-verify (slice-058) checks the newly-inited root, not the process cwd.
+    Bytes captured + decoded in the main thread (a ``UnicodeDecodeError`` is not
+    an ``OSError``)."""
+    try:
+        cp = subprocess.run(
+            ["git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if cp.returncode != 0:
+        return None
+    try:
+        raw = cp.stdout.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
+    return raw or None
+
+
+def cmd_git_init(args: argparse.Namespace) -> int:
+    """Consented git-init actuator (slice-058 / ADR-055 / SC-107). Validate the
+    root is a writable directory, run ``git init`` in LIST form (no ``shell=True``
+    — a root with shell metacharacters cannot inject; m2), then RE-VERIFY that a
+    git-common-dir now resolves AND its parent CANONICALLY equals the intended
+    root (``_canonical`` folds Windows drive-case / separator / symlink spelling —
+    M2 — so a legitimate init is never false-STOPped; and an init that bound an
+    ancestor repo's home instead of the intended root is caught). Fail-closed:
+    ANY failure -> stderr + exit 3, and no vault is touched. This NEVER
+    self-consents; the caller (the skill's AskUserQuestion) owns consent."""
+    root = Path(args.root)
+    if not root.is_dir():
+        sys.stderr.write(f"vault_admin git-init: {root} is not a directory — cannot init "
+                         "(fail-closed; no vault written).\n")
+        return 3
+    if not os.access(root, os.W_OK):
+        sys.stderr.write(f"vault_admin git-init: {root} is not writable — cannot init "
+                         "(fail-closed; no vault written).\n")
+        return 3
+    try:
+        cp = subprocess.run(["git", "init", str(root)], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        sys.stderr.write(f"vault_admin git-init: `git init` failed to run ({exc}) — fail-closed.\n")
+        return 3
+    if cp.returncode != 0:
+        msg = cp.stderr.decode("utf-8", "replace").strip()
+        sys.stderr.write(f"vault_admin git-init: `git init {root}` exited {cp.returncode}: {msg} "
+                         "— fail-closed.\n")
+        return 3
+    common = _git_common_dir_at(str(root))
+    if not common:
+        sys.stderr.write(f"vault_admin git-init: git init ran but no git-common-dir resolves at "
+                         f"{root} — refusing to proceed (fail-closed).\n")
+        return 3
+    got, want = _canonical(str(Path(common).parent)), _canonical(str(root))
+    if got != want:
+        sys.stderr.write(
+            f"vault_admin git-init: the resolved git-common-dir's root ({got}) does not match the "
+            f"intended project root ({want}) — a GIT_DIR / GIT_COMMON_DIR override or a gitlink/worktree "
+            "indirection is redirecting resolution (a plain `git init` always creates a local .git here); "
+            "refusing to bind the wrong home (fail-closed).\n")
+        return 3
+    print(f"git-init: initialized git at {root} (common-dir {common})")
+    return 0
+
+
 def cmd_write_pin(args: argparse.Namespace) -> int:
     common = _git_common_dir()
     if not common:
@@ -67,13 +139,33 @@ def cmd_write_pin(args: argparse.Namespace) -> int:
                          "(set AI_SDLC_VAULT_ROOT or run `git init`).\n")
         return 2
     vault = Path(args.vault) if args.vault else external_store_path(common)
-    cfg = write_vault_root_config(common, vault)
+    # M1/AC3 (slice-058): fail-VISIBLE pin write with a DISTINCT exit code (3) for a genuine
+    # failure, so a skill exit-check can tell a real IO/encoding failure from the benign
+    # not-a-git-tree (exit 2). A raw uncaught raise (the prior behavior) surfaced as a traceback.
+    try:
+        cfg = write_vault_root_config(common, vault)
+    except (OSError, ValueError, UnicodeError) as exc:
+        sys.stderr.write(f"vault_admin write-pin: FAILED to write the pin at "
+                         f"{Path(common) / _CONFIG_REL} ({exc}) — no trustworthy pin; fail-visible.\n")
+        return 3
+    # AC3: read-back verify — the write is only 'done' when an independent read confirms it
+    # (Shingo successive self-inspection). Converts a silent partial into a loud stop.
+    got, want = read_vault_root_config(common), str(vault).strip()
+    if got != want:
+        sys.stderr.write(f"vault_admin write-pin: read-back MISMATCH after write "
+                         f"(wrote {want!r}, read {got!r}) — pin NOT trustworthy; fail-visible.\n")
+        return 3
     repo_root = str(Path(_canonical(common)).parent)  # <repo>/.git -> <repo>
     try:
         vault.mkdir(parents=True, exist_ok=True)
         (vault / _SOURCE_MARKER).write_text(repo_root + "\n", encoding="utf-8")
-    except OSError:
-        pass
+    except OSError as exc:
+        # M1/must_not_defer (slice-058): WARN, never silently swallow. The pin (the load-bearing
+        # artifact) is written + verified; the .source-repo back-ref is best-effort orphan-detection
+        # metadata, so a failure here degrades detection but does not invalidate the pin.
+        sys.stderr.write(f"vault_admin write-pin: WARNING — pin written + verified, but the "
+                         f".source-repo back-ref could not be written ({exc}); orphan detection for "
+                         "this vault will be degraded.\n")
     print(f"vault pin written: {cfg} -> {vault}")
     sibs = _siblings(vault)
     if sibs:
@@ -200,6 +292,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     wp = sub.add_parser("write-pin", help="write the tier-2 common-dir pin + source back-ref")
     wp.add_argument("--vault", default=None, help="vault path (default: computed for this repo)")
+    gi = sub.add_parser("git-init", help="consented git init + fail-closed root re-verify (slice-058)")
+    gi.add_argument("--root", default=".", help="project root to init (default: cwd)")
     sub.add_parser("list", help="list vaults under the base + orphan status")
     un = sub.add_parser("uninstall", help="delete a vault dir under the base")
     un.add_argument("name", help="vault dir name (<slug>-<hash>)")
@@ -212,8 +306,8 @@ def main(argv: list[str] | None = None) -> int:
     im.add_argument("--vault", default=None, help="target vault path (default: computed for this repo)")
     im.add_argument("--force", action="store_true", help="replace a non-empty target vault")
     args = p.parse_args(argv)
-    return {"write-pin": cmd_write_pin, "list": cmd_list, "uninstall": cmd_uninstall,
-            "export": cmd_export, "import": cmd_import}[args.cmd](args)
+    return {"write-pin": cmd_write_pin, "git-init": cmd_git_init, "list": cmd_list,
+            "uninstall": cmd_uninstall, "export": cmd_export, "import": cmd_import}[args.cmd](args)
 
 
 if __name__ == "__main__":

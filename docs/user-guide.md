@@ -226,10 +226,18 @@ automatically.
 /design-slice
 ```
 
-Tier-gated. On `medium`/`high` slices: spawns 2–3 **blind** designer subagents (practice, cross-domain,
+Runs on **every** slice regardless of tier: spawns all 3 **blind** designer subagents (practice, cross-domain,
 expert), then reality-grounds a single synthesis using CRG blast-radius, spike evidence, reversibility,
-and a simplest-that-works heuristic. On `low`/mechanical slices: a single inline flight (zero added cost).
-Writes `design.json`.
+and a simplest-that-works heuristic (ADR-018 — generation breadth is always maximal; tier still drives whether
+`/critique` runs, not the tournament size). Writes `design.json`.
+
+Before designing, each blind designer is fed the **prior lessons most relevant to this mission** — surfaced by a
+graded relevance ranking over past slices + reflections (`scripts/lib/reflection_lookup.py`), so hard-won
+learnings reach the point of generation instead of being re-discovered. The relevance engine is **pluggable**:
+the default `tfidf-cosine` scorer is pure-stdlib (no extra dependency), and a different scorer (e.g. a future
+semantic/embedding tier) registers by name with **zero call-site edits**. The seam, the default scorer's math,
+and how to add a new one are documented at the top of `scripts/lib/reflection_scoring.py` (and ADR-060) — that
+module docstring is the durable reference; this paragraph is only a pointer.
 
 Empirically-decidable tournament disagreements gate a post-synthesis design spike:
 
@@ -389,7 +397,7 @@ a concrete actionable finding, offers (but never forces) a handoff to `/slice`.
 ```
 
 Audits vault claims against code reality. Four finding categories: DRIFT (blocker), UNSPECIFIED CODE
-(major), STALE CLAIM (major), STALE DOC (major — a `/product-doc`-generated doc that no longer matches
+(major), STALE CLAIM (major), STALE DOC (major — a `/release`-generated doc that no longer matches
 the code surface it documented).
 
 - `--fast` — scope to changed files since last commit; target <2s (used by `/build-slice` pre-finish gate)
@@ -448,11 +456,11 @@ every review. Never edits the plugin's shipped agent prompt — a project overla
 preserving upgradability. Run every 10–20 slices, after repeated Critic misses, or after a serious
 post-ship bug.
 
-### `/product-doc` — grounded documentation
+### `/release` — grounded documentation
 
 ```
-/product-doc
-/product-doc --docs readme,changelog,api,guide
+/release
+/release --docs readme,changelog,api,guide
 ```
 
 Generates and maintains README / CHANGELOG / API-reference / user-guide grounded in code reality

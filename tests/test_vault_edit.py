@@ -186,3 +186,167 @@ def test_append_existing_not_restamped(run_script, vault):
     data = json.loads((vault / f).read_text())
     assert "_plugin_version" not in data
     assert data["xs"] == [1, 2]
+
+
+# -- remove (retire an overlay element) + --unique-key (keyed-overlay dedup) + cc/cn/gs alloc --
+
+def test_remove_by_id(run_script, vault):
+    f = "critic-calibration-log.json"
+    (vault / f).write_text(json.dumps({"active_checks": [
+        {"id": "CC-001", "check": "a"}, {"id": "CC-002", "check": "b"}]}))
+    r = _ve(run_script, vault, "remove", "--file", f, "--array", "active_checks",
+            "--id", "CC-001")
+    assert r.returncode == 0, r.stderr
+    data = json.loads((vault / f).read_text(encoding="utf-8"))
+    assert data["active_checks"] == [{"id": "CC-002", "check": "b"}]
+
+
+def test_remove_missing_id_exit2(run_script, vault):
+    f = "critic-calibration-log.json"
+    (vault / f).write_text(json.dumps({"active_checks": [{"id": "CC-001"}]}))
+    r = _ve(run_script, vault, "remove", "--file", f, "--array", "active_checks",
+            "--id", "CC-009")
+    assert r.returncode == 2
+    data = json.loads((vault / f).read_text(encoding="utf-8"))
+    assert data["active_checks"] == [{"id": "CC-001"}]  # unchanged
+
+
+def test_remove_refused_on_managed_array(run_script, vault):
+    # candidates have their own lifecycle (archive-move on ship/reject) — never in-place delete
+    f = "candidates.json"
+    (vault / f).write_text(json.dumps({"candidates": [{"id": "SC-001"}]}))
+    r = _ve(run_script, vault, "remove", "--file", f, "--array", "candidates",
+            "--id", "SC-001")
+    assert r.returncode == 2
+    assert "managed" in r.stderr.lower()
+    data = json.loads((vault / f).read_text(encoding="utf-8"))
+    assert data["candidates"] == [{"id": "SC-001"}]  # unchanged
+
+
+def test_append_unique_key_conflict_exit2(run_script, vault):
+    f = "critic-calibration-log.json"
+    (vault / f).write_text(json.dumps({"gate_skips": [
+        {"id": "GS-001", "target_gate": "critique-review"}]}))
+    r = _ve(run_script, vault, "append", "--file", f, "--array", "gate_skips",
+            "--unique-key", "target_gate",
+            "--json", '{"id": "GS-002", "target_gate": "critique-review"}')
+    assert r.returncode == 2
+    assert "unique-key" in r.stderr.lower()
+    data = json.loads((vault / f).read_text(encoding="utf-8"))
+    assert len(data["gate_skips"]) == 1  # unchanged
+
+
+def test_append_unique_key_no_conflict_appends(run_script, vault):
+    f = "critic-calibration-log.json"
+    (vault / f).write_text(json.dumps({"gate_skips": [
+        {"id": "GS-001", "target_gate": "critique-review"}]}))
+    r = _ve(run_script, vault, "append", "--file", f, "--array", "gate_skips",
+            "--unique-key", "target_gate",
+            "--json", '{"id": "GS-002", "target_gate": "code-review"}')
+    assert r.returncode == 0, r.stderr
+    data = json.loads((vault / f).read_text(encoding="utf-8"))
+    assert len(data["gate_skips"]) == 2
+
+
+def test_append_unique_key_composite(run_script, vault):
+    # ALL named keys must match to be a conflict (gate+dimension for calibration_notes)
+    f = "critic-calibration-log.json"
+    (vault / f).write_text(json.dumps({"calibration_notes": [
+        {"id": "CN-001", "target_gate": "critique", "target_dimension": "security"}]}))
+    ok = _ve(run_script, vault, "append", "--file", f, "--array", "calibration_notes",
+             "--unique-key", "target_gate", "--unique-key", "target_dimension",
+             "--json", '{"id": "CN-002", "target_gate": "critique", "target_dimension": "over-engineering"}')
+    assert ok.returncode == 0, ok.stderr
+    dup = _ve(run_script, vault, "append", "--file", f, "--array", "calibration_notes",
+              "--unique-key", "target_gate", "--unique-key", "target_dimension",
+              "--json", '{"id": "CN-003", "target_gate": "critique", "target_dimension": "security"}')
+    assert dup.returncode == 2
+
+
+def test_alloc_calibration_kinds_mint_and_seed(run_script, vault):
+    # cc/cn/gs alloc mints in-lock; the seed floor covers live elements AND run-history ids,
+    # so a retired (removed) check's id is never re-issued.
+    f = "critic-calibration-log.json"
+    (vault / f).write_text(json.dumps({
+        "active_checks": [{"id": "CC-002", "check": "live"}],
+        "runs": [{"proposals": [{"decision": "accepted", "check_id": "CC-005"}]}],
+    }))
+    r = _ve(run_script, vault, "alloc", "--file", f, "--kind", "cc")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "CC-006"  # above BOTH the live max (002) and the run-history max (005)
+    r2 = _ve(run_script, vault, "alloc", "--file", f, "--kind", "gs")
+    assert r2.returncode == 0, r2.stderr
+    assert r2.stdout.strip() == "GS-001"
+
+
+def test_alloc_risk_ids_mint_unpadded_above_live_max(run_script, vault):
+    # review sweep 2026-07 (/user-test pass): risk ids are alloc-minted (kind 'r', UNPADDED
+    # R-1/R-2 style) and carried in the append payload — never model-minted "next R-NN"
+    # (parallel slices collide) and never mint-on-append (appenders cross-reference the id).
+    f = "risk-register.json"
+    (vault / f).write_text(json.dumps({"risks": [
+        {"id": "R-1", "title": "a"}, {"id": "R-4", "title": "b", "status": "retired"}]}))
+    r = _ve(run_script, vault, "alloc", "--file", f, "--kind", "r")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "R-5"  # above the live max incl. retired rows (unpadded)
+    r2 = _ve(run_script, vault, "alloc", "--file", f, "--kind", "r")
+    assert r2.returncode == 0, r2.stderr
+    assert r2.stdout.strip() == "R-6"  # persisted counter is authoritative after the first mint
+
+
+# -- set (nested-path mutation; the wired /validate-slice deferral write) --
+
+def test_set_nested_path_creates_intermediate_objects(run_script, vault):
+    f = "slices/slice-001/validation.json"
+    (vault / "slices" / "slice-001").mkdir(parents=True)
+    (vault / f).write_text(json.dumps(
+        {"result": "fail", "shippability_regression": {"ran": True, "failed_rows": ["SHIP-002"], "deferral": None}}))
+    r = _ve(run_script, vault, "set", "--file", f,
+            "--path", ".shippability_regression.deferral",
+            "--json", '{"approved": true, "rationale": "known flake", "by": "user", "at": "t"}')
+    assert r.returncode == 0, r.stderr
+    data = json.loads((vault / f).read_text(encoding="utf-8"))
+    assert data["shippability_regression"]["deferral"]["approved"] is True
+    # missing intermediate OBJECT keys are created (mkdir -p style)
+    r2 = _ve(run_script, vault, "set", "--file", f, "--path", ".a.b.c", "--value", "7")
+    assert r2.returncode == 0, r2.stderr
+    data = json.loads((vault / f).read_text(encoding="utf-8"))
+    assert data["a"]["b"]["c"] == 7
+
+
+def test_set_list_index_must_exist(run_script, vault):
+    f = "doc.json"
+    (vault / f).write_text(json.dumps({"criteria": [{"id": "AC1"}]}))
+    ok = _ve(run_script, vault, "set", "--file", f, "--path", ".criteria[0].reality_proxy",
+             "--value", "real-device")
+    assert ok.returncode == 0, ok.stderr
+    assert json.loads((vault / f).read_text())["criteria"][0]["reality_proxy"] == "real-device"
+    bad = _ve(run_script, vault, "set", "--file", f, "--path", ".criteria[5].x", "--value", "1")
+    assert bad.returncode == 2  # list slots are never created
+
+
+def test_set_refused_on_managed_array_path(run_script, vault):
+    f = "candidates.json"
+    (vault / f).write_text(json.dumps({"candidates": [{"id": "SC-001"}]}))
+    r = _ve(run_script, vault, "set", "--file", f, "--path", ".candidates[0].id", "--value", "SC-999")
+    assert r.returncode == 2
+    assert "managed" in r.stderr.lower()
+    assert json.loads((vault / f).read_text())["candidates"][0]["id"] == "SC-001"  # unchanged
+
+
+def test_append_build_checks_mints_bc_id(run_script, vault):
+    # review sweep 2026-07: /reflect's BC-PROJ promotion is now allocator-minted (managed
+    # kind 'bc'), seeded above the live max, UNPADDED per the established BC-PROJ-9/10 style.
+    f = "build-checks.json"
+    (vault / f).write_text(json.dumps({"rules": [
+        {"id": "BC-PROJ-9", "title": "a"}, {"id": "BC-PROJ-10", "title": "b"}]}))
+    r = _ve(run_script, vault, "append", "--file", f, "--array", "rules",
+            "--json", '{"title": "Normalize EXIF orientation", "severity": "important"}')
+    assert r.returncode == 0, r.stderr
+    data = json.loads((vault / f).read_text(encoding="utf-8"))
+    assert data["rules"][-1]["id"] == "BC-PROJ-11"
+    # a caller-supplied id is rejected (the no-explicit-PK guard, slice-019/AC2)
+    r2 = _ve(run_script, vault, "append", "--file", f, "--array", "rules",
+             "--json", '{"id": "BC-PROJ-99", "title": "x"}')
+    assert r2.returncode == 2
+    assert "minted in-lock" in r2.stderr

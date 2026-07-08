@@ -113,6 +113,14 @@ KNOWN_ENUMS: dict[tuple[str, str], frozenset[str]] = {
         frozenset({"skip", "tier-gate-high-only"}),
     ("changelog", "mode"): frozenset({"merge", "push", "none"}),
     ("user-test", "mode"): frozenset({"prototype", "mockup", "working-slice"}),
+    # slice-044: the OPTIONAL heuristic_walkthrough pre-flight sibling. kind classifies the
+    # walkthrough finding; confidence is the model's self-rated strength (interaction-predicting
+    # findings are force-set 'low' by ingest_heuristic_walkthrough -- A1.G3). Real-user findings[]
+    # have no enforced kind enum; these live ONLY under the heuristic_walkthrough sibling.
+    ("user-test", "heuristic_walkthrough.findings[].kind"):
+        frozenset({"confusion", "dead-end", "ambiguous-instruction", "broken-flow"}),
+    ("user-test", "heuristic_walkthrough.findings[].confidence"):
+        frozenset({"low", "medium", "high"}),
     ("milestone", "stage"): _MILESTONE_STAGES,
     ("milestone", "progress[].step"): _MILESTONE_STEPS,
     ("validation", "reality_contact"): _REALITY_CONTACT,
@@ -121,6 +129,13 @@ KNOWN_ENUMS: dict[tuple[str, str], frozenset[str]] = {
     # slice-015: the grounding verifier's per-token drop reason. crg_reachable / graph_stale /
     # public_surface_verified are BOOLEAN (not enums) and deliberately NOT registered here.
     ("doc-manifest", "docs[].grounding_unverified[].reason"):
+        frozenset({"source-unavailable", "symbol-absent", "ambiguous-match",
+                   "malformed", "file-absent", "not-indexed"}),
+    # slice-040 (M2): the public_surface verifier's per-entry drop reason. The public_surface_unverified
+    # sibling annotates the FULL snapshot (M-add-1). Same 6-value set; registered so a bad value can't
+    # ship silently (slice-013: an enum is only real where the linter enforces it). public_surface_verified
+    # stays BOOLEAN (not registered), like crg_reachable / graph_stale.
+    ("doc-manifest", "public_surface_unverified[].reason"):
         frozenset({"source-unavailable", "symbol-absent", "ambiguous-match",
                    "malformed", "file-absent", "not-indexed"}),
 }
@@ -136,6 +151,11 @@ OPTIONAL_KEYS: dict[str, frozenset[str]] = {
     # slice-004: structured constraints[] on a spike artifact (non-empty iff
     # verdict=conditional) — array-shaped optional; legacy spike files lack it.
     "spike": frozenset({"constraints"}),
+    # slice-044: `preflight_used` is a bare bool (can't carry a `_note` marker) present
+    # only when the heuristic pre-flight ran; a real-user-only session omits it. The
+    # `heuristic_walkthrough` sibling is made optional by its own `_note` marker in the
+    # example (so the dead-row guard still verifies its nested enum paths).
+    "user-test": frozenset({"preflight_used"}),
 }
 
 # ── slice-013 (ADR-009): documented-enum coverage ════════════════════════════════════
@@ -202,6 +222,8 @@ DOCUMENTED_ENUMS: dict[tuple[str, str], str] = {
     ("critic-calibration-log", "gate_skips[].action"): "critic-calibration-log _note (action = skip | tier-gate-high-only)",
     ("changelog", "mode"): "artifact_lint KNOWN_ENUMS comment (changelog.mode merge/push/none)",
     ("user-test", "mode"): "artifact_lint KNOWN_ENUMS comment (user-test.mode prototype/mockup/working-slice)",
+    ("user-test", "heuristic_walkthrough.findings[].kind"): "user-test example heuristic_walkthrough.findings[].kind (slice-044 pre-flight)",
+    ("user-test", "heuristic_walkthrough.findings[].confidence"): "user-test example heuristic_walkthrough.findings[].confidence (slice-044 pre-flight)",
     ("milestone", "stage"): "schemas/_conventions.md L-1 stage state-machine",
     ("milestone", "progress[].step"): "milestone example progress[].step + _conventions L-1",
     ("validation", "reality_contact"): "gate-log _note (reality_contact high|medium|low)",
@@ -340,6 +362,28 @@ CO_CONSTRAINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("spike", ""): ("verdict", "constraints"),
 }
 
+# Review sweep 2026-07: per-row REQUIRED-NON-EMPTY fields. /validate-slice's evidence
+# discipline ("command + output pasted; 'it worked' without evidence is not a PASS")
+# was prose-only — this makes it mechanical: each row at the listed path must carry a
+# non-empty string in the named field. (artifact_key, list path) -> field.
+ROW_REQUIRED_NONEMPTY: dict[tuple[str, str], str] = {
+    ("validation", "criteria[]"): "evidence",
+}
+
+
+def _row_required_violations(data: dict, key: str, label: str) -> list[str]:
+    v: list[str] = []
+    for (ak, parent), fld in ROW_REQUIRED_NONEMPTY.items():
+        if ak != key:
+            continue
+        for row in _walk_elements(data, parent):
+            if not str(row.get(fld) or "").strip():
+                rid = row.get("id") or "?"
+                v.append(f"{label}: {parent} row {rid!r} must carry a non-empty `{fld}` "
+                         f"— 'it worked' without evidence is not a PASS (the evidence "
+                         f"discipline is mechanical, not prose)")
+    return v
+
 
 def _walk_elements(data, dotted: str) -> list:
     """Like _walk, but returns the list ELEMENTS (dicts) at an `a[].b[]`-style path —
@@ -401,6 +445,7 @@ def lint_artifact(data: dict, key: str, example: dict, label: str) -> list[str]:
             if val is not None and val not in allowed:
                 v.append(f"{label}: `{path}` = {val!r} not in {sorted(allowed)}")
     v.extend(_co_constraint_violations(data, key, label))
+    v.extend(_row_required_violations(data, key, label))
     return v
 
 
