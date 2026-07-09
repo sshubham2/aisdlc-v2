@@ -19,7 +19,7 @@ The cure for spec rot: structured vault updates at every slice boundary so the v
 > persist): `TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')"` then
 > `T="$(mktemp -d "$TMPD/aisdlc-reflect.XXXXXX")"`, use `"$T/<file>"`, `rm -rf "$T"` when done.
 > **NEVER a bare `mktemp -d`** — on Windows git-bash it returns `/tmp/…`, which the Windows-Python
-> `vault_edit` resolves as a nonexistent `C:\tmp\…` (the slice-063 incident) — and NEVER the project CWD
+> `vault_edit` resolves as a nonexistent `C:\tmp\…` — and NEVER the project CWD
 > (one `git add -A` away from being committed). Step 6.2 shows the pattern in full.
 
 ## Step 0 — resolve the active slice (run this FIRST)
@@ -28,11 +28,11 @@ Run the `bash` block below **first** — it resolves the active slice in a BODY 
 `/reflect slice-NNN` `$ARG`. A `!`-injection runs at skill-LOAD *before* `${ARGUMENTS}` binds, so it CANNOT
 resolve a named slice (SC-064 / ADR-022). Read the printed JSON; use THIS resolved slice (its folder/id)
 for every `slice-NNN` reference in the Step-1 reads and the Step-6 archive steps — never re-derive it
-elsewhere (SC-064 M5: the dropped injection must not become a second, wrong source).
+elsewhere (a second resolution can disagree).
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"
-if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --json)"; else AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --json)"; fi   # SC-064: resolution moved from a `!`-injection to this BODY step so $ARG binds. No-arg keeps --repo-root . so the slice-014 exit-4 AMBIGUOUS HALT surfaces (NO 2>/dev/null); capturing into AS then emitting degrades it to a VISIBLE note, never a launch-abort.
+if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --json)"; else AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --json)"; fi   # no-arg keeps --repo-root . so an exit-4 AMBIGUOUS HALT surfaces (NO 2>/dev/null); capture+emit degrades it to a VISIBLE note, never a launch-abort
 if printf '%s' "$AS" | grep -q 'by-id-archive'; then echo "(M3: $ARG is already shipped/archived -- /reflect runs on the ACTIVE slice, not an archived one; nothing to reflect.)"; else printf '%s\n' "$AS"; fi
 ```
 
@@ -174,9 +174,8 @@ Ask the user:
 > Do NOT promote: one-off typo fixes, library version bumps, endpoint-specific bugs.
 
 If yes, gather: **title** (imperative), **severity** (`critical`/`important`), **applies_when** (glob or `always:true`), **rule** (actionable check), **rationale**, **validation_hint**. Build `bc-rule.json` **WITHOUT an `id`** —
-`build-checks.json`/`rules` is a MANAGED array (review sweep 2026-07): the allocator mints `BC-PROJ-N` in-lock and
-a caller-supplied id is rejected, so two parallel reflects can never collide on an id (the same slice-019/ADR-013
-convention as candidates/shippability).
+`build-checks.json`/`rules` is a MANAGED array: the allocator mints `BC-PROJ-N` in-lock and a caller-supplied id
+is rejected, so two parallel reflects can never collide on an id.
 
 Append the rule to `<vault>/build-checks.json` under `rules[]` via:
 ```bash
@@ -244,7 +243,7 @@ After `reflection.json` is written and `milestone.json` is complete:
    ```
    Refuses if `slices/archive/slice-NNN` already exists (no-overwrite).
 
-2. **Regenerate BOTH index files from the slice folders** (deterministic full recompute -> CAS-rewrite; ADR-020/SC-008; same regen + CAS recipe as `/archive` Step 3 -- a regen/CAS bug fixed here must be fixed there too). Step 1 already moved this slice into `slices/archive/`, so `slice_index_regen.py` picks it up automatically -- it drops out of `active[]` and joins the catalog. Do NOT hand-edit `active[]`/`recent[]`/`slices[]`; the generator is the single source of both indexes' SHAPE + CONTENT. Pass ONE `--updated` stamp to both emits (the only non-deterministic field -- keeps re-runs byte-identical):
+2. **Regenerate BOTH index files from the slice folders** (deterministic full recompute -> CAS-rewrite; ADR-020/SC-008). Step 1 already moved this slice into `slices/archive/`, so `slice_index_regen.py` picks it up automatically -- it drops out of `active[]` and joins the catalog. Do NOT hand-edit `active[]`/`recent[]`/`slices[]`; the generator is the single source of both indexes' SHAPE + CONTENT. Pass ONE `--updated` stamp to both emits (the only non-deterministic field -- keeps re-runs byte-identical):
    ```bash
    TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
    T="$(mktemp -d "$TMPD/aisdlc-reflect-idx.XXXXXX")"; TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -307,6 +306,8 @@ State:
 - "Discoveries: `<count>` (added to risk-register + candidates)."
 - "Deferrals: `<count>` (surfaced as slice candidates)."
 - "Run `/slice` to define the next cut."
+- "Tip: `/commit-slice` and the next `/slice` can start in a fresh session (/clear first) — all resume
+  state lives in the vault, and a lean context is cheaper and more focused."
 
 ---
 

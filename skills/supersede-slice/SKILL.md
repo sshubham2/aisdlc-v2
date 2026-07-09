@@ -1,6 +1,6 @@
 ---
 name: supersede-slice
-description: "Establish a formal bidirectional supersession link between an archived slice whose design has been contradicted by reality and the active slice that fixes it (SUP-1). Appends a supersession block to the archived reflection.json, sets the Supersedes field in the active mission-brief.json, and validates the link via supersede_audit. (It does NOT write _index.json — per 3.12 the index regenerators drop non-canonical fields; the reflection.json block is the durable record.)"
+description: "Establish a formal bidirectional supersession link between an archived slice whose design has been contradicted by reality and the active slice that fixes it (SUP-1). Appends a supersession block to the archived reflection.json, sets the Supersedes field in the active mission-brief.json, and validates the link via supersede_audit. (It does NOT write _index.json — the index regenerators drop non-canonical fields; the reflection.json block is the durable record.)"
 when_to_use: "Trigger phrases: /supersede-slice, 'supersede slice NNN', 'mark slice obsolete', 'retire shipped slice', 'link supersession'. Use when an archived slice's claims would otherwise stand as live assertions while a new active slice corrects them. Optional maintenance step — most archived slices need no supersession."
 argument-hint: "<archived-slice-id>"
 allowed-tools: Read, Edit, Glob, Bash, AskUserQuestion

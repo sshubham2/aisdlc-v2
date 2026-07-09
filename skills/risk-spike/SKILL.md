@@ -101,8 +101,7 @@ Write the agent's output to `<vault>/spikes/spike-<name>/field-recon.json`.
 | `inconclusive` | Run Step 3 normally. |
 
 **Critical**: `drop` only on authoritative contradiction, never on a confirmation. Docs misrepresent
-reality more often than they admit broken behavior (this rule's origin: Google Drive `drive.file` scope
-docs claimed cross-account read; 8 sprints later, a spike would have caught it in 30 minutes).
+reality more often than they admit broken behavior.
 
 If `field-recon.json` contains an authoritative contradiction, note in the spike doc that it is
 **required reading for `/critique`** on any downstream slice touching the same technology.

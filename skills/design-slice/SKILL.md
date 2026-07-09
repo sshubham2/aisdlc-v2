@@ -24,19 +24,16 @@ step that BINDS an explicit `/design-slice slice-NNN` `$ARG`. A `!`-injection ru
 **folder** for the `<active-slice>` placeholder in Step 0.5 and the Step-1 reads.
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --slice "$ARG"; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --repo-root .; fi   # SC-064: resolution moved from a `!`-injection to this BODY step so $ARG binds. active_slice_brief is exit-0-always so the no-arg AMBIGUOUS note degrades VISIBLY, never an exit-4 HALT (ADR-022 design-slice carve-out -- M-add-2). reflection-lookup + Step-0.5 project-frame stay branch-resolved advisory context (SC-063 scope).
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --slice "$ARG"; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --repo-root .; fi   # exit-0-always: a no-arg AMBIGUOUS note degrades VISIBLY, never an exit-4 HALT (ADR-022)
 ```
 
 ## Prior-lesson recall — resolve in a BODY step (feeds the shared designer context)
 
-Graded prior-lesson recall (`reflection_lookup.py`, slice-063 / SC-096) — the past slices + reflections most
-relevant to THIS mission, surfaced by the default `tfidf-cosine` scorer. **Run this as a BODY step, NOT a
-`!`-injection (M-add-1):** a `!`-injection runs at skill-LOAD before `${ARGUMENTS}` binds, so it cannot pass
-`--slice` and — under parallel in-flight slices resolved from a non-worktree context — hits the ambiguous-active
-path and returns nothing (the exact incident this closes; SC-064/ADR-022 precedent). This body block binds the
-explicit `/design-slice slice-NNN` `$ARG` and passes `--slice`, degrading to `--from-mission-brief` (branch/cwd
-resolution) only when no slice arg was given. Capture its stdout as the "Nearest prior slice + relevant
-reflections" block in the Step-1 designer context.
+Graded prior-lesson recall (`reflection_lookup.py`) — the past slices + reflections most relevant to THIS
+mission, surfaced by the default `tfidf-cosine` scorer. **Run this as a BODY step, NOT a `!`-injection** (same
+`${ARGUMENTS}`-binding rule as the block above): it passes `--slice` when an explicit slice arg was given,
+degrading to `--from-mission-brief` (branch/cwd resolution) only when none was. Capture its stdout as the
+"Nearest prior slice + relevant reflections" block in the Step-1 designer context.
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reflection_lookup.py" --vault "$VAULT" --slice "$ARG" --scorer tfidf-cosine; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reflection_lookup.py" --vault "$VAULT" --from-mission-brief --scorer tfidf-cosine; fi
@@ -197,7 +194,7 @@ overwrite an existing ADR — always write a NEW file (supersede via `supersedes
 **ADR-append seal (ADR-023 / SC-019):** immediately after writing the new `$ADR.json`, baseline it (SCOPED to
 that id) so the append-only gate carries its content fingerprint, then VERIFY the decisions set is clean:
 ```bash
-VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # AI_SDLC_VAULT_ROOT is NOT exported (4.6.1); adr_append_only_audit EXITS 2 on an empty --vault (unlike vault_edit/grep_vault, which fall back to the computed VAULT_ROOT) -- resolve it here or the VERIFY below false-STOPs on every mint
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # adr_append_only_audit EXITS 2 on an empty --vault (no computed fallback) -- resolve $VAULT here or the VERIFY below false-STOPs on every mint (4.6.1)
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$VAULT" --seal "$ADR"
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/adr_append_only_audit.py" --vault "$VAULT"
 ```
@@ -255,7 +252,7 @@ Key fields:
 every slice, so this row is always written):
 
 ```bash
-VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is NOT exported -- resolve per block
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per block
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
     --gate design-tournament --slice slice-NNN-<name> \
     --verdict <most-divergent pair: identical|overlapping|disjoint> --findings-count 0 \

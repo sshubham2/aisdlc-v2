@@ -27,7 +27,7 @@ printed `risk_tier` / `critic_required` for the Gating decision below, and `$SDI
 folder) for the Step-1 reads.
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi   # SC-064: resolution moved from a `!`-injection to this BODY step so $ARG binds. slice-014: no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently mis-resolving.
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi   # no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently mis-resolving
 $PY -c "import json,sys; f=sys.argv[1]; d=json.load(open(f+'/mission-brief.json',encoding='utf-8')) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
@@ -137,22 +137,20 @@ On non-zero/empty output: pass `(project-frame unavailable)` — advisory, never
 ## Step 1.9 - resolve the active worktree (WT-CTX-1 / ADR-029; slice-042)
 
 Thread the active slice's WORKTREE into the Step-2 prompt so the forked Critic (whose file tools default to the
-MAIN repo root) reads the ADR-012-relocated repro test from the worktree instead of false-flagging it 'missing'
-(slice-020 M1, the recurring main-tree-vs-worktree vantage gap). Run this `bash` BODY block FIRST and paste its
-`Worktree:` output into the `# Active worktree (ADR-012)` field of the Step-2 prompt below. Resolution REUSES
-the line-20 `pulse_worktree_resolver --detect` (no 4th resolver) via the thin `worktree_ctx.py` consumer; on no
-worktree it prints `Worktree: main tree` (clean degrade, never a garbage path).
+MAIN repo root) reads the ADR-012-relocated repro test from the worktree instead of false-flagging it 'missing'.
+Run this `bash` BODY block FIRST and paste its `Worktree:` output into the `# Active worktree (ADR-012)` field
+of the Step-2 prompt below. Resolution REUSES the line-20 `pulse_worktree_resolver --detect` (no 4th resolver)
+via the thin `worktree_ctx.py` consumer; on no worktree it prints `Worktree: main tree` (clean degrade, never a
+garbage path).
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
-# m2: /code-review's WT-ROOT-1 resolves $wt via _worktree_paths.py (convention string, NO existence check); we
-# deliberately diverge to worktree_ctx.py here -- it reuses pulse_worktree_resolver --detect (git-registered
-# worktrees ONLY), so the 'main tree' degrade is existence-checked + free. Do NOT harmonize onto _worktree_paths.
+# Deliberate divergence from /code-review's _worktree_paths (a convention string, NO existence check):
+# worktree_ctx reuses pulse_worktree_resolver --detect (git-registered worktrees ONLY), so the 'main tree'
+# degrade is existence-checked. Do NOT harmonize onto _worktree_paths.
 $PY "${CLAUDE_SKILL_DIR}/scripts/worktree_ctx.py" --slice-dir "$SDIR" --repo-root . || echo "Worktree: main tree"
-# M1 (code-review): the `|| echo` is a shell-level belt-and-suspenders net (matches lines 20/31/41/47/57). worktree_ctx.py's
-# resolve() already degrades to 'main tree' internally and never raises; this also catches a non-zero exit OUTSIDE that try
-# (e.g. an import/bootstrap failure), so the Step-2 field degrades cleanly and never emits a traceback into the prompt
-# (must-not-defer #1 -- must not corrupt the prompt or crash /critique).
+# the `|| echo` also catches a non-zero exit OUTSIDE worktree_ctx's internal 'main tree' degrade (an
+# import/bootstrap failure), so the Step-2 field degrades cleanly and never carries a traceback into the prompt.
 ```
 
 ## Step 2 — spawn Critic subagent
@@ -387,9 +385,7 @@ dispositions make per-gate **precision** computable (Phase 0.2): derive from the
 
 ```bash
 # mode from triage.json; tier = slice risk_tier from mission-brief.json
-# Same safety shape as the DR-1 block below: derive VAULT (4.6.1 — the env var is NOT
-# exported) + --out/--content-file (never pipe+--stdin: the double-apply-under-contention
-# hazard vault_edit itself documents).
+# derive VAULT (4.6.1) + --out/--content-file (never pipe+--stdin: the double-apply-under-contention hazard)
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
 T="$(mktemp -d "$TMPD/aisdlc-cr-row.XXXXXX")"
@@ -468,7 +464,8 @@ On **CLEAN or NEEDS-FIXES**, decide the handoff by whether there is anything to 
 - **This critique produced ZERO findings**: do NOT spawn the narrator — nothing to report, and a narrator halt
   here would be a third consecutive stop for no signal (TRI-1 → narrator → plan-approval). Print one line —
   _"Clean review, no findings. Run `/slice-story` any time for a plain-language overview."_ — then HALT and prompt
-  the user to run `/build-slice` when ready.
+  the user to run `/build-slice` when ready (tip: starting it in a fresh session — /clear first — is cheaper and
+  just as safe; all resume state lives in the vault).
 
 On **BLOCKED**: do NOT invoke any successor — HALT and surface instructions to the user.
 

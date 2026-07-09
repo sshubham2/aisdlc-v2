@@ -56,7 +56,7 @@ someone else needs coordination, never a force-release.
 ### Step 1.5 — reserve the pick (close the selection->claim window; ADR-016)
 The instant the candidate is settled (the Step-1 pick gate resolved), RESERVE it — a soft HOLD a parallel `/slice`
 immediately sees as in-flight, so it can never re-pick the candidate you are about to spend Steps 2-4 defining
-(the gap SC-053 closed). The reservation mints NO slice number and bumps NO counter (the number is issued only at
+The reservation mints NO slice number and bumps NO counter (the number is issued only at
 the Step-5.1 claim), so a later cancel costs nothing:
 ```bash
 $PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --candidate <SC-NNN> --reserve --repo-root .
@@ -96,7 +96,7 @@ Check `<vault>/shippability.json` for a row whose `machine_cmd` targets `tests/b
 One AC must assert "the failing repro test passes at slice end". (**WT-ROOT-1 / ADR-012:** the worktree is created in
 Step 5 BEFORE `/repro` runs — the in-loop test is written straight into `$wt` via `/repro --target-root`; a standalone
 test already on the MAIN tree is relocated by **`repro_test_relocate.py`** to the one explicitly-named path, NEVER by
-sweeping `tests/bugs/*`. This is the fix for the cross-slice repro-theft the old glob caused.)
+sweeping `tests/bugs/*`.)
 
 ## Step 3 — define the slice
 - **Name**: verb-object (`add-receipt-upload`, `fix-thumbnail-orientation`). Never `phase-N` / vague nouns.
@@ -209,7 +209,7 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
    the ones still untracked on the main tree:
    ```bash
    repo_root="$(git rev-parse --show-toplevel)"
-   VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is no longer exported -- resolve the vault per-invocation, never inline-read the bare env var
+   VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation; never inline-read the bare env var
    cand=$(VAULT="$VAULT" SKILL_DIR="${CLAUDE_SKILL_DIR}" REPO_ROOT="$repo_root" $PY -c "
    import sys, os, json, subprocess
    # Paths arrive via env, NEVER shell-interpolated into this source: a native Windows vault

@@ -1,6 +1,6 @@
 ---
 name: commit-slice
-description: "Generate an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, ADRs, shippability.json). Renders the message INLINE (the old COST-1 Haiku dispatch was removed — spawn overhead exceeded the savings). Supports three mutually exclusive modes: --merge (solo-dev local merge + safe-delete), --push (shared rebase + push + gh-aware PR create + non-blocking auto-merge, degrading gracefully to push + printed hint), --sync-after-pr (post-PR cleanup, runnable from the main tree). No-flag default: generate and show only. Also writes a per-slice changelog.json audit record into the archived slice folder (Step 4.5); never writes to the code repo root EXCEPT the opt-in CI ship receipt (.aisdlc/receipts/, Step 4.8 — emitted only when the repo carries the aisdlc-merge-gate workflow)."
+description: "Generate an audit-grade conventional commit message for a just-completed slice by reading vault artifacts (mission-brief.json, build-log.json, validation.json, reflection.json, critique.json, ADRs, shippability.json). Renders the message INLINE. Supports three mutually exclusive modes: --merge (solo-dev local merge + safe-delete), --push (shared rebase + push + gh-aware PR create + non-blocking auto-merge, degrading gracefully to push + printed hint), --sync-after-pr (post-PR cleanup, runnable from the main tree). No-flag default: generate and show only. Also writes a per-slice changelog.json audit record into the archived slice folder; never writes to the code repo root EXCEPT the opt-in CI ship receipt (.aisdlc/receipts/, emitted only when the repo carries the aisdlc-merge-gate workflow)."
 when_to_use: "Trigger phrases: /commit-slice, 'generate commit message', 'audit commit', 'slice commit message', '/commit-slice --merge', '/commit-slice --push', '/commit-slice --sync-after-pr'. Run after /reflect (which archives the slice). User-invoked only — never auto-advanced into."
 argument-hint: "[--merge | --push | --sync-after-pr]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, AskUserQuestion, Skill
@@ -67,9 +67,8 @@ Scope: derived from the slice name area (e.g., `slice-023-add-receipt-ocr` → `
 
 Fill the template below **directly in the main thread** from the Step 2 input dict
 `{type, scope, slice_id, slice_path, intent_one_line, body_2_3_sentences, ac_pass, ac_total, critic_blockers,
-adrs, shippability_entry_n, shippability_entry_text, deferrals, regressions}`. This is a ~12-line mechanical fill —
-the old COST-1 Haiku-subagent dispatch cost more in spawn overhead than the ~500 tokens it saved, so it is done
-inline. (The defensible Haiku dispatch stays in `/archive`'s index regeneration.)
+adrs, shippability_entry_n, shippability_entry_text, deferrals, regressions}`. This is a ~12-line mechanical
+fill, done inline — no subagent.
 
 **Commit message template:**
 ```
@@ -304,8 +303,8 @@ No git operations are executed.
 ### 5c — `--push` (ADR-020 / gh-aware PR flow — auto-merge only)
 
 Turns `--push` from "push + print a hint" into the full ladder: REBASED → PUSHED → PR_CREATED →
-AUTOMERGE_ENABLED, degrading gracefully to push + printed hint at every step. **Auto-merge only** — the
-direct-merge path was dropped at slice-008 TRI-1 (ADR-006); nothing merges locally.
+AUTOMERGE_ENABLED, degrading gracefully to push + printed hint at every step. **Auto-merge only** — there is
+no direct-merge path (ADR-006); nothing merges locally.
 
 **Pre-flight:**
 1. WT-clean: `git status --porcelain` must be empty.
@@ -454,10 +453,9 @@ already moved the slice to `slices/archive/slice-NNN-<name>/` — DD-20), replac
 Invoke `/slice-story slice-NNN-<name>` via the **`Skill`** tool, passing the slice id as the argument.
 `/slice-story` resolves the (now archived) slice via its archive-aware by-id resolver (`active_slice.py --slice`),
 regenerates `story-sections.json` + `story.html` in place (overwrite), and delivers it `proactive` (the shipped
-story is the keystone deliverable — it reaches the owner's phone). The `Skill` grant is in this skill's
-`allowed-tools` (line 6) and authorizes this OUTBOUND Skill call. (`/commit-slice` is model-invocable — so it can be
-relayed from Remote Control — but every git state change is gated behind this skill's explicit yes/no confirmations,
-NOT a frontmatter flag.) **Do NOT remove the grant.**
+story is the keystone deliverable — it reaches the owner's phone). The `Skill` grant in this skill's
+`allowed-tools` authorizes this OUTBOUND call — **do NOT remove the grant** (every git state change stays gated
+behind this skill's explicit yes/no confirmations, not a frontmatter flag).
 
 **Fire-and-forget — NEVER a gate (must-not-defer):** ("fire-and-forget" is the CONTRACT, not literal
 concurrency — the Skill tool runs `/slice-story` in-conversation; what the contract means is that its outcome
