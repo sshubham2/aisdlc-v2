@@ -186,7 +186,9 @@ def _cluster_id(group: list[dict]) -> str:
             start = rng[0] if rng else 0
             keys.append((path, start // _LINE_BUCKET if _LINE_BUCKET else start))
     canonical = min(keys) if keys else ("", 0)
-    digest = hashlib.sha1(f"{canonical[0]}:{canonical[1]}".encode("utf-8")).hexdigest()[:8]
+    # usedforsecurity=False: content-addressing digest for a stable cluster id, NOT crypto
+    # integrity -- clears bandit B324 for the seeded security gate.
+    digest = hashlib.sha1(f"{canonical[0]}:{canonical[1]}".encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
     return f"F-MRG-{digest}"
 
 
