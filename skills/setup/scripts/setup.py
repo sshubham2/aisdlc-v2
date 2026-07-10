@@ -204,6 +204,15 @@ def main(argv: list[str]) -> int:
         from scripts.lib.scaffold_reality_gates import scaffold as _scaffold_reality_gates
         _rg = _scaffold_reality_gates(repo)
         print(f"reality-gates manifest : {_rg['action']} ({_rg['path']})", flush=True)
+        if _rg.get("added"):
+            print(f"  + seeded security gates: {', '.join(_rg['added'])} "
+                  f"(guard {_rg.get('guard', 'vendored')} -> .aisdlc/gates/py_security_gate.py)", flush=True)
+        # must-not-defer (b): surface a VISIBLE install hint on a Python frame; NO force-install --
+        # a missing tool fails the gate loudly (TOOL-MISSING), it is never a silent pass.
+        _surface = _rg.get("surface") or {}
+        if _rg.get("added") or _surface.get("source") or _surface.get("deps"):
+            print("  ! security gates require: python -m pip install bandit pip-audit "
+                  "(not auto-installed; a missing tool fails the gate VISIBLY)", flush=True)
         if _rg.get("gitignore_hint"):
             print("  ! " + _rg["gitignore_hint"], flush=True)
     except Exception as exc:  # visible, non-fatal: the runner no-ops without a manifest anyway

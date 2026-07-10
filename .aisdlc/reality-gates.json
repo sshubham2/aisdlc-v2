@@ -1,0 +1,19 @@
+{
+  "_schema": "aisdlc/reality-gates@1",
+  "gates": {
+    "security": [
+      {
+        "id": "bandit",
+        "command": "python .aisdlc/gates/py_security_gate.py --tool bandit",
+        "description": "Python SAST -- fail-closed on a HIGH finding (vendored deterministic guard, ADR-065)"
+      },
+      {
+        "id": "pip-audit",
+        "command": "python .aisdlc/gates/py_security_gate.py --tool pip-audit",
+        "description": "dependency CVEs -- fail-closed on a known-vulnerable requirement (ADR-065)"
+      }
+    ],
+    "nfr": [],
+    "ops": []
+  }
+}
