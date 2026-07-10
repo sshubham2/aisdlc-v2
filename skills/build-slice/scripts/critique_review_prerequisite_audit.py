@@ -19,6 +19,13 @@ of these hold (the canonical table also lives in ``skills/critique/SKILL.md`` St
         ``/slice`` forces ``critic_required: true`` on every slice, so Heavy's
         compliance floor falls out of this row with no separate mode check.
   - first-Critic ``findings`` count >= 5               (critique.json — severity-inflation check)
+  - ``full-tournament-convergence``                    (design.json — the tournament's
+        ``approach_divergence`` has NO designer pair classified ``disjoint``; slice-066 /
+        ADR-064). Computed by the shared ``scripts/lib/tournament_convergence.py`` helper,
+        so this gate and ``/critique`` Step 3.5 share ONE computation (no model-eyeball twin).
+        An absent/empty/malformed design.json is INDETERMINATE -> NO trigger, surfaced
+        fail-visibly, never a crash. Kept in sync with the ``skills/critique/SKILL.md``
+        Step 3.5 canonical table (a doc-guard test binds the two).
 
 (The "3+ consecutive clean first-Critic verdicts" calibration smell is ADVISORY — it is
 documented in the SKILL table and handled empirically by ``/critic-calibrate``, not
@@ -61,6 +68,7 @@ if str(_REPO) not in sys.path:
 from pathlib import Path  # noqa: E402
 
 from scripts.lib import _stdout  # noqa: E402
+from scripts.lib import tournament_convergence  # noqa: E402
 
 # Canonical regex for the milestone.json `critique-review-skip` value. Same
 # `rationale:` spirit as BRANCH-1's `BRANCH=skip — rationale:` (ADR-024). 3.8:
@@ -91,6 +99,7 @@ class AuditResult:
     critic_required: bool | None = None
     findings_count: int = 0
     mandatory_triggers: list[str] = field(default_factory=list)
+    convergence: dict | None = None
     critique_review_present: bool = False
     skip_key_present: bool = False
     skip_rationale: str | None = None
@@ -106,6 +115,7 @@ class AuditResult:
             "critic_required": self.critic_required,
             "findings_count": self.findings_count,
             "mandatory_triggers": list(self.mandatory_triggers),
+            "convergence": self.convergence,
             "critique_review_present": self.critique_review_present,
             "skip_key_present": self.skip_key_present,
             "skip_rationale": self.skip_rationale,
@@ -214,6 +224,17 @@ def audit(slice_folder: Path, repo_root: Path | None = None) -> AuditResult:
         triggers.append("critic_required=true")
     if result.findings_count >= _FINDINGS_MANDATORY_THRESHOLD:
         triggers.append(f"findings={result.findings_count}>={_FINDINGS_MANDATORY_THRESHOLD}")
+    # slice-066 / ADR-064: FULL tournament convergence (design.json, no disjoint pair) is a
+    # 4th MANDATORY DR-1 trigger, computed by the shared SSOT helper (no model-eyeball twin).
+    # Appended HERE, inside the trigger-build block BEFORE the `if not triggers:` acceptance
+    # branch below, so a convergent-only slice REFUSES (critique M4). An absent/empty/malformed
+    # design.json -> indeterminate -> NO trigger, surfaced fail-visibly, never a crash / exit 2
+    # (critique M2 + must-not-defer): the trigger is purely additive, so it can never un-enforce
+    # the three triggers above.
+    conv = tournament_convergence.from_slice_folder(slice_folder)
+    result.convergence = conv.to_dict()
+    if conv.is_full_convergence:
+        triggers.append("full-tournament-convergence")
     result.mandatory_triggers = triggers
 
     # critique-review.json presence.
@@ -293,6 +314,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[{v.severity}] {v.kind}: {v.message}")
         else:
             print(f"CRP-1 audit: clean. Accepted: {result.accepted_reason}.")
+        if result.convergence:
+            print(f"convergence: {result.convergence['state']} -- {result.convergence['reason']}")
 
     usage_kinds = {"usage-error"}
     if any(v.kind in usage_kinds for v in result.violations):

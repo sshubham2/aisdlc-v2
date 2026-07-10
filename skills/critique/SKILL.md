@@ -251,6 +251,19 @@ The meta-Critic runs BEFORE the TRI-1 gate so its findings feed your triage (BB-
 | `risk_tier == high` | mission-brief.json |
 | `critic_required == true` — auth/authz · API contracts · data-model/migrations · security · methodology surface (`skills/**`/`agents/**`/`scripts/**`); Heavy forces this on every slice | mission-brief.json |
 | first-Critic `findings` count ≥ 5 (severity-inflation check) | critique.json |
+| **full tournament convergence** — the design tournament's `approach_divergence` has NO designer pair classified `disjoint` (machine id `full-tournament-convergence`; slice-066 / ADR-064) | design.json |
+
+Convergence is a **multi-clause predicate over an array**, not a scalar you can eyeball — so **compute it, don't
+read it by eye** (a mis-read here skips DR-1, and CRP-1 only catches it later at `/build-slice`, running DR-1
+*after* triage instead of before). The SAME `tournament_convergence` helper CRP-1 enforces with reports the
+verdict, so both homes share ONE computation:
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/tournament_convergence.py" --slice "$SDIR" --json
+# is_full_convergence:true -> the convergence trigger HOLDS (DR-1 mandatory). state:indeterminate
+# (absent/malformed design.json) -> NO trigger, fail-visible, NEVER read as convergent.
+```
 
 **Advisory (recommended, not refused):** 3+ consecutive `clean` first-Critic verdicts (calibration smell) —
 `/critic-calibrate` handles under-firing empirically across slices. Run it, or skip with a marker.
