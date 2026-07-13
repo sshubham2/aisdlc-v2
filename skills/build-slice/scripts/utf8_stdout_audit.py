@@ -28,10 +28,31 @@ invocation pattern (v2) is::
   filename is a helper and is skipped, matching v1's ``_is_helper_module``.)
 - Files with no top-level ``main()`` are not subject to the rule (skipped).
 
+**Standalone-vendored carve-out (2026-07).** The rule as originally written was
+self-contradictory for one real file. ``scripts/lib/security_gate.py`` is
+standalone-and-stdlib-only BY CONTRACT (slice-067 / ADR-065) — it is vendored
+verbatim into a consumer repo as ``.aisdlc/gates/py_security_gate.py`` and must
+run with NO plugin on ``sys.path``, so it may not import ``scripts.lib`` at all,
+and ``tests/test_security_gate_standalone_import.py`` AST-asserts precisely that.
+UTF8-STDOUT-1 meanwhile DEMANDED ``from scripts.lib import _stdout``. Two audits in
+one repo requiring opposite things: the file could not satisfy both, and CI sat red
+on code that was in fact correct.
+
+So the audit now enforces the **property** (``main()`` reconfigures stdout to UTF-8
+before writing anything) rather than the **spelling** (one blessed import + call).
+Accepted forms:
+
+    _stdout.reconfigure_stdout_utf8()   # canonical — still requires the canonical import
+    reconfigure_stdout_utf8()           # from-import form
+    _reconfigure_stdout()               # a MODULE-LOCAL helper, iff its body really calls
+                                        # <stream>.reconfigure(encoding=...)
+
+The teeth are intact: a local helper that does not actually reconfigure (a stub, a
+misnamed no-op) is still a violation.
+
 Detection mechanism: AST-based. Parse each candidate file; find the top-level
 ``def main(...)``; identify the first executable statement after the docstring;
-verify it is a Call to the canonical reconfigure helper AND the module imports
-``_stdout`` from ``scripts.lib``.
+verify it reconfigures stdout by one of the accepted forms above.
 
 Usage:
     python utf8_stdout_audit.py
@@ -192,6 +213,51 @@ def _is_canonical_reconfigure_call(stmt: ast.stmt) -> bool:
     return False
 
 
+def _called_local_name(stmt: ast.stmt) -> str | None:
+    """The bare function name if ``stmt`` is a plain ``some_name()`` call, else None."""
+    if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+        return None
+    func = stmt.value.func
+    return func.id if isinstance(func, ast.Name) else None
+
+
+def _module_level_reconfigurer(tree: ast.Module, name: str) -> bool:
+    """True iff ``name`` is a top-level function IN THIS MODULE that really reconfigures a
+    standard stream to UTF-8 (i.e. it calls ``<stream>.reconfigure(encoding=...)``).
+
+    This is the STANDALONE-VENDORED carve-out, and it exists because the rule as originally
+    written was self-contradictory. ``scripts/lib/security_gate.py`` is standalone-and-stdlib-only
+    BY CONTRACT (slice-067 / ADR-065): it is vendored verbatim into a consumer repo as
+    ``.aisdlc/gates/py_security_gate.py`` and must run there with NO plugin on sys.path, so it may
+    not import ``scripts.lib`` at all — and ``tests/test_security_gate_standalone_import.py``
+    AST-asserts exactly that. UTF8-STDOUT-1 simultaneously DEMANDED ``from scripts.lib import
+    _stdout``. Two audits in one repo requiring opposite things: the file could not satisfy both,
+    so CI sat red on a file that was, in fact, correct.
+
+    The resolution is to enforce the PROPERTY (main() reconfigures stdout to UTF-8 before it writes
+    anything) rather than the SPELLING (one specific import + call). A module-local helper is
+    accepted only when its body genuinely performs the reconfigure — a stub named
+    ``_reconfigure_stdout`` that does nothing still FAILS, so the audit keeps its teeth.
+    """
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.name != name:
+            continue
+        for sub in ast.walk(node):
+            if not isinstance(sub, ast.Call):
+                continue
+            # `stream.reconfigure(encoding=...)` — the direct form; or a bare `reconfigure(encoding=...)`
+            # where the bound method was fetched first (`reconfigure = getattr(stream, "reconfigure", None)`),
+            # which is exactly the shape BOTH the canonical _stdout helper and the vendored guard use.
+            f = sub.func
+            named_reconfigure = (
+                (isinstance(f, ast.Attribute) and f.attr == "reconfigure")
+                or (isinstance(f, ast.Name) and f.id == "reconfigure")
+            )
+            if named_reconfigure and any(kw.arg == "encoding" for kw in sub.keywords):
+                return True
+    return False
+
+
 def _has_canonical_import(tree: ast.Module) -> bool:
     """Check the module imports ``_stdout`` from ``scripts.lib`` (v2 canonical).
 
@@ -266,7 +332,15 @@ def audit_root(root: Path) -> AuditResult:
             )
             continue
 
-        if not _is_canonical_reconfigure_call(first_stmt):
+        canonical = _is_canonical_reconfigure_call(first_stmt)
+
+        # The standalone-vendored carve-out: a module-local helper that REALLY reconfigures a stream
+        # to UTF-8. Required for a file that may not import scripts.lib at all (see
+        # _module_level_reconfigurer). A local call whose target does NOT reconfigure still fails.
+        local_name = None if canonical else _called_local_name(first_stmt)
+        standalone = bool(local_name) and _module_level_reconfigurer(tree, local_name)
+
+        if not canonical and not standalone:
             try:
                 got = ast.unparse(first_stmt)
             except Exception:
@@ -277,15 +351,19 @@ def audit_root(root: Path) -> AuditResult:
                     function="main",
                     line=first_stmt.lineno,
                     message=(
-                        f"first executable statement is not "
-                        f"_stdout.reconfigure_stdout_utf8() "
+                        f"first executable statement does not reconfigure stdout to UTF-8 "
+                        f"— expected _stdout.reconfigure_stdout_utf8(), or (for a "
+                        f"standalone-vendored tool that cannot import scripts.lib) a "
+                        f"module-local helper that calls <stream>.reconfigure(encoding=...) "
                         f"(got: {got})"
                     ),
                 )
             )
             continue
 
-        if not _has_canonical_import(tree):
+        # The canonical form must carry the canonical import. The standalone form must NOT need it —
+        # requiring it there is what made this audit contradict the standalone-import contract.
+        if canonical and not _has_canonical_import(tree):
             result.violations.append(
                 Violation(
                     file=rel_path,

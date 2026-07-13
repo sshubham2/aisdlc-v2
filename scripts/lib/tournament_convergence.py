@@ -33,6 +33,7 @@ Windows cp1252 rule).
 """
 from __future__ import annotations
 
+import argparse
 import json
 import pathlib
 import sys
@@ -42,6 +43,8 @@ from dataclasses import dataclass, field
 _REPO = pathlib.Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
+
+from scripts.lib import _stdout  # noqa: E402  (UTF8-STDOUT-1: the canonical house import)
 
 # The closed set of divergence values design-slice's synthesis may write per pair.
 _DIVERGENCE_ENUM = {"overlapping", "identical", "disjoint"}
@@ -128,10 +131,11 @@ def from_slice_folder(slice_folder: object) -> Convergence:
 
 
 def main(argv: list[str] | None = None) -> int:
-    from scripts.lib import _stdout  # lazy: keep library import lightweight
-
-    import argparse
-
+    # UTF8-STDOUT-1: this MUST be main()'s first executable statement. The imports it needs used to be
+    # lazy ("keep the library import lightweight"), which pushed the call to third and failed the audit
+    # -- while the module was in fact perfectly correct at runtime. `_stdout` is stdlib-only and
+    # `argparse` is already imported by every peer, so hoisting them costs nothing and the audit's
+    # invariant becomes true by construction rather than by inspection.
     _stdout.reconfigure_stdout_utf8()
     parser = argparse.ArgumentParser(
         prog="tournament_convergence",
