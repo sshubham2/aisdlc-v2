@@ -1,9 +1,9 @@
 ---
 name: slice-candidates
-description: "Reads an annotated diagnosis.html (produced by /diagnose and returned by the repo owner), extracts confirmed findings, and appends DAG-ordered slice candidates to <vault>/candidates.json. Uses code-review-graph (CRG) blast-radius queries to detect file-overlap coupling, topo-sorts by dependency + severity/blast/effort priority, and flags must-do-together cycles. An optional --obo mode walks the owner through findings one at a time via structured prompts, writing diagnosis.annotated.html before building the backlog."
-when_to_use: "Trigger phrases: /slice-candidates, 'generate slice candidates', 'build the backlog from diagnosis', 'turn confirmed findings into slices', 'what should we fix first'. Use after /diagnose has been run, the HTML report has been sent to the repo owner, and the owner has annotated and returned the saved file. Prerequisite: diagnose-out/diagnosis.html with at least one Confirmed: yes finding. Pass --obo to walk findings interactively instead of batch-processing."
-argument-hint: "[path-to-diagnose-out — omit to use ./diagnose-out] [--obo for guided one-finding-at-a-time review]"
-allowed-tools: Bash, Read, AskUserQuestion
+description: "Builds the slice-candidate backlog in <vault>/candidates.json from two sources. From an annotated diagnosis.html (produced by /diagnose and returned by the repo owner): extracts confirmed findings, uses code-review-graph blast-radius queries to detect file-overlap coupling, topo-sorts by dependency + severity/blast/effort priority, and flags must-do-together cycles; --obo walks the owner through findings one at a time. From <vault>/concept.json: --product decomposes the PRODUCT's own declared scope into candidate-shaped items ONCE, persists them with receiver-minted PS-NNN ids, and idempotently materializes them as PRODUCT-sourced candidates — without which a backlog fills with pipeline exhaust and the product itself is never pickable."
+when_to_use: "Trigger phrases: /slice-candidates, 'generate slice candidates', 'build the backlog from diagnosis', 'turn confirmed findings into slices', 'what should we fix first', 'the backlog has no product work in it', 'materialize the product scope', 'why is the roadmap not in the backlog'. Finding path: use after /diagnose has been run and the owner has annotated and returned the saved HTML (prerequisite: diagnose-out/diagnosis.html with >=1 Confirmed: yes finding); pass --obo to walk findings interactively. Product path: pass --product after /discover has written concept.json (it hands off here) — needs no diagnosis at all."
+argument-hint: "[path-to-diagnose-out — omit to use ./diagnose-out] [--obo for guided one-finding-at-a-time review] [--product to materialize the product's own scope from concept.json]"
+allowed-tools: Bash, Read, Write, AskUserQuestion
 ---
 
 # /slice-candidates — Build slice candidates from an annotated diagnosis
@@ -36,10 +36,10 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" count --file candidate
 ## Step 0 — Resolve paths + flags (ONE parse, both outputs)
 
 ```bash
-DIAGNOSE_OUT=""; OBO=0
-for a in ${ARGUMENTS[@]}; do case "$a" in --obo) OBO=1 ;; --*) ;; *) [ -z "$DIAGNOSE_OUT" ] && DIAGNOSE_OUT="$a" ;; esac; done
+DIAGNOSE_OUT=""; OBO=0; PRODUCT=0
+for a in ${ARGUMENTS[@]}; do case "$a" in --obo) OBO=1 ;; --product) PRODUCT=1 ;; --*) ;; *) [ -z "$DIAGNOSE_OUT" ] && DIAGNOSE_OUT="$a" ;; esac; done
 [ -n "$DIAGNOSE_OUT" ] || DIAGNOSE_OUT="./diagnose-out"
-echo "DIAGNOSE_OUT=$DIAGNOSE_OUT OBO=$OBO"
+echo "DIAGNOSE_OUT=$DIAGNOSE_OUT OBO=$OBO PRODUCT=$PRODUCT"
 ```
 
 > Shell vars do NOT persist across separate ```bash blocks, and skill args are 0-based Claude Code
@@ -49,7 +49,12 @@ echo "DIAGNOSE_OUT=$DIAGNOSE_OUT OBO=$OBO"
 > under an array binding sees only token 0. `${ARGUMENTS[@]}` unquoted is array-safe AND scalar-safe.
 > Bundled scripts use `${CLAUDE_SKILL_DIR}` directly.
 
-Verify:
+If the Step-0 parse printed `PRODUCT=1`, skip to
+[--product mode](#--product-mode--materialize-the-products-own-scope-slice-068--adr-067). It reads
+`<vault>/concept.json`, **not** `diagnose-out/` — so the diagnosis checks below do not apply and must not be run.
+(`--product` and `--obo` are peers; if both are passed, run `--product` and tell the user `--obo` was ignored.)
+
+Verify (the finding path only):
 - `$DIAGNOSE_OUT/diagnosis.html` exists and contains an embedded `<script type="application/json" id="diagnose-data">` block
 - At least one entry has `confirmed=yes`
 
@@ -190,6 +195,120 @@ Report: remaining-unreviewed count, distinguishing **never-reached** from **Defe
 If at least one finding was Approved, offer to run Step 1 immediately against the annotated copy.
 Otherwise stop and tell the owner where the annotated copy lives.
 
+## --product mode — materialize the PRODUCT's own scope (slice-068 / [[ADR-067]])
+
+Invoked when `--product` appears in arguments. **A peer of `--obo`, not a sub-step of the finding path**: it reads
+`<vault>/concept.json`, not `diagnose-out/`, and it needs no diagnosis at all.
+
+**Why this mode exists.** A census of every candidate ever minted across two real vaults found **PRODUCT-sourced
+candidates = 0, out of 145**. `/discover` mints exactly one product candidate (`concept.json`'s
+`first_slice_candidate`) — which fires once, at slice 1, and never again. Everything after it is *exhaust*: risks,
+code-review findings, reality-surprises, reflection residues. In one real product, the orchestrator it exists to be
+was never minted as a candidate at all — it survived only as a line in slice-001's `out_of_scope` — so `/slice`
+structurally **could not pick it**, and eleven slices went to peripheral hardening while the core app stayed
+unbuilt. This mode makes the product's scope *appear in the list*. The pick gate stays user-owned; presence is
+what was missing.
+
+**The model does the decomposition; the vault owns the identities.** `build_backlog.py` is deterministic and
+cannot read prose, so only a model context can turn a concept's narrative into candidate-shaped items — but a model
+key cannot be trusted across runs. Two BLIND decompositions of the *same* concept agreed on only **22%** of their
+keys, and five of seven semantically-identical items — *including the orchestrator itself* — drifted. So the model
+runs **once**, and every id is minted by the receiver, in-lock.
+
+### product-1 — Get the decomposition context
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" decompose-context --json
+```
+
+- **exit 3** → `concept.json` is absent. STOP and tell the user to run `/discover` first. Do not invent a concept.
+- **exit 0** with `already_decomposed: true` → the scope was already crossed in. `persist` is CREATE-ONLY; to extend
+  or correct the scope use `revise` (see product-4). Report the existing items and stop.
+- **exit 0** otherwise → proceed with the returned `concept`.
+
+### product-2 — Decompose the concept into product items
+
+Read the concept's `what`, `non_goals`, `actors[].top_actions`, and `constraints`. Print the items-file path:
+
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+echo "ITEMS=$TMPD/aisdlc-product-scope-items.json"   # FIXED name: every block below re-derives it identically (vars do NOT persist across bash blocks)
+```
+
+Now **`Write`** the decomposition to that exact absolute path (use `Write`, not a bash heredoc — item prose
+contains apostrophes, which a heredoc mangles):
+
+```json
+{ "items": [
+  { "label": "<your run-local id, e.g. payments-core>",
+    "title": "<verb-led candidate title, e.g. build-payments-core>",
+    "description": "<what this capability IS, in one or two sentences>",
+    "user_visible_outcome": "<what a real user can DO once it exists>",
+    "depends_on": ["<label of another item in THIS list>"],
+    "assumptions": [ { "id": "A1", "statement": "<the blocking feasibility premise>",
+                       "blocking": true, "spike_status": "unproven" } ],
+    "verification_plan": "<how reality confirms it works>" } ] }
+```
+
+Rules, each of which is load-bearing — `persist` REFUSES the file (exit 2) if any is broken:
+
+- **NEVER emit an `id`.** Identity is minted in-lock by the receiver; `persist` rejects a supplied id. Your `label`
+  is an intra-call correlation id for `depends_on` only — it is discarded as an identity the moment the lock closes.
+- **Every `label` and `title` must be UNIQUE.** Two items sharing an identity would alias onto one minted candidate.
+- **Every `depends_on` must name a `label` in THIS list.** An unresolvable dependency is a hard error, never a
+  silent drop: dropping it would make the item a false DAG *root* and surface unready work first at the pick gate.
+- **Every item MUST carry at least one blocking, unproven assumption.** `/risk-spike` step-0 SKIPS a candidate with
+  none — so `assumptions: []` would walk the least-understood work in the product straight past the pipeline's
+  reality gate. A finding-derived candidate is a proven bug with nothing to spike; a product capability is unproven
+  by definition and has everything to spike.
+- **Emit the `depends_on` DAG.** It yields the critical path: items are minted in topological order, so the roots —
+  the things everything else waits on — surface first at the pick gate.
+- Decompose the product as it IS scoped, not as you would scope it. Respect `non_goals`.
+
+### product-3 — Cross it into the vault (the ONCE-ACT)
+
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+ITEMS="$TMPD/aisdlc-product-scope-items.json"   # re-derived, not inherited (fresh shell per block)
+[ -s "$ITEMS" ] || { echo "STOP: $ITEMS is missing or empty -- Write the product-2 decomposition first." >&2; exit 1; }
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" persist --items-file "$ITEMS" --json
+rc=$?; rm -f "$ITEMS"; exit $rc
+```
+
+One command, PERSIST **and** MATERIALIZE: it mints a `PS-NNN` per item, rewrites `depends_on` into those ids, writes
+`<vault>/product-scope.json`, then mints one candidate per item into `<vault>/candidates.json` — deduped on
+provenance `source: [{type: "product-scope", ref: "PS-NNN"}]` across live ∪ archive, so a re-run mints nothing and a
+*shipped* item is never resurrected. (These are two per-file locked writes, not one transaction: if it dies between
+them, re-run `materialize` — that is exactly why the verb exists.)
+
+A non-zero exit means nothing was written — fix the items file and re-run. Report to the user: the minted candidate
+ids, any **REFUSED** items (a candidate already carries that item's title without the expected provenance — minting
+would duplicate or resurrect it; re-run with `--acknowledge PS-NNN` if they are genuinely different), and any items
+**withheld** behind a refusal. Then suggest `/slice`.
+
+### product-4 — Later: reconcile, correct, measure
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" materialize --json   # idempotent re-mint (safe any time)
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" census --json        # PRODUCT / EXHAUST / HUMAN split
+```
+
+To **extend or correct** the scope, repeat product-2 (`Write` the full revised item list to the same `$ITEMS` path,
+carrying each kept item's minted `id` verbatim), then:
+
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+ITEMS="$TMPD/aisdlc-product-scope-items.json"
+[ -s "$ITEMS" ] || { echo "STOP: $ITEMS is missing or empty -- Write the revised decomposition first." >&2; exit 1; }
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" revise --items-file "$ITEMS" --json
+rc=$?; rm -f "$ITEMS"; exit $rc
+```
+
+`revise` preserves already-minted `PS` ids **by id** and never re-mints; new items omit `id` as usual. An `id` this
+vault never minted is REFUSED (the model may reuse an identity the receiver gave it, never invent one), and so is a
+REPEATED one. A scope item dropped from a revision leaves its candidate untouched — the backlog is append-only and
+it may already be shipped — and `materialize` reports it as `orphaned`, taking no action.
+
 ## Candidate shape (reference)
 
 Each appended candidate matches `examples/slice-candidates.json`:
@@ -202,7 +321,10 @@ assumptions[{id, statement, risk_ref, blocking, spike_status, spike_verdict, spi
 verification_plan  history[{event, by, at}]
 ```
 
-Source type is `finding` (from diagnosis); ref is the finding id (e.g. `F-XXX-abc12345`).
+Source type is `finding` (from diagnosis; ref = the finding id, e.g. `F-XXX-abc12345`) or **`product-scope`**
+(from `--product`; ref = the allocator-minted `PS-NNN`). `product-scope` **supersedes** the never-emitted
+`concept-scope` (ADR-067). Its ref is the materializer's idempotency key, so it must survive the ship→archive move.
+The persisted scope itself matches `examples/product-scope.json`.
 
 ## Anti-patterns
 
@@ -211,10 +333,16 @@ Source type is `finding` (from diagnosis); ref is the finding id (e.g. `F-XXX-ab
 - Do NOT add candidates not derived from confirmed findings (no "while you're here" additions).
 - Do NOT write `backlog.md` — the v2 output is `<vault>/candidates.json`.
 - Use CRG (`diagnose-out/.code-review-graph/`) for blast-radius queries; do NOT call the old vault-graph CLI or the multimodal-ingest path.
+- `--product`: do NOT emit an `id` on a scope item, and do NOT hand-write `<vault>/product-scope.json` — identity is
+  minted in-lock by the receiver, and `persist` rejects a supplied id. Do NOT emit an item with `assumptions: []`
+  (it would skip `/risk-spike` step-0). Do NOT re-run `persist` to "refresh" the scope — it is create-only; use
+  `revise`. Do NOT auto-claim or auto-pick a minted candidate: materialization makes the product *pickable*, and the
+  pick gate stays user-owned.
 
 ## Pipeline position
 
-- predecessor: `/diagnose` (produces `diagnose-out/`) · successor: `/slice`
+- predecessor: `/diagnose` (produces `diagnose-out/`) for the finding path; **`/discover`** (writes `concept.json`, then
+  hands off here) for `--product` · successor: `/slice`
 - auto-advance: false — user decides when to invoke `/slice` after reviewing the candidate list
-- user-input gates: `--obo` per-finding loop (obo-2); otherwise no interactive gate (batch path is mechanical)
+- user-input gates: `--obo` per-finding loop (obo-2); otherwise no interactive gate (both batch paths are mechanical)
 - on-clean-completion: report the backlog summary; suggest `/slice` to start the first cut

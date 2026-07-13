@@ -54,6 +54,13 @@ if str(_REPO) not in sys.path:
 from scripts.lib import _stdout, id_allocator
 from scripts.lib._vault_paths import VAULT_ROOT
 from scripts.lib._vault_write import safe_mutate_text
+# slice-068 / C3: the ONE malformed-tolerant `source[]` selector, shared with product_scope's
+# materializer and census so the three cannot drift. Both of this file's source[] loops used the
+# naive `for s in c.get("source") or []: s.get("type")`, and BOTH raise AttributeError on the real
+# aivlc vault TODAY: `"source": "reflect"` (SC-014, LIVE) and `"source": "slice-007-discovered"`
+# (SC-009, ARCHIVED) are bare STRINGS where the schema says list-of-dicts. Repro:
+# tests/bugs/test_build_backlog_source_iter_both_arms.py.
+from scripts.lib.product_scope import iter_sources as _iter_sources
 
 # ── ranks (v1 verbatim) ──────────────────────────────────────────────────────────
 _SEV_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
@@ -451,7 +458,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         maxnum = archive_max
         for c in cands:
             maxnum = max(maxnum, _sc_num(c.get("id")))
-            for s in c.get("source") or []:
+            for s in _iter_sources(c):   # slice-068/C3: was `c.get("source") or []` -> AttributeError
                 if s.get("type") == "finding" and s.get("ref"):
                     fid_to_sc[s["ref"]] = c.get("id")
         existing = set(fid_to_sc) | archive_refs
@@ -557,7 +564,7 @@ def _archive_scan(vault: Path) -> tuple[set[str], int]:
     refs, mx = set(), 0
     for c in (data.get("candidates") or []):
         mx = max(mx, _sc_num(c.get("id")))
-        for s in c.get("source") or []:
+        for s in _iter_sources(c):   # slice-068/C3: was `c.get("source") or []` -> AttributeError
             if s.get("type") == "finding" and s.get("ref"):
                 refs.add(s["ref"])
     return refs, mx

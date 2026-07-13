@@ -26,8 +26,20 @@ Contract:
 Managed kinds: slice, sc, ship, adr, bc (build-checks BC-PROJ-N rules — minted in-lock
 by the managed append, like sc/ship), plus the calibration-overlay kinds cc/cn/gs
 (CC-/CN-/GS- ids in critic-calibration-log.json — minted via `vault_edit alloc`, then
-carried in the append payload, mirroring the ADR flow). Unknown kind -> ValueError
+carried in the append payload, mirroring the ADR flow), and `ps` (PS-NNN product-scope
+items in product-scope.json — slice-068 / [[ADR-067]]). Unknown kind -> ValueError
 (fail-visible, R-7).
+
+Why `ps` exists (slice-068): the model's decomposition of a concept into product scope items is
+`outside data` — spike B1 measured only 22% cross-run key agreement between two BLIND decompositions
+of the SAME concept, and 5 of 7 semantically-identical items (including the orchestrator itself)
+drifted their key. So a model-emitted key can never be a cross-run identity, and `ps` ids are minted
+by the RECEIVER, in-lock, exactly like every other managed kind. `product-scope.json`/`items` is
+deliberately NOT in `vault_edit._MANAGED_KIND`: product_scope.persist must rewrite the model's
+run-local depends_on labels into minted ids INSIDE one lock, which `vault_edit append` (which mints
+internally and returns nothing to the caller) cannot express — so persist calls `reject_supplied_id`
+itself, as the first statement in its own mutate closure. This follows the risk-register `risks[]`
+precedent documented at vault_edit.py:137-140.
 """
 from __future__ import annotations
 
@@ -36,15 +48,15 @@ import re
 from pathlib import Path
 
 _PREFIX = {"slice": "slice-", "sc": "SC-", "ship": "SHIP-", "adr": "ADR-",
-           "cc": "CC-", "cn": "CN-", "gs": "GS-", "bc": "BC-PROJ-", "r": "R-"}
+           "cc": "CC-", "cn": "CN-", "gs": "GS-", "bc": "BC-PROJ-", "r": "R-", "ps": "PS-"}
 # bc + r pad to 1 (i.e. no zero-pad): the established conventions are BC-PROJ-9, BC-PROJ-10, ...
 # and R-1, R-2, ... (the risk ledger was the last shared aggregate with model-minted ids —
 # 2026-07 review sweep: parallel slices could collide on "next R-NN").
-_PAD = {"slice": 3, "sc": 3, "ship": 3, "adr": 3, "cc": 3, "cn": 3, "gs": 3, "bc": 1, "r": 1}
+_PAD = {"slice": 3, "sc": 3, "ship": 3, "adr": 3, "cc": 3, "cn": 3, "gs": 3, "bc": 1, "r": 1, "ps": 3}
 # The element key that carries a managed id (for reject_supplied_id): a candidate/ship row keys
 # on `id`; a slice's join key on a candidate is `slice`.
 _ID_KEY = {"sc": "id", "ship": "id", "adr": "id", "slice": "slice",
-           "cc": "id", "cn": "id", "gs": "id", "bc": "id", "r": "id"}
+           "cc": "id", "cn": "id", "gs": "id", "bc": "id", "r": "id", "ps": "id"}
 
 # The calibration-overlay kinds live in critic-calibration-log.json: kind -> its array.
 _CALIBRATION_ARRAYS = {"cc": "active_checks", "cn": "calibration_notes", "gs": "gate_skips"}
@@ -165,6 +177,9 @@ def seed_max_for(vault, kind: str, data: dict) -> int:
         return scan_max([r.get("id") for r in data.get("rules", []) if isinstance(r, dict)], "bc")
     if kind == "r":  # risk-register.json risks[] — retired risks stay in-file (no archive), so
         return scan_max([r.get("id") for r in data.get("risks", []) if isinstance(r, dict)], "r")
+    if kind == "ps":  # product-scope.json items[] — create-only + revise-preserves-by-id, so the
+        # live items[] IS the full history: an id is never retired and never moves to an archive.
+        return scan_max([i.get("id") for i in data.get("items", []) if isinstance(i, dict)], "ps")
     if kind in _CALIBRATION_ARRAYS:
         # Live overlay elements PLUS the run history: runs[].proposals[] keep the ids past
         # proposals minted (check_id/note_id/...), so a RETIRED check's id is never re-issued

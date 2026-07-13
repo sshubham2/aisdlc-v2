@@ -330,6 +330,13 @@ Next step:
 - candidates.json has ranked candidates → /slice "<top entry>" (risk-spike runs inside the slice loop as its first gate)
 ```
 
+**Hand off to `/slice-candidates --product`** (slice-068 / [[ADR-067]]). Once `concept.json` exists (Step 7), point
+the user at `/slice-candidates --product`: it decomposes the product's own declared scope into candidates, so the
+backlog is not made purely of *exhaust* (risks, diagnose findings, reflections). Across two real vaults, PRODUCT-sourced
+candidates were **0 of 145** — a brownfield adopting the pipeline inherits a backlog of everything that is *wrong*
+with its code and nothing about what its product is *for*, and `/slice` can only pick what is in the list. A named
+hand-off, not a new mandatory interview step.
+
 ## Critical rules
 
 - TRUST CODE over docs. code-review-graph (CRG) scan + /diagnose findings are evidence; README is hypothesis. Where they conflict, code wins; log the discrepancy.
@@ -354,5 +361,5 @@ Next step:
 - predecessor: none (entry point for brownfield) · successor: `/discover` (optional, if concept needs sharpening) → `/slice`
 - auto-advance: no — multiple user-input gates (diagnose offer, interview Q1-Q8, mode confirmation)
 - user-input gates: Step 3 (diagnose offer); Step 4 (each interview question); Step 5 (mode confirmation)
-- on-clean-completion: point user to `/discover` (optional) then `/slice "<top candidate>"`; /risk-spike runs inside the slice loop — not directly from adopt
-- hands-off-to: `/slice`, `/discover` (optional), `/slice-candidates` (if /diagnose ran), `/diagnose` (if offered)
+- on-clean-completion: point user to `/slice-candidates --product` (materialize the product's scope — see Step 8), `/discover` (optional), then `/slice "<top candidate>"`; /risk-spike runs inside the slice loop — not directly from adopt
+- hands-off-to: `/slice`, `/slice-candidates` (`--product` from concept.json; the finding path if /diagnose ran), `/discover` (optional), `/diagnose` (if offered)

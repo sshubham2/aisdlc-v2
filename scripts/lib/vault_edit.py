@@ -138,6 +138,15 @@ _MANAGED_KIND = {
     # NOT mint-on-append — risk appenders cross-reference the new R-N (e.g. a candidate's
     # source ref), so they PRE-mint via `alloc --kind r` and carry the id in the payload
     # (the cc/cn/gs pattern), which mint-on-append would reject.
+    #
+    # SAME CARVE-OUT, same reason (slice-068 / [[ADR-067]]): ('product-scope.json', 'items') -> 'ps'
+    # is deliberately ABSENT. product_scope.persist must REWRITE the model's run-local depends_on
+    # labels into minted PS ids inside ONE lock — and `append` mints internally and returns nothing to
+    # the caller, so persist could never learn the ids it must substitute. persist therefore does its
+    # own safe_mutate_text and calls id_allocator.reject_supplied_id('ps', items) as the FIRST
+    # statement in its mutate closure; registering the kind here would have guarded only a
+    # hypothetical hand-authored append that no production writer takes. `alloc --kind ps` covers
+    # hand-authored pre-minting.
 }
 
 # slice-050 / SC-041 (ADR-040 + ADR-043): the bounded, --stdin-scoped duplicate-append guard.
@@ -877,13 +886,15 @@ def _build_parser() -> argparse.ArgumentParser:
     ac = sub.add_parser("alloc", parents=[common],
                         help="mint the next id of --kind in-lock (bumps counters), print it")
     ac.add_argument("--file", required=True)
-    ac.add_argument("--kind", required=True, choices=["adr", "cc", "cn", "gs", "r"],
+    ac.add_argument("--kind", required=True, choices=["adr", "cc", "cn", "gs", "r", "ps"],
                     help="managed id kind to mint OUT-OF-ARRAY via this CLI: 'adr' (ADR files are "
                          "raw-written one-per-id under decisions/), the calibration-overlay kinds "
                          "'cc'/'cn'/'gs' (CC-/CN-/GS- ids for critic-calibration-log.json — minted "
-                         "here, then carried in the append payload), and 'r' (R-N risk ids for "
+                         "here, then carried in the append payload), 'r' (R-N risk ids for "
                          "risk-register.json — pre-minted so the appender can cross-reference the new "
-                         "risk; replaces the collision-prone model-minted 'next R-NN'). sc/ship/slice "
+                         "risk; replaces the collision-prone model-minted 'next R-NN'), and 'ps' "
+                         "(PS-NNN product-scope items — product_scope.py mints them in its OWN lock, "
+                         "so this is the hand-authored pre-mint path; slice-068/ADR-067). sc/ship/slice "
                          "are minted in-lock "
                          "by their own append/claim path and must NEVER be alloc'd here (slice-019/CR2: "
                          "alloc --kind slice would burn a slice number out of band)")

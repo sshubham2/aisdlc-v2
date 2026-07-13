@@ -10,14 +10,24 @@ allowed-tools: Read, Grep, Glob, Bash, Write, AskUserQuestion, Skill
 
 First step of the per-slice loop. A slice = one thin vertical cut, ≤1 day of AI work, big enough to retire risk or
 ship user-visible value. You pick a candidate from the unified backlog, claim it, scaffold it, then auto-advance to
-`/risk-spike`. **Candidate selection comes from `<vault>/candidates.json`** (pre-ranked, pre-materialized from
-risks / diagnose findings / reflections / concept scope) — you do NOT re-run a multi-source fan-out.
+`/risk-spike`. **Candidate selection comes from `<vault>/candidates.json`** (pre-ranked; materialized from
+risks / diagnose findings / reflections, and — once `/slice-candidates --product` has run — the **product's own
+scope**) — you do NOT re-run a multi-source fan-out.
+
+**`/slice` is a READ-ONLY pick path** (slice-068 / [[ADR-067]]). It takes no lock, mutates no vault file, and
+cannot be bricked by a parallel writer. Product scope is materialized in the ONCE-ACT — `/slice-candidates
+--product` — not by a per-pick reconciler tick.
 
 ## Live state — injected
 
 Top live candidates (ranked; blocked-on-spike flagged):
 ```!
 $PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5
+```
+
+Product-scope presence (read-only backstop — slice-068):
+```!
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" census --json
 ```
 
 Stranded-slice consult (R-26 — never define a slice on top of genuinely-stranded prior work):
@@ -29,6 +39,19 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/stranded_slice_audit.py" --repo-root 
   resume via `/commit-slice`, continue its `/build-slice`, or proceed anyway (always offered).
 - `status: clean` with informational entries → one-line note, **proceed** (parallel slices are normal).
 - exit 2 (git unavailable) → surface stderr and continue (fail-visible, never silent).
+
+**Product-scope NOTICE (read-only; never blocks the pick).** If the census reports `counts.PRODUCT == 0`, print
+ONE terse line and proceed:
+
+> The product's own scope is not represented in this backlog — every candidate is exhaust (risks, findings,
+> reflections) or hand-typed. Run `/discover` (if `concept.json` is missing), then `/slice-candidates --product`.
+
+Why this notice exists and is **not** suppressible: across two real vaults, PRODUCT-sourced candidates were **0 of
+145 ever minted** — one product's orchestrator, the thing it exists to be, was never a candidate at all, so eleven
+slices went to peripheral hardening while the core app stayed unbuilt. An opt-out switch here would institutionalize
+"the product's scope is absent and nobody is told," which is precisely the state that produced that number. It is a
+BACKSTOP — the primary path is `/discover`'s hand-off. Print it once, only when `PRODUCT == 0`, and never let it
+block a pick (a non-zero exit from the census is advisory: note it and proceed).
 
 ## Step 1 — recommend (don't just list)
 The injected candidates are already scored (priority.score, effort, blast_radius, blocked-on-spike) and carry a
