@@ -54,6 +54,36 @@
     }],
     "pick_log": []
   },
+  "product-scope": {
+    "_schema": "aisdlc/product-scope@1",
+    "_note": "The PRODUCT's own scope, decomposed ONCE from concept.json and persisted (slice-068 / [[ADR-067]]). Written by /slice-candidates --product via scripts/lib/product_scope.py; NEVER hand-authored by a model. Item ids are minted by the RECEIVER (id_allocator, in-lock): spike B1 measured only 22% cross-run key agreement between two BLIND decompositions of the SAME concept -- 5 of 7 semantically-identical items drifted their key, including the orchestrator itself -- so a model-emitted key can never be a cross-run identity, and a key-match dedup would re-mint 78% of the backlog on every run. depends_on carries PS ids (the model's run-local labels are rewritten inside the lock; decomposition_label keeps the original for traceability). materialize mints one candidate per item, deduped on candidate provenance source:[{type:'product-scope', ref:'PS-NNN'}] across live u archive -- the archive half is load-bearing, or a shipped item is resurrected forever. persist is CREATE-ONLY; revise is the deliberate scope correction (preserves already-minted ids BY id, never re-mints). Every item MUST carry >=1 blocking unproven assumption: /risk-spike step-0 SKIPS a candidate that has none, and a product capability is unproven by definition.",
+    "project": "<name>",
+    "concept_sha256": "<sha256 of the concept.json this decomposition was taken from>",
+    "decomposed_at": "<ts>",
+    "counters": { "ps": 2 },
+    "items": [
+      {
+        "id": "PS-001", "decomposition_label": "payments-core", "title": "build-payments-core",
+        "description": "The deterministic payment-capture core every other surface depends on.",
+        "user_visible_outcome": "A real test payment is captured and persisted.",
+        "depends_on": [],
+        "assumptions": [
+          { "id": "A1", "statement": "Card capture can be driven headlessly against the provider's test mode.", "risk_ref": null, "blocking": true, "spike_status": "unproven", "spike_ref": null, "spike_evidence": null, "fallback": null }
+        ],
+        "verification_plan": "Drive a real test-mode capture end-to-end; assert the row lands."
+      },
+      {
+        "id": "PS-002", "decomposition_label": "seller-dashboard", "title": "build-seller-dashboard",
+        "description": "The seller's live view of order + payment state.",
+        "user_visible_outcome": "A seller sees an order flip to PAID without refreshing.",
+        "depends_on": ["PS-001"],
+        "assumptions": [
+          { "id": "A1", "statement": "Payment state can be pushed to the browser within the latency the seller needs.", "risk_ref": null, "blocking": true, "spike_status": "unproven", "spike_ref": null, "spike_evidence": null, "fallback": null }
+        ],
+        "verification_plan": "A real seller watches a real test payment flip the order live."
+      }
+    ]
+  },
   "adr": {
     "_schema": "aisdlc/adr@1",
     "_note": "Append-only: to change a decision, write a NEW ADR with `supersedes` and set the old one's `superseded_by`. Never edit the body.",

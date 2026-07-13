@@ -1,0 +1,171 @@
+{
+  "candidates": [
+    {
+      "title": "bounded-chainer-drain-and-lower-only-detection-followon",
+      "status": "candidate",
+      "progress": "not-started",
+      "slice": null,
+      "claimed_by": null,
+      "started_at": null,
+      "source": [
+        {
+          "type": "slice",
+          "ref": "slice-008"
+        },
+        {
+          "type": "adr",
+          "ref": "ADR-016"
+        }
+      ],
+      "description": "Reopen ADR-016's NO-GO on the bounded cross-member ChainerBackend drain AND close the lower-only survivor blind spot (both reopen TOGETHER per ADR-016 M2) IF R4 is falsified: a reachable >=2-distinct-secure-store chain appears (macOS multi-keychain / Linux multi-collection = two instances of the SAME allowlisted-secure class at DISTINCT stores), OR a future keyring exposes a portable per-member delete / a fan-out delete. Implement a bounded single-pass drain over the enumerable .backends (terminates by construction) + read-back lower members.",
+      "rationale": "ADR-016 recorded NO-GO grounded on R4 (near-unreachability) + Parnas information-hiding/YAGNI, reversibility cheap. This is the pre-registered reopen trigger so the deferral is traceable, not silent. slice-008 AC1 confirmed the real chainer does NOT fan-out its delete, so today the drain has ~zero real callers.",
+      "dependencies": [],
+      "priority": {
+        "score": 2,
+        "effort": "M",
+        "blast_radius": "credentials.py clear/delete path"
+      },
+      "assumptions": [],
+      "id": "SC-011"
+    },
+    {
+      "title": "harden-cred-lifecycle-ci-runner-pinning-and-dedup",
+      "status": "candidate",
+      "progress": "not-started",
+      "slice": null,
+      "claimed_by": null,
+      "started_at": null,
+      "source": [
+        {
+          "type": "discovered",
+          "ref": "slice-010"
+        },
+        {
+          "type": "deferred",
+          "ref": "slice-010"
+        }
+      ],
+      "description": "Harden .github/workflows/cred-lifecycle-real.yml: (1) pin runs-on: ubuntu-latest to a currently-GA image (ubuntu-24.04) for reproducibility parity with the macos-15 pin M1 already applied; (2) suppress the duplicate co-resident run -- a first push to the default branch auto-fires an on:push:paths run co-resident with workflow_dispatch (empirically confirmed at slice-010: push run 29228636585 + dispatch run 29228832579 both ran the macOS leg = double macOS billing). Add a concurrency: group (cancel-in-progress) keyed on the workflow+ref, and/or scope on:push:branches, so only one run per ref survives.",
+      "rationale": "slice-010 pinned only macOS (M1); ubuntu-latest stays on a moving label (expert-lens deferred). And the push/dispatch duplication doubles 10x-billed macOS minutes on every real-runner proof. Both are cheap in-scope CI-harness edits that make the next backend-adapter CI proof (Ollama/Codex/Antigravity) reproducible + cheaper.",
+      "dependencies": [],
+      "priority": {
+        "score": 4,
+        "effort": "S",
+        "blast_radius": ".github/workflows/cred-lifecycle-real.yml (CI-only; no product code)"
+      },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "A concurrency group with cancel-in-progress cancels the co-resident push run without cancelling the intended dispatch (order-independent), and ubuntu-24.04 carries the same gnome-keyring/setcap incantations as ubuntu-latest did.",
+          "risk_ref": null,
+          "blocking": false,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": "If concurrency cancels the wrong run, scope on:push:branches to exclude the integration branch instead."
+        }
+      ],
+      "verification_plan": "Dispatch once on a fresh push; confirm exactly ONE run per ref survives (the dispatch), both legs green on the pinned images, AC-style executed-count assertion still HARD-REDs a vacuous run.",
+      "history": [
+        {
+          "event": "created",
+          "by": "reflect",
+          "at": "2026-07-13T06:40:00Z"
+        }
+      ],
+      "id": "SC-013"
+    },
+    {
+      "title": "wire-rebase-freshness-guard-into-ci-advisory-or-git-hook",
+      "status": "candidate",
+      "progress": null,
+      "slice": null,
+      "claimed_by": null,
+      "started_at": null,
+      "source": "reflect",
+      "description": "The out_of_scope follow-on from slice-011: optionally wire tools/rebase_freshness_check.py into the aivlc repo's OWN infra -- an advisory CI job and/or a local git pre-* hook -- so the freshness warning fires automatically before /validate-slice, WITHOUT touching the READ-ONLY aisdlc-v2 pipeline (forbidden by CLAUDE.md). MUST handle shallow clones (critique m2): a CI --depth=1 checkout truncates history and would flip a genuinely-stale branch to a silent UNKNOWN (fail-open no-warn, never a false STALE) -- run on a full clone or `git fetch --unshallow` first. Small polish to fold in from /code-review: CR1 -- ADR-017's 'even a bug cannot emit non-zero' is overstated because argparse.parse_args() exits 2 on a typo'd flag BEFORE main()'s catch-all (wrap parse_args, or narrow the ADR wording); CR2 -- add a direct test for the defensive rc>1/rc128 ancestry branch (currently unreachable with a verified ref, untested).",
+      "rationale": "mission-brief out_of_scope explicitly names 'optional git-hook / CI-advisory wiring inside the aivlc repo's own infra (possible follow-on, not this cut)'. The guard SHIPPED as a manual dev tool (slice-011) but nothing auto-invokes it yet; auto-wiring makes the stale-base discovery automatic rather than opt-in. Low urgency -- the manual tool already retires the R-14 process risk; this is convenience + the two advisory code-review minors.",
+      "dependencies": [
+        "slice-011"
+      ],
+      "priority": "low",
+      "assumptions": [],
+      "id": "SC-014"
+    }
+  ],
+  "counters": {
+    "sc": 14,
+    "adr": 17,
+    "slice": 11
+  },
+  "_plugin_version": "2.38.2",
+  "updated": "2026-07-13T05:49:13Z",
+  "pick_log": [
+    {
+      "candidate": "SC-001",
+      "slice": "slice-001",
+      "picked_by": "Shubhendu Shubham s2.shubh2@gmail.com",
+      "at": "2026-07-10T18:15:51Z"
+    },
+    {
+      "candidate": "SC-002",
+      "slice": "slice-002",
+      "picked_by": "Shubhendu Shubham s2.shubh2@gmail.com",
+      "at": "2026-07-11T05:29:16Z"
+    },
+    {
+      "candidate": "SC-004",
+      "slice": "slice-003",
+      "picked_by": "Shubhendu Shubham s2.shubh2@gmail.com",
+      "at": "2026-07-11T09:52:41Z"
+    },
+    {
+      "candidate": "SC-003",
+      "slice": "slice-004",
+      "picked_by": "Shubhendu Shubham s2.shubh2@gmail.com",
+      "at": "2026-07-11T15:23:29Z"
+    },
+    {
+      "candidate": "SC-006",
+      "slice": "slice-005",
+      "picked_by": "Shubhendu Shubham s2.shubh2@gmail.com",
+      "at": "2026-07-11T19:52:01Z"
+    },
+    {
+      "candidate": "SC-005",
+      "slice": "slice-006",
+      "picked_by": "Shubhendu Shubham s2.shubh2@gmail.com",
+      "at": "2026-07-12T06:16:53Z"
+    },
+    {
+      "candidate": "SC-007",
+      "slice": "slice-007",
+      "picked_by": "Shubhendu Shubham s2.shubh2@gmail.com",
+      "at": "2026-07-12T13:46:25Z"
+    },
+    {
+      "candidate": "SC-008",
+      "slice": "slice-008",
+      "picked_by": "Shubhendu Shubham s2.shubh2@gmail.com",
+      "at": "2026-07-12T18:15:37Z"
+    },
+    {
+      "candidate": "SC-009",
+      "slice": "slice-009",
+      "picked_by": "Shubhendu Shubham s2.shubh2@gmail.com",
+      "at": "2026-07-12T18:22:54Z"
+    },
+    {
+      "candidate": "SC-010",
+      "slice": "slice-010",
+      "picked_by": "Shubhendu Shubham s2.shubh2@gmail.com",
+      "at": "2026-07-13T05:08:54Z"
+    },
+    {
+      "candidate": "SC-012",
+      "slice": "slice-011",
+      "picked_by": "Shubhendu Shubham s2.shubh2@gmail.com",
+      "at": "2026-07-13T05:49:13Z"
+    }
+  ]
+}

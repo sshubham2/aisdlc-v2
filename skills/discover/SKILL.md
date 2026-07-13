@@ -142,6 +142,24 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
 
 Candidate `id`: OMIT it — the allocator mints `SC-NNN` in-lock (`vault_edit append` on `candidates.json`/`candidates` rejects a caller-supplied id and fills it). `status: "candidate"`, `progress: "not-started"`, `source: [{"type":"risk","ref":"<R-NN>"}]`, `retires: ["<R-NN>", …]` (the Step-4 risk→candidate mapping as STRUCTURED data — which HIGH risks this candidate will retire, so `/pulse` can show unretired HIGH risks mechanically instead of mining `notes` prose), `history: [{"event":"created","by":"discover","at":"<ts>"}]`.
 
+> **This ONE candidate is not the product** (slice-068 / [[ADR-067]]). `first_slice_candidate` fires once, at slice
+> 1, and never again — after it, every candidate the pipeline mints is *exhaust* (risks, findings, reflections). A
+> census of two real vaults found **0 PRODUCT-sourced candidates out of 145**: one product's orchestrator, the thing
+> it exists to be, was never minted as a candidate at all, so `/slice` could not pick it and eleven slices went to
+> peripheral hardening while the core app stayed unbuilt. Step 7 wires the fix.
+
+## Step 7 — HAND OFF to `/slice-candidates --product` (materialize the product's scope)
+
+After `concept.json` is written, tell the user — and offer to run — **`/slice-candidates --product`**. It decomposes
+the concept's scope ONCE into candidate-shaped product items (ids minted in-lock by the receiver, never by the
+model), persists them to `<vault>/product-scope.json`, and materializes them as `product-scope`-sourced candidates
+so `/slice` can pick the product at all.
+
+This is a named successor step, the same shape as `/discover`'s other hand-offs — and it is what stops a greenfield
+project reproducing the 0-product-candidate state. Skipping it is allowed (nothing blocks), but say plainly what is
+skipped: the backlog will contain the risks and the one first-slice candidate, and nothing else about the product
+itself.
+
 ### Standard + Heavy — `<vault>/decisions/ADR-NNN.json`
 
 Schema by example: `examples/adr.json`. One ADR per non-trivial tech decision. ADRs are **append-only** — never edit in place; supersede with a new ADR. Mint the ADR number IN-LOCK — `ADR=$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" alloc --file candidates.json --kind adr)` (prints `ADR-NNN`, bumps `counters.adr`) — and name the file `<vault>/decisions/$ADR.json`. Never hand-pick the number. Reference each ADR from `concept.json` `constraints.stack[].adr`.
@@ -169,7 +187,8 @@ One file per actor. Includes role-play walkthrough fields: `first_time_use`, `he
 ## Pipeline position
 
 - **Predecessor**: `/triage` (or `/adopt` for brownfield onboarding)
-- **Successor**: `/user-test` (Standard B2C with UX uncertainty) OR `/slice` (otherwise)
+- **Successor**: **`/slice-candidates --product`** (materialize the product's scope — Step 7; the bootstrap that
+  keeps the backlog from being 100% exhaust), then `/user-test` (Standard B2C with UX uncertainty) OR `/slice`
 - **Auto-advance**: NO — this skill ends with an explicit hand-off prompt; the user chooses the next step
 - **User-input gates**: each of Steps 1–3 (one-topic-at-a-time conversation); Step 5 candidate confirmation (AskUserQuestion)
-- `hands_off_to`: `user-test`, `slice`
+- `hands_off_to`: `slice-candidates`, `user-test`, `slice`

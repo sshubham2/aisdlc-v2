@@ -1,0 +1,61 @@
+{
+  "_schema": "aisdlc/concept@1",
+  "date": "2026-07-10T18:02:35Z",
+  "mode": "standard",
+  "what": "## What\naivlc is a backend-agnostic engine (plus a thin CLI) that runs the AI SDLC pipeline's workflow -- its stage DAG, deterministic Python spine, and adversarial review structure -- driven by pluggable AI backends. Any pipeline stage/role can be routed to a different, configurable backend+model (e.g. design-slice -> Gemini, build-slice -> claude -p, code-review -> Ollama-cloud GLM), so the operator mixes strong models for adversarial reasoning with cheap/local models for mechanical work. Backends: Ollama (local + cloud), claude -p (Claude Code CLI), Claude API, Google Gemini, OpenAI Codex, Google Antigravity (CLI/SDK).\n\nOut of scope (now): full-pipeline parity up front -- start with a minimal core loop and add stages as slices. Deferred but not ruled out: a GUI/dashboard, model hosting/training, and general-agent-framework generality.",
+  "non_goals": [
+    "full-pipeline parity up front (reimplementing all 25+ stages / 12 agents before a usable core ships)"
+  ],
+  "actors": [
+    {
+      "name": "operator",
+      "role": "developer running aivlc to build their own software project; also configures backends",
+      "top_actions": [
+        "drive pipeline stages to build a project",
+        "answer the human-in-the-loop gates (mode, plan approval, Critic triage, candidate pick)",
+        "configure per-stage / per-role backend routing"
+      ],
+      "needs": [
+        "schema-valid artifacts regardless of which backend produced them",
+        "faithful control flow (auto-advance vs halt gates, resume after interruption)",
+        "visibility into what each backend/agent did and its cost"
+      ],
+      "cannot": [
+        "bypass the reality gates (the trust spine is enforced)",
+        "rely on a GUI (v1 is CLI + importable library)",
+        "assume all backends exist on day one (pluggable, added incrementally)"
+      ]
+    }
+  ],
+  "constraints": {
+    "stack": [
+      {
+        "choice": "Python 3.13+ -- vendor the reference MIT spine (scripts/lib) behind a harness-shim; reuse agent personas + JSON schemas",
+        "reversibility": "expensive",
+        "adr": "ADR-001"
+      },
+      {
+        "choice": "Engine + thin CLI (library-first core; CLI frontend also supplies the human-in-the-loop channel)",
+        "reversibility": "expensive",
+        "adr": "ADR-002"
+      },
+      {
+        "choice": "Per-stage / per-role backend routing as a first-class configurable surface",
+        "reversibility": "expensive",
+        "adr": "ADR-003"
+      }
+    ],
+    "infra": "Local cross-platform dev tool (Windows primary), pip-installable. Depends on external backends being present (claude CLI, Ollama server local/cloud, Anthropic / OpenAI / Gemini SDKs, Antigravity CLI/SDK). Vault state lives in the reference's external hash-keyed store.",
+    "team": "Solo developer, Python-fluent; open-ended timeline; incremental vertical slices."
+  },
+  "references": [
+    { "label": "AI SDLC reference pipeline (primary spec, READ-ONLY, MIT, same owner)", "url": "C:/Users/sshub/aisdlc-v2" },
+    { "label": "Ollama API docs (local + cloud)", "url": "https://github.com/ollama/ollama/blob/main/docs/api.md" },
+    { "label": "Anthropic Claude API docs", "url": "https://docs.anthropic.com/en/api" },
+    { "label": "Claude Code headless / SDK (claude -p)", "url": "https://docs.anthropic.com/en/docs/claude-code" },
+    { "label": "Google Gemini API docs", "url": "https://ai.google.dev/gemini-api/docs" },
+    { "label": "OpenAI Codex CLI", "url": "https://github.com/openai/codex" },
+    { "label": "Google Antigravity", "url": "https://antigravity.google" }
+  ],
+  "first_slice_candidate": "SC-001"
+}

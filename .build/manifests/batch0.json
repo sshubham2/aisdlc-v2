@@ -330,6 +330,7 @@
       }
     ],
     "hands_off_to": [
+      "slice-candidates",
       "user-test",
       "slice"
     ],

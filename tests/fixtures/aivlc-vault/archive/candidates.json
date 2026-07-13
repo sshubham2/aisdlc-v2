@@ -1,0 +1,752 @@
+{
+  "candidates": [
+    {
+      "title": "walking-skeleton-claude-p",
+      "status": "shipped",
+      "progress": "design",
+      "slice": "slice-001",
+      "claimed_by": {
+        "git_user": "Shubhendu Shubham",
+        "git_email": "s2.shubh2@gmail.com"
+      },
+      "started_at": "2026-07-10T18:15:51Z",
+      "source": [
+        {
+          "type": "risk",
+          "ref": "R-3"
+        },
+        {
+          "type": "risk",
+          "ref": "R-2"
+        }
+      ],
+      "retires": [
+        "R-3"
+      ],
+      "description": "Walking skeleton: a run_agent(persona, inputs, schema) call that invokes claude -p headlessly as a subprocess, coerces the agent's output to a target JSON schema through a bounded validate->repair loop, and persists the resulting artifact into a vault via the vendored deterministic spine (vault_edit). One backend, one stage; no design tournament, Critic, or agentic tool-loop yet.",
+      "rationale": "Exercises the riskiest dependency (the backend/model) and produces a touchable artifact (a schema-valid JSON file in a vault). Retires R-3 (structured-output + repair layer) and de-risks R-2 (first backend-adapter contract) and R-1 (strong-model path). Keeps the first cut under ~20% of scope per the no-full-parity-up-front non-goal (R-7). The run_agent signature is deliberately role/stage-aware from the start so per-stage backend routing (the near-term follow-on cut, ADR-003) plugs in without reworking the seam.",
+      "dependencies": [],
+      "priority": {
+        "score": 9,
+        "effort": "M",
+        "blast_radius": "backend-adapter, structured-output, vault-io"
+      },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "A Python adapter can invoke claude -p headlessly as a subprocess and capture its completion deterministically enough (persona as system prompt, inputs injected, model / output-format / flags controllable).",
+          "risk_ref": "R-2",
+          "blocking": true,
+          "spike_status": "proven",
+          "spike_ref": "spike-claude-p-seam",
+          "spike_evidence": "claude -p v2.1.206 invoked headlessly, rc=0, valid json envelope, no stderr",
+          "fallback": "Fall back to the Claude API (Anthropic SDK) as backend #1 if the CLI contract proves too unstable.",
+          "spike_verdict": "conditional",
+          "spike_constraints": [
+            "invoke with --permission-mode dontAsk (not --dangerously-skip-permissions)",
+            "pass stdin=DEVNULL explicitly, never inherit",
+            "enforce a hard wall-clock timeout with process kill",
+            "pin a full model id for reproducibility",
+            "verify the Windows/PowerShell subprocess path"
+          ]
+        },
+        {
+          "id": "A2",
+          "statement": "The claude -p output can be coerced to a target JSON schema through a bounded validate->repair loop reliably enough to write a valid artifact within a small retry budget.",
+          "risk_ref": "R-3",
+          "blocking": true,
+          "spike_status": "proven",
+          "spike_ref": "spike-claude-p-seam",
+          "spike_evidence": "first-try valid JSON, 0 repairs used; repair path not yet stress-tested",
+          "fallback": "Constrain output via --output-format json and/or a stricter repair prompt; cap retries and surface a hard failure.",
+          "spike_verdict": "conditional",
+          "spike_constraints": [
+            "unwrap the --output-format json envelope (validate result/structured_output, not raw stdout)",
+            "keep validate->repair loop as source of truth; --json-schema is a hint only",
+            "add a truncation-detection branch for large payloads (~8-10k chars)"
+          ]
+        },
+        {
+          "id": "A3",
+          "statement": "The vendored vault write path (vault_edit shim) runs correctly outside the Claude Code harness to persist the artifact.",
+          "risk_ref": "R-5",
+          "blocking": true,
+          "spike_status": "proven",
+          "spike_ref": "spike-claude-p-seam",
+          "spike_evidence": "vendored vault_edit wrote + read back an artifact to a scratch vault via AI_SDLC_VAULT_ROOT",
+          "fallback": "Thin reimplementation of the minimal write path if the vendored shim proves leaky.",
+          "spike_verdict": "go",
+          "spike_constraints": []
+        }
+      ],
+      "verification_plan": "From Python, invoke claude -p with a real persona + target schema; a schema-valid artifact lands in a scratch vault via the vendored vault_edit; a deliberately malformed first output is repaired within the retry budget; a hard failure surfaces cleanly when the budget is exhausted.",
+      "history": [
+        {
+          "event": "created",
+          "by": "discover",
+          "at": "2026-07-10T18:02:35Z"
+        },
+        {
+          "event": "reserved",
+          "by": "slice",
+          "at": "2026-07-10T18:07:28Z"
+        },
+        {
+          "event": "picked",
+          "by": "slice",
+          "at": "2026-07-10T18:15:51Z",
+          "ref": "slice-001"
+        },
+        {
+          "event": "spike-passed",
+          "by": "risk-spike",
+          "at": "2026-07-10T18:23:29Z"
+        },
+        {
+          "event": "shipped",
+          "by": "commit-slice",
+          "at": "2026-07-11T05:11:00Z",
+          "ref": "slice-001"
+        }
+      ],
+      "id": "SC-001"
+    },
+    {
+      "title": "second-backend-claude-api",
+      "status": "shipped",
+      "progress": "design",
+      "slice": "slice-002",
+      "claimed_by": {
+        "git_user": "Shubhendu Shubham",
+        "git_email": "s2.shubh2@gmail.com"
+      },
+      "started_at": "2026-07-11T05:29:16Z",
+      "source": [
+        {
+          "type": "risk",
+          "ref": "R-2"
+        },
+        {
+          "type": "risk",
+          "ref": "R-9"
+        },
+        {
+          "type": "risk",
+          "ref": "R-10"
+        }
+      ],
+      "description": "Add a 2nd backend adapter (Claude Messages API / Anthropic SDK) behind the SAME run_agent seam, letting the BackendAdapter interface EMERGE from two concrete implementations (ADR-002 / R-7) instead of being guessed from one. The API backend exposes an explicit max_tokens, so it can force a real max-output truncation and CONFIRM the M-add-1 truncation-signal branch (R-10 / code-review CR2) that claude -p v2.1.207 could not.",
+      "rationale": "De-risks R-2 (the backend seam over 5 heterogeneous runtimes -- the highest-scored risk) by defining the interface against a 2nd concrete backend per ADR-002; retires R-10 by confirming the truncation early-abort empirically; keeps the pluggable-backend architecture honest before adding breadth (R-7).",
+      "dependencies": [
+        "SC-001"
+      ],
+      "priority": {
+        "score": 8,
+        "effort": "M",
+        "blast_radius": "backend-adapter, config, structured-output"
+      },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "The Claude Messages API (Anthropic SDK) drives run_agent behind the same seam and returns a completion coercible to the target schema, with an explicit max_tokens usable to force a real truncation.",
+          "risk_ref": "R-2",
+          "blocking": true,
+          "spike_status": "proven",
+          "spike_ref": "spike-claude-api-backend",
+          "spike_evidence": "GO on real account: claude-haiku-4-5-20251001; prompted-JSON validates + max_tokens=16 -> stop_reason=='max_tokens'. reality_proxy=real-account.",
+          "fallback": "Reuse the claude -p adapter contract; if the SDK response shape differs materially, adjust the emerging BackendAdapter interface rather than forcing the API into the CLI envelope shape.",
+          "spike_verdict": "go",
+          "spike_constraints": []
+        }
+      ],
+      "verification_plan": "Invoke run_agent through the Claude API backend against a real key; a schema-valid artifact persists + reads back; a small max_tokens forces a real truncation and the M-add-1 branch fires (TruncatedOutput) from the OBSERVED envelope signal.",
+      "history": [
+        {
+          "event": "created",
+          "by": "reflect",
+          "at": "2026-07-11T10:45:00Z",
+          "ref": "slice-001"
+        },
+        {
+          "event": "reserved",
+          "by": "slice",
+          "at": "2026-07-11T05:24:54Z"
+        },
+        {
+          "event": "picked",
+          "by": "slice",
+          "at": "2026-07-11T05:29:16Z",
+          "ref": "slice-002"
+        },
+        {
+          "event": "spike-passed",
+          "by": "risk-spike",
+          "at": "2026-07-11T06:08:16Z"
+        }
+      ],
+      "id": "SC-002"
+    },
+    {
+      "title": "secure-api-key-storage",
+      "status": "shipped",
+      "progress": "design",
+      "slice": "slice-003",
+      "claimed_by": {
+        "git_user": "Shubhendu Shubham",
+        "git_email": "s2.shubh2@gmail.com"
+      },
+      "started_at": "2026-07-11T09:52:41Z",
+      "source": [
+        {
+          "type": "user-request",
+          "ref": "slice-002"
+        },
+        {
+          "type": "adr",
+          "ref": "ADR-005"
+        }
+      ],
+      "description": "Secure interactive API-key entry + encrypted storage for api-key backends. Prompt with getpass (no echo) and store/retrieve the key ENCRYPTED via the OS credential manager (keyring: Windows Credential Manager / macOS Keychain / Linux Secret Service), plugging a keyring provider into the resolve_api_key() precedence chain built in slice-002 WITHOUT touching run_agent or the adapter. Replaces the plaintext .env dev-only fallback as the product mechanism.",
+      "rationale": "The owner explicitly requested secure prompting + encrypted storage; slice-002 (ADR-005) shipped the resolve_api_key seam and deferred the keyring provider here to keep the backend-seam slice shippable. Additive behind the existing seam -- cheap reversibility.",
+      "dependencies": [
+        "SC-002"
+      ],
+      "priority": {
+        "score": 5,
+        "effort": "S",
+        "blast_radius": "config, backend-adapter, credentials"
+      },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "keyring reads/writes the OS credential manager on the target platform(s) well enough for the app's setup flow (Windows Credential Manager confirmed first; macOS/Linux best-effort).",
+          "risk_ref": null,
+          "blocking": false,
+          "spike_status": "proven",
+          "spike_ref": "spike-keyring-credential-manager",
+          "spike_evidence": "keyring 25.7.0 WinVaultKeyring; round-trip GO (set/get/delete, missing-key get None); rotation CONDITIONAL: get returns latest but a duplicate CredMgr entry appeared on re-set (keyring 545) -> design must delete-before-set. reality_proxy real-device.",
+          "fallback": "Encrypted file with a user passphrase (cryptography.Fernet), or continue env/config sourcing via the existing resolve_api_key seam.",
+          "spike_verdict": "conditional",
+          "spike_constraints": [
+            "delete-before-set on rotation: delete_password before set_password so re-run/rotation never leaves a stale duplicate secret in the OS vault (keyring issue 545, reproduced on this Windows build).",
+            "runtime backend-class assertion before writing: require a known-secure OS credential backend (WinVaultKeyring on Windows), never fail.Keyring or a keyrings.alt plaintext backend; aivlc must never depend on keyrings.alt.",
+            "pass a stable non-empty account/username to all keyring calls (empty username is deprecated in keyring 25.x).",
+            "test AC5 keyring-unavailable fallback against a genuine NoKeyringError / fail.Keyring condition, not assumed."
+          ]
+        }
+      ],
+      "verification_plan": "getpass captures a key without terminal echo; keyring.set_password/get_password round-trips on the dev platform; resolve_api_key prefers keyring then falls back to env/config; the key never appears in any log sink.",
+      "history": [
+        {
+          "event": "created",
+          "by": "design-slice",
+          "at": "2026-07-11T06:08:16Z",
+          "ref": "slice-002"
+        },
+        {
+          "event": "reserved",
+          "by": "slice",
+          "at": "2026-07-11T09:49:46Z"
+        },
+        {
+          "event": "picked",
+          "by": "slice",
+          "at": "2026-07-11T09:52:41Z",
+          "ref": "slice-003"
+        },
+        {
+          "event": "spike-passed",
+          "by": "risk-spike",
+          "at": "2026-07-11T10:03:49Z"
+        }
+      ],
+      "id": "SC-004"
+    },
+    {
+      "title": "harden-run-agent-robustness",
+      "status": "shipped",
+      "progress": "design",
+      "slice": "slice-004",
+      "claimed_by": {
+        "git_user": "Shubhendu Shubham",
+        "git_email": "s2.shubh2@gmail.com"
+      },
+      "started_at": "2026-07-11T15:23:29Z",
+      "source": [
+        {
+          "type": "code-review",
+          "ref": "CR3"
+        },
+        {
+          "type": "code-review",
+          "ref": "CR5"
+        }
+      ],
+      "description": "Two advisory code-review hardenings from slice-001. CR3: tighten structured_output.parse_json so a first-balanced-object extraction from a MALFORMED outer wrapper (a complete nested object inside an unterminated wrapper) is rejected as ambiguous and fed to the repair loop, not persisted as a semantically-wrong-but-schema-valid artifact. CR5: wrap Popen's OSError (e.g. WinError 193 launching a .ps1 set as claude_bin) in a typed BackendInvocationError and exercise a synthetic .cmd/.ps1 shim launch, closing the m2 shim-launch claim.",
+      "rationale": "Closes the two narrow correctness/robustness gaps code-review flagged on slice-001 (both minor, neither breaks an AC). Keeps the typed-error model TOTAL (every backend-launch failure -> typed) and AC4's 'no silent bad write' airtight against the nested-fragment edge.",
+      "dependencies": [
+        "SC-001"
+      ],
+      "priority": {
+        "score": 4,
+        "effort": "S",
+        "blast_radius": "structured-output, backend-adapter"
+      },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "parse_json can require the decode to consume to end (reject trailing non-whitespace / nested-only extraction) without breaking the m4 adversarial framings already covered.",
+          "risk_ref": null,
+          "blocking": false,
+          "spike_status": "proven",
+          "spike_ref": "slice-001-tests",
+          "spike_evidence": "The 5 m4 adversarial framings all place the object at top level after fence-strip, so requiring a full-consume keeps them green.",
+          "fallback": "Restrict the balanced-object scan to offset 0 after fence-stripping."
+        }
+      ],
+      "verification_plan": "Adversarial parse test: a malformed outer wrapper with a valid nested object -> ambiguous -> repair loop (not persisted). Shim launch: a synthetic claude.cmd + claude.ps1 through cp._run_claude -> argv intact; a .ps1 that cannot exec -> typed BackendInvocationError (not raw OSError).",
+      "history": [
+        {
+          "event": "created",
+          "by": "reflect",
+          "at": "2026-07-11T10:45:00Z",
+          "ref": "slice-001"
+        },
+        {
+          "event": "reserved",
+          "by": "slice",
+          "at": "2026-07-11T15:20:06Z"
+        },
+        {
+          "event": "picked",
+          "by": "slice",
+          "at": "2026-07-11T15:23:29Z",
+          "ref": "slice-004"
+        },
+        {
+          "event": "spike-skipped",
+          "reason": "no unproven blocking assumptions (A1 is non-blocking and already proven via slice-001-tests)",
+          "by": "risk-spike",
+          "at": "2026-07-11T15:25:53Z"
+        }
+      ],
+      "id": "SC-003"
+    },
+    {
+      "title": "safe-cmd-argv-escaping",
+      "status": "shipped",
+      "progress": "design",
+      "slice": "slice-005",
+      "claimed_by": {
+        "git_user": "Shubhendu Shubham",
+        "git_email": "s2.shubh2@gmail.com"
+      },
+      "started_at": "2026-07-11T19:52:01Z",
+      "source": [
+        {
+          "type": "code-review",
+          "ref": "slice-004-M3"
+        },
+        {
+          "type": "deferred",
+          "ref": "slice-004"
+        }
+      ],
+      "description": "Replace slice-004/ADR-009's fail-closed .cmd/.bat metacharacter guard with a real fix: per-argument escaping (or a cmd.exe-safe launch wrapper / resolve-to-real-.exe launch that bypasses cmd re-tokenization) so a metacharacter-bearing prompt runs BYTE-INTACT in production when `claude` resolves to claude.cmd (the default npm Windows install), instead of being rejected. Addresses R-11 (command injection / BatBadBut / CVE-2024-24576).",
+      "rationale": "The in-slice guard neutralizes the RCE but fails CLOSED -- legitimate prompts carrying & | < > ^ etc. on the .cmd path are refused. This restores full prompt fidelity safely (escape rather than reject) and may narrow ADR-009's deliberately-broad metachar set once real escaping exists. Scoped OUT of slice-004 (a minimal hardening slice) by TRI-1.",
+      "dependencies": [
+        "SC-003"
+      ],
+      "priority": {
+        "score": 6,
+        "effort": "M",
+        "blast_radius": "backend-adapter (claude_p launch boundary), Windows .cmd path"
+      },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "A reliable cmd.exe-safe escaping (or a direct-exec / resolved-.exe launch bypassing cmd re-tokenization) exists for .cmd/.bat argv on Windows, preserving arbitrary metacharacter-bearing prompts byte-intact without reintroducing injection.",
+          "risk_ref": "R-11",
+          "blocking": true,
+          "spike_status": "proven",
+          "spike_ref": "spike-cmd-safe-launch",
+          "spike_evidence": "resolve-past-shim direct-exec: 12/12 byte-intact (incl. newline + JSON), 0 injection; naive .cmd: 5/12 byte-intact. cmd.exe escaping ruled out (newlines unconditionally unescapable). Corroborated by field-recon (Rust/Node/BatBadBut). reality: local-real-data.",
+          "fallback": "Resolve claude to its real .exe (skip the .cmd shim) at config time, or keep the fail-closed guard and document the limitation.",
+          "spike_verdict": "conditional",
+          "spike_constraints": [
+            "The safe launch MUST bypass cmd.exe: resolve the .cmd/.bat launcher to its underlying NATIVE executable and launch that directly via subprocess.Popen with a list argv (NO shell=True). Empirical: naive .cmd launch preserved only 5/12 metacharacter prompts byte-intact (& | < > ^ and any newline are mangled by cmd.exe); resolve-past-shim direct-exec preserved 12/12 (incl. newline + multi-line JSON) with 0/4 injections. Escaping is authoritatively dead (Rust CVE-2024-24576 returns InvalidInput; Node core: 'sometimes impossible to escape'); newlines are UNCONDITIONALLY unescapable through cmd.exe, and aivlc's argv[2] is always multi-line JSON.",
+            "Resolve the native target via the package install layout / package.json `bin` (e.g. node_modules/@anthropic-ai/claude-code/cli.js under the npm global prefix) or a robust resolver -- NOT by regex-parsing the .cmd shim TEXT (npm cmd-shim format has drifted across versions; shim-text parsing is fragile).",
+            "Prefer a native claude.exe when present (the 2026 native-installer default -- and the case on the current dev box) and only fall through to the shim-bypass for a genuine .cmd/.bat (legacy npm compat). Do NOT trust a single shutil.which('claude') to prefer .exe over .cmd -- enumerate candidates explicitly (Python 3.12 PATHEXT/which churn, cpython gh-127001).",
+            "If no launchable native target can be resolved, the launch MUST fail CLOSED with a typed BackendInvocationError (returncode=None) -- NEVER fall back to launching the .cmd/.bat directly (its injection-safety in the probe was incidental to Python quoting args-with-spaces, not robust)."
+          ]
+        }
+      ],
+      "verification_plan": "On Windows with claude installed as claude.cmd: a prompt containing each of & | < > ^ \" % ( ) ! launches successfully AND arrives at the child byte-intact (echo-shim round-trip), with NO injected command executed (marker-file negative check, as in slice-004's M3 test). The fail-closed guard is removed/narrowed only after this passes.",
+      "history": [
+        {
+          "event": "created",
+          "by": "build-slice",
+          "at": "2026-07-11T16:57:29Z",
+          "ref": "slice-004"
+        },
+        {
+          "event": "reserved",
+          "by": "slice",
+          "at": "2026-07-11T19:47:18Z"
+        },
+        {
+          "event": "picked",
+          "by": "slice",
+          "at": "2026-07-11T19:52:01Z",
+          "ref": "slice-005"
+        },
+        {
+          "event": "spike-passed",
+          "by": "risk-spike",
+          "at": "2026-07-11T20:08:32Z",
+          "note": "A1 CONDITIONAL via spike-cmd-safe-launch (bypass mechanism)"
+        }
+      ],
+      "id": "SC-006"
+    },
+    {
+      "title": "credential-lifecycle-ux",
+      "status": "shipped",
+      "progress": "design",
+      "slice": "slice-006",
+      "claimed_by": {
+        "git_user": "Shubhendu Shubham",
+        "git_email": "s2.shubh2@gmail.com"
+      },
+      "started_at": "2026-07-12T06:16:53Z",
+      "source": [
+        {
+          "type": "deferred",
+          "ref": "slice-003"
+        },
+        {
+          "type": "discovered",
+          "ref": "slice-003"
+        }
+      ],
+      "description": "Add credential rotation / deletion / list UX on top of the slice-003 keyring store: an in-product way to clear or replace a stale/wrong stored key (m8: a present-but-wrong key silently shadows env and only surfaces as a later 401), plus first-class macOS Keychain / Linux SecretService verification (slice-003 shipped Windows-confirmed + best-effort; the ChainerBackend discovery shows real backends can chain, so the chainer-aware allowlist needs cross-platform reality contact).",
+      "rationale": "Retires the stale-key trap m8 left only partially recoverable (store-success/miss hints), and turns the best-effort cross-platform keyring support into a proven path. Extends the ADR-007 credential store without touching run_agent or the adapter.",
+      "dependencies": [],
+      "priority": {
+        "score": 4,
+        "effort": "M",
+        "blast_radius": "credentials/keyring, cross-platform"
+      },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "keyring delete_password + a stable-tag list/enumerate give a reliable rotate/clear on WinVault; macOS Keychain / Linux SecretService round-trip like Windows.",
+          "risk_ref": null,
+          "blocking": false,
+          "spike_status": "proven",
+          "spike_ref": "spike-credential-lifecycle",
+          "spike_evidence": "CONDITIONAL: core clear/rotate/delete->get-None all PASS on real WinVault (keyring 25.7.0); get_credential #698 NOT reproduced on 25.7.0; no value-free presence API (presence via get_password is-not-None); second-delete raises PasswordDeleteError (catch for idempotent clear); chainer fan-out + cross-platform unverified (leaf backend on this box) -- see spike-credential-lifecycle.",
+          "fallback": "Windows-only rotate/clear now; macOS/Linux remain best-effort until a real-device spike.",
+          "spike_verdict": "conditional",
+          "spike_constraints": [
+            "clear MUST catch keyring.errors.PasswordDeleteError: on WinVault, delete_password on an already-absent entry RAISES (not a silent no-op), so idempotent clear requires the explicit catch (mirrors slice-003 set's swallow-not-found C1).",
+            "list/status has NO value-free presence API: presence must be derived from `get_password(account) is not None`; the plaintext transits process memory, so 'never exposes the secret' is a UI/print/log-layer guarantee only (never print/log the returned value) -- state this honestly, do not imply the secret is never decrypted.",
+            "Use get_password, NOT get_credential, for the presence check: #698 (get_credential returning another account's credential for a non-existent username) did NOT reproduce on the pinned keyring 25.7.0 (empirically verified here), but get_password is the narrower surface (returns only the string) and avoids the whole Credential-object false-positive class -- prefer it.",
+            "list is status-of-known-names, NOT a portable vault enumeration: keyring exposes no cross-platform 'list all accounts for a service' call, so list must iterate aivlc's own known/config-driven set of api-key env-var names and query per name; name it as such.",
+            "ChainerBackend delete/set fan-out is UNVERIFIED: this spike's box returned a LEAF WinVaultKeyring, so the multi-member-chain case (slice-003 saw a ChainerBackend led by WinVaultKeyring on a real box) could NOT be reality-tested here. delete_password may clear only the top-priority backend while a stale copy survives in a lower member -- design must not assume a single delete clears every chained member; flag for /critique and a future real-chained-box spike.",
+            "Cross-platform NOT reality-tested: macOS Keychain / Linux SecretService were NOT exercised (Windows-only proof, per the slice's scope decision). Keep the allowlist-guarded best-effort degrade for non-Windows backends; do NOT claim cross-platform clear/list proven -- that is deferred to its own candidate."
+          ]
+        }
+      ],
+      "verification_plan": "On each dev platform: store -> rotate (store again) -> get returns the NEW value with no duplicate (extends slice-003 #545 proof); delete -> get returns None -> resolve falls to env; a stale-key scenario is clearable in-product.",
+      "history": [
+        {
+          "event": "created",
+          "by": "reflect",
+          "at": "2026-07-11T14:13:07Z"
+        },
+        {
+          "event": "reserved",
+          "by": "slice",
+          "at": "2026-07-12T06:11:58Z"
+        },
+        {
+          "event": "picked",
+          "by": "slice",
+          "at": "2026-07-12T06:16:53Z",
+          "ref": "slice-006"
+        },
+        {
+          "event": "spike-passed",
+          "by": "risk-spike",
+          "at": "2026-07-12T06:30:13Z"
+        }
+      ],
+      "id": "SC-005"
+    },
+    {
+      "title": "verify-cmd-launch-real-npm-install",
+      "status": "shipped",
+      "progress": "design",
+      "slice": "slice-007",
+      "claimed_by": {
+        "git_user": "Shubhendu Shubham",
+        "git_email": "s2.shubh2@gmail.com"
+      },
+      "started_at": "2026-07-12T13:46:25Z",
+      "source": [
+        {
+          "type": "reflection",
+          "ref": "slice-005"
+        }
+      ],
+      "description": "Add a CI (or /validate-slice on a box with a real npm install) @real_claude .cmd smoke that npm-installs @anthropic-ai/claude-code and confirms slice-005's resolve-past-the-shim launch works against the REAL packaging: the native binary is delivered via a per-platform optionalDependency (@anthropic-ai/claude-code-win32-x64/claude.exe) linked by a postinstall SYMLINK into the sibling package. Closes AC1's deferred real-install residual + covers the bin-absent (--ignore-scripts / bun oven-sh#29399 / failed-postinstall) fail-closed edge that a synthesized fixture cannot surface.",
+      "rationale": "slice-005 verified the SIMPLIFY resolver only against a SYNTHESIZED real-schema layout (reality_proxy=simulator) -- the dev box has the native-installer claude.exe, no npm .cmd install, so the real symlink/postinstall packaging was never contacted. Shrinking-legacy (npm install deprecated Jan 2026) but the only real-install proof of AC1.",
+      "dependencies": [],
+      "priority": {
+        "score": 3,
+        "effort": "S",
+        "blast_radius": "CI, backend-adapter (.cmd launch verification only)"
+      },
+      "assumptions": [],
+      "id": "SC-007",
+      "history": [
+        {
+          "event": "reserved",
+          "by": "slice",
+          "at": "2026-07-12T13:41:42Z"
+        },
+        {
+          "event": "picked",
+          "by": "slice",
+          "at": "2026-07-12T13:46:25Z",
+          "ref": "slice-007"
+        },
+        {
+          "event": "spike-passed",
+          "by": "risk-spike",
+          "at": "2026-07-12T14:00:00Z",
+          "verdict": "conditional",
+          "ref": "spike-real-npm-install"
+        },
+        {
+          "event": "shipped",
+          "by": "commit-slice",
+          "at": "2026-07-12T17:52:19Z",
+          "ref": "slice-007"
+        }
+      ],
+      "spike_ref": "spike-real-npm-install",
+      "spike_verdict": "conditional",
+      "spike_constraints": [
+        "AC1 must assert only a present native .exe reached via package.json bin (is_file + --version rc=0); the real Windows postinstall writes bin/claude.exe as a real file in the main package (is_symlink=false, resolve==literal), so do NOT assert a symlink or a -win32-x64-sibling path.",
+        "AC3 must assert the DOWNSTREAM fail-closed guarantee at invoke_claude_p for both --ignore-scripts and --omit=optional real installs (no injection marker + typed BackendInvocationError via _run_claude CR5 or invoke_claude_p rc/envelope); do NOT assert _npm_shim_native_target returns None or that _run_claude raises -- the main package always ships a present bin/claude.exe placeholder.",
+        "The _npm_shim_native_target->None branch (legacy bin=cli.js / broken package.json) is NOT reachable via a real @anthropic-ai/claude-code install; cover it only with a synthesized layout (slice-005, simulator-grade), out of the real-install @real_claude smoke scope."
+      ]
+    },
+    {
+      "title": "verify-credential-lifecycle-real-macos-linux-and-chained-backends",
+      "status": "shipped",
+      "progress": "design",
+      "slice": "slice-008",
+      "claimed_by": {
+        "git_user": "Shubhendu Shubham",
+        "git_email": "s2.shubh2@gmail.com"
+      },
+      "started_at": "2026-07-12T18:15:37Z",
+      "source": [
+        {
+          "type": "deferred",
+          "ref": "slice-006"
+        },
+        {
+          "type": "discovered",
+          "ref": "slice-006"
+        }
+      ],
+      "description": "Reality-test the slice-006 credential lifecycle (delete/status/clear + resolve-falls-to-env) on the two real backend topologies NOT reachable on this Windows leaf-WinVault box: (a) macOS Keychain / Linux SecretService LIVE delete/status/clear round-trip (slice-006 shipped Windows-confirmed + allowlist-guarded best-effort on non-Windows), and (b) a REAL multi-member ChainerBackend -- does a single delete_password leave a stale copy in a lower member (keyring 25.7.0 delete is top-only per PR #740 while get_password reads all members)? Confirm delete-and-verify DETECTS the survivor and raises (ADR-013), and adjudicate the deferred bounded cross-member drain vs the current refuse+name-the-manual-step.",
+      "rationale": "slice-006 defends the chained-survivor case UNCONDITIONALLY (detect-and-raise, value-free, names the manual OS-manager step) and keeps non-Windows best-effort, but neither the real chain nor macOS/Linux was reality-testable on this leaf-WinVault box (spike-credential-lifecycle constraints 5+6; ADR-013 residual). Closes the two remaining reality-contact gaps and adjudicates the bounded-drain deferral with real evidence.",
+      "dependencies": [],
+      "priority": {
+        "score": 3,
+        "effort": "M",
+        "blast_radius": "credentials/keyring, cross-platform + chained-backend"
+      },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "macOS Keychain / Linux SecretService delete/status/clear round-trip like WinVault (delete->get None, idempotent-absent no-crash, value-free status).",
+          "risk_ref": null,
+          "blocking": false,
+          "spike_status": "unproven",
+          "fallback": "keep the allowlist-guarded best-effort degrade for non-Windows; do not claim cross-platform proven."
+        },
+        {
+          "id": "A2",
+          "statement": "On a REAL multi-member ChainerBackend a single delete_password is top-only (PR #740) so a lower-member copy survives and get_password still returns it -- delete-and-verify detects it and raises CredentialStoreError.",
+          "risk_ref": null,
+          "blocking": false,
+          "spike_status": "unproven",
+          "fallback": "if delete does not fan out, add the deferred bounded cross-member drain (ADR-013) or keep refuse+name-the-manual-step."
+        }
+      ],
+      "verification_plan": "On a mac + a linux box: store -> clear -> get None -> resolve falls to env; status value-free. On a box exhibiting a real ChainerBackend (slice-003 saw a WinVault-led chain): seed a lower-member copy, delete, confirm delete-and-verify raises (or, if delete fans out, that get->None).",
+      "id": "SC-008",
+      "history": [
+        {
+          "event": "reserved",
+          "by": "slice",
+          "at": "2026-07-12T18:11:10Z"
+        },
+        {
+          "event": "picked",
+          "by": "slice",
+          "at": "2026-07-12T18:15:37Z",
+          "ref": "slice-008"
+        },
+        {
+          "event": "spike-skipped",
+          "reason": "no blocking assumptions -- A1/A2 are non-blocking with fallbacks; reality-tested in-loop (AC1 local chain, AC2 CI Keychain/SecretService)",
+          "by": "risk-spike",
+          "at": "2026-07-12T18:17:30Z"
+        }
+      ]
+    },
+    {
+      "slice": "slice-009",
+      "title": "real-prove-invoke_claude_p-rc-envelope-fail-closed",
+      "name": "real-prove the invoke_claude_p rc/non-JSON-envelope fail-closed guard against a REAL launchable-erroring not-delivered install",
+      "status": "shipped",
+      "rationale": "slice-007 real-proved the CR5 (WinError-216, returncode=None) not-delivered fail-closed edge via a real --ignore-scripts install, but the OTHER downstream guard -- invoke_claude_p's rc!=0 / non-JSON-envelope check -- was NOT reachable via a real not-delivered install on npm 11.12.0 (where --omit=optional delivers a FUNCTIONAL binary). It stays hermetic (slice-005 synthesized) + M1 build-verified. Revisit if a future npm/packaging version produces a real present-but-launchable-erroring stub, or on POSIX / an alternative package manager (bun) that yields one -- to close the last real-install gap on the CVE-2024-24576/R-11 security spine.",
+      "source": "slice-007-discovered",
+      "blocking_assumptions": [],
+      "id": "SC-009",
+      "progress": "design",
+      "claimed_by": {
+        "git_user": "Shubhendu Shubham",
+        "git_email": "s2.shubh2@gmail.com"
+      },
+      "started_at": "2026-07-12T18:22:54Z",
+      "history": [
+        {
+          "event": "reserved",
+          "by": "slice",
+          "at": "2026-07-12T18:15:22Z"
+        },
+        {
+          "event": "picked",
+          "by": "slice",
+          "at": "2026-07-12T18:22:54Z",
+          "ref": "slice-009"
+        },
+        {
+          "event": "spike-skipped",
+          "reason": "SC-009 declares no blocking_assumptions; core rc!=0 feasibility pre-proven inline at /slice, rc==0 stub-mechanism routed to design-mode spike + exploratory charter",
+          "by": "risk-spike",
+          "at": "2026-07-12T18:26:14Z"
+        }
+      ]
+    },
+    {
+      "title": "prove-ac2-macos-keychain-via-ci",
+      "status": "shipped",
+      "progress": "design",
+      "slice": "slice-010",
+      "claimed_by": {
+        "git_user": "Shubhendu Shubham",
+        "git_email": "s2.shubh2@gmail.com"
+      },
+      "started_at": "2026-07-13T05:08:54Z",
+      "source": [
+        {
+          "type": "slice",
+          "ref": "slice-008"
+        },
+        {
+          "type": "risk",
+          "ref": "R-13"
+        }
+      ],
+      "description": "Wire a GitHub remote + push so .github/workflows/cred-lifecycle-real.yml runs the macos-latest leg (and ubuntu-latest, giving the CI-run of Linux that complements slice-008's local SecretService container proof); confirm each leg's env-INDEPENDENT JUnit executed-count assertion passes; upgrade AC2 macOS Keychain from deferred-known-debt to reality-proven.",
+      "rationale": "Closes slice-008 AC2's macOS reality gap (user-dispositioned deferral) and retires R-13's residual. The workflow already exists and is statically validated (YAML + both executed-count heredocs ast-clean); it only lacks an execution surface (a remote). Cheap: one push, no code change.",
+      "dependencies": [],
+      "priority": {
+        "score": 5,
+        "effort": "S",
+        "blast_radius": "CI only; no production code"
+      },
+      "assumptions": [],
+      "id": "SC-010",
+      "history": [
+        {
+          "event": "reserved",
+          "by": "slice",
+          "at": "2026-07-13T05:04:28Z"
+        },
+        {
+          "event": "picked",
+          "by": "slice",
+          "at": "2026-07-13T05:08:54Z",
+          "ref": "slice-010"
+        },
+        {
+          "event": "spike-skipped",
+          "reason": "SC-010 declares no blocking assumptions; CI-only -- remote-create + Actions macos/ubuntu reachability is a mature-platform given, and the macOS-provisioning reality-proof IS the slice deliverable (AC2/AC3), not a pre-design gate",
+          "by": "risk-spike",
+          "at": "2026-07-13T05:12:13Z"
+        }
+      ]
+    },
+    {
+      "title": "rebase-freshness-guard-before-validate",
+      "status": "shipped",
+      "progress": "design",
+      "slice": "slice-011",
+      "claimed_by": {
+        "git_user": "Shubhendu Shubham",
+        "git_email": "s2.shubh2@gmail.com"
+      },
+      "started_at": "2026-07-13T05:49:13Z",
+      "source": [
+        {
+          "type": "slice",
+          "ref": "slice-009"
+        },
+        {
+          "type": "risk",
+          "ref": "R-14"
+        }
+      ],
+      "description": "Add a rebase-freshness check that WARNS (not blocks) when a slice worktree's merge-base with the integration branch (aisdlc-uat) is behind the integration HEAD, run at /build-slice pre-finish and/or as a /validate-slice pre-gate. slice-009 branched from 8d17e90 before slice-008 merged (a358595) this session, so its stale-based worktree failed slice-008's shippability-anchored SHIP-008 regression (-m chained, exit 5) -- not a real coverage loss (R-14 corrected), but a stale-base artifact that cost a full /validate cycle + a manual rebase decision. A freshness warning would surface 'rebase onto aisdlc-uat before validating' proactively so a parallel/long-lived slice does not discover a sibling's just-merged regression the hard way. Loud + self-resolving on rebase; the guard just moves the discovery earlier and cheaper.",
+      "rationale": "Retires the reframed R-14 process risk. Parallel slices are the norm in this project (slice-008 + slice-009 in flight together), so stale-base validate failures will recur; a cheap pre-validate/pre-finish freshness warning prevents wasted validate cycles without blocking legitimate work.",
+      "dependencies": [],
+      "priority": {
+        "score": 3,
+        "effort": "S",
+        "blast_radius": "pipeline tooling only (a pre-validate/pre-finish rebase-freshness warning); no production code"
+      },
+      "assumptions": [],
+      "id": "SC-012",
+      "history": [
+        {
+          "event": "reserved",
+          "by": "slice",
+          "at": "2026-07-13T05:44:29Z"
+        },
+        {
+          "event": "picked",
+          "by": "slice",
+          "at": "2026-07-13T05:49:13Z",
+          "ref": "slice-011"
+        },
+        {
+          "event": "spike-skipped",
+          "reason": "no blocking assumptions; local git-plumbing tooling, no external-runtime feasibility risk",
+          "by": "risk-spike",
+          "at": "2026-07-13T05:51:58Z"
+        }
+      ]
+    }
+  ],
+  "_plugin_version": "2.38.2"
+}
