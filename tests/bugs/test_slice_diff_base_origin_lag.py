@@ -172,16 +172,52 @@ def test_parity_origin_current_sha_equality(origin_current_repo):
     )
 
 
-def test_non_repo_falls_back_to_head(tmp_path):
-    """AC1 fallback: with no resolvable base (a non-git directory) the helper prints HEAD and
-    exits 0 -- it must NEVER abort a gate (the old `merge-base HEAD origin/HEAD` would fatal)."""
+def test_non_repo_is_now_REFUSED_not_a_head_fallback(tmp_path):
+    """CONTRACT CHANGE (slice-069 / ADR-072; critique M2 + DR-1 M-add-2) — this test used to assert
+    the OPPOSITE, and the contract it pinned was itself the defect.
+
+    It previously read: "with no resolvable base (a non-git directory) the helper prints HEAD and
+    exits 0 -- it must NEVER abort a gate". That generosity is what made an UNUSABLE worktree
+    indistinguishable from a healthy one: the helper prints `HEAD`, the caller runs
+    `git diff HEAD...HEAD` (with the production line's literal `2>/dev/null` swallowing git's own
+    complaint), gets ZERO lines, and reports "no code changes" -- a confident FALSE GREEN on a slice
+    that changed plenty. Reality proved the whole chain end-to-end during this slice's design spike.
+
+    The "never abort a gate" intent is PRESERVED where it is legitimate: a REAL git worktree whose
+    integration branch is genuinely unresolvable (no remote, fresh repo) still falls back to HEAD and
+    exits 0 -- see `test_real_repo_without_a_remote_still_falls_back_to_head` below. What is refused
+    is a --worktree that is not a git worktree ROOT at all (empty string, a two-line capture, a
+    nonexistent path, a plain directory). Those are input errors, and an input error must never be
+    laundered into a clean diff.
+    """
     plain = tmp_path / "not_a_repo"
     plain.mkdir()
     r = _run_helper(plain)
-    assert r.returncode == 0, f"helper must never abort (rc={r.returncode}): {r.stderr}"
-    assert r.stdout.strip() == "HEAD", (
-        f"expected HEAD fallback in a non-repo; got {r.stdout!r} (stderr: {r.stderr!r})"
+    assert r.returncode != 0, (
+        "a non-git directory resolved a base -- the fail-open that manufactures an empty-diff "
+        f"false green is back (rc={r.returncode}, stdout={r.stdout!r})"
     )
+    assert r.stdout.strip() == "", (
+        f"stdout must be EMPTY on refusal so a `$( )` capture goes empty and the call-site guard "
+        f"fires; got {r.stdout!r}"
+    )
+
+
+def test_real_repo_without_a_remote_still_falls_back_to_head(tmp_path):
+    """The legitimate half of the old contract, kept: a REAL git worktree with no remote / no
+    integration branch must still resolve (HEAD) and exit 0 -- base resolution never aborts a gate
+    for a healthy worktree. Only a BOGUS worktree is refused."""
+    repo = tmp_path / "real_repo"
+    repo.mkdir()
+    _git_ok(repo, "init")
+    _git_ok(repo, "config", "user.email", "t@example.com")
+    _git_ok(repo, "config", "user.name", "T")
+    (repo / "f.txt").write_text("x", encoding="utf-8")
+    _git_ok(repo, "add", "-A")
+    _git_ok(repo, "commit", "-m", "init")
+    r = _run_helper(repo)
+    assert r.returncode == 0, f"a real worktree must still resolve (rc={r.returncode}): {r.stderr}"
+    assert r.stdout.strip(), "a real worktree must never yield an EMPTY base"
 
 
 def test_skill_md_sites_wired_to_helper():

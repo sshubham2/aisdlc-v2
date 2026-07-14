@@ -143,12 +143,23 @@ def _resolve_keywords(vault: Path, args):
     if args.keywords is not None:
         return _keywords(args.keywords), None, None
     if args.slice:
-        info = resolve_slice_by_id(vault, args.slice)
+        info = resolve_slice_by_id(vault, args.slice, args.repo_root)
+        if isinstance(info, dict) and info.get("source") == "ownership-refused":
+            # slice-069: refuse rather than feed another owner's mission keywords into the designers.
+            owner = info.get("owner") or {}
+            return None, None, (f"(ownership refused -- {info.get('refused_slice')} is claimed by "
+                                f"{owner.get('git_user') or '?'} <{owner.get('git_email') or '?'}>, "
+                                f"not you; no reflections matched)")
         if not info:
             return None, None, f"(no slice matches '{args.slice}' -- nothing to match reflections against)"
         return _load_mission_keywords(info), info.get("folder"), None
     if args.from_mission_brief:
         info = resolve_active_slice(vault, args.repo_root)
+        if isinstance(info, dict) and info.get("source") == "ownership-refused":
+            owner = info.get("owner") or {}
+            return None, None, (f"(ownership refused -- {info.get('refused_slice')} is claimed by "
+                                f"{owner.get('git_user') or '?'} <{owner.get('git_email') or '?'}>, "
+                                f"not you; no reflections matched)")
         if isinstance(info, dict) and info.get("source") == "ambiguous":
             cands = ", ".join(str(c.get("slice")) for c in (info.get("candidates") or []))
             return None, None, (f"(ambiguous active slice -- {cands} in flight; pass --slice or run from the "

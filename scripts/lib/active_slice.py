@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -57,6 +58,12 @@ if str(_PLUGIN_ROOT) not in sys.path:
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
 from scripts.lib.milestone_stages import TERMINAL_STAGES as _TERMINAL_STAGES
+from scripts.lib.slice_ownership import (
+    EXIT_OWNERSHIP,
+    OVERRIDE_ENV,
+    check_ownership,
+    is_refusal,
+)
 
 _SLICE_BRANCH_RE = re.compile(r"^slice/(\d+)-(.+)$")
 _SLICE_FOLDER_RE = re.compile(r"^slice-(\d+)-(.+)$")
@@ -173,6 +180,61 @@ def _candidate_entry(folder: Path) -> dict:
     }
 
 
+def _ownership_refused(res: dict, slice_id: str) -> dict:
+    """The OWNERSHIP-REFUSAL sentinel (slice-069 / ADR-068) — the SAME stable key set as `_slice_info`
+    and `_ambiguous` (so a `--json` consumer indexing those keys never KeyErrors), with every resolved
+    field None and `source="ownership-refused"`, plus `owner` / `caller` / `reason` / `override`.
+
+    MUST stay distinct from `ambiguous` ("refuse, disambiguate") and from `none` ("nothing to do"):
+    this one means "refuse, and here is WHO to coordinate with"."""
+    return {
+        "slice": None,
+        "folder": None,
+        "path": None,
+        "stage": None,
+        "next_action": None,
+        "current_focus": None,
+        "source": "ownership-refused",
+        "exists": False,
+        "refused_slice": slice_id,
+        "owner": res.get("owner"),
+        "caller": res.get("caller"),
+        "reason": res.get("reason"),
+        "verdict": res.get("verdict"),
+        "message": res.get("message"),
+        "override": res.get("override"),
+    }
+
+
+def is_refused(info) -> bool:
+    """The ONE predicate every consumer of this module must use: True when the resolver REFUSED to
+    hand back a usable slice — for EITHER reason (ambiguity or ownership). Both sentinels carry
+    `path: None`, so a consumer that forgets this check would TypeError on the path (the slice-019
+    crash class) rather than write to the wrong slice — but `active_slice_guard_audit` makes
+    forgetting it a CI failure, so it never gets that far."""
+    return isinstance(info, dict) and info.get("source") in ("ambiguous", "ownership-refused")
+
+
+def _apply_ownership(info: dict, vault, repo_root, arm: str, owner_check: bool,
+                     allow_foreign: bool | None = None) -> dict:
+    """Read the mark back BEFORE handing out a usable path (slice-069). Returns either `info`
+    untouched (owner / unowned / legacy / overridden — with the verdict attached as `ownership` for
+    observability) or the ownership-refusal sentinel.
+
+    `owner_check=False` is the EXPLICIT, AUDITED opt-out for read-only orientation consumers
+    (`/pulse` must still SHOW a teammate's in-flight slice) — the guard protects the WRITE
+    designation, not the READ. `active_slice_guard_audit` enforces that the opt-out is declared,
+    never silently taken."""
+    if not owner_check:
+        return info
+    res = check_ownership(vault, info["slice"], repo_root=repo_root, arm=arm,
+                          allow_foreign=allow_foreign)
+    info["ownership"] = {k: res[k] for k in ("verdict", "enforced", "owner", "caller", "warning")}
+    if is_refusal(res["verdict"]) and res["enforced"]:
+        return _ownership_refused(res, info["slice"])
+    return info
+
+
 def _ambiguous(candidates: list[dict]) -> dict:
     """The distinct AMBIGUOUS sentinel — same stable key set as `_slice_info` (so a
     `--json` consumer indexing those keys never KeyErrors), with every resolved field
@@ -192,8 +254,11 @@ def _ambiguous(candidates: list[dict]) -> dict:
     }
 
 
-def resolve_active_slice(vault: str | Path, repo_root: str | Path = ".") -> dict | None:
-    """The in-flight slice (or the AMBIGUOUS sentinel, or None). See module docstring."""
+def resolve_active_slice(vault: str | Path, repo_root: str | Path = ".",
+                         owner_check: bool = True,
+                         allow_foreign: bool | None = None) -> dict | None:
+    """The in-flight slice (or the AMBIGUOUS sentinel, or the OWNERSHIP-REFUSAL sentinel, or None).
+    See module docstring. `owner_check=False` is the audited read-only opt-out (slice-069)."""
     slices_dir = Path(vault) / "slices"
 
     # 1. git branch of the worktree = the per-slice CAPABILITY (unchanged happy path)
@@ -203,7 +268,11 @@ def resolve_active_slice(vault: str | Path, repo_root: str | Path = ".") -> dict
         if mb:
             folder = slices_dir / f"slice-{mb.group(1)}-{mb.group(2)}"
             if folder.is_dir():
-                return _slice_info(folder, "git-branch")
+                # A BRANCH IS A LOCATION, NOT AN IDENTITY (slice-069): the A2 spike reproduced the
+                # cross-slice write through THIS arm -- the one slice-014 called "the robust
+                # per-worktree CAPABILITY" -- so it is gated like every other designation arm.
+                return _apply_ownership(_slice_info(folder, "git-branch"), vault, repo_root,
+                                        "git-branch", owner_check, allow_foreign)
 
     # 2. vault scan: branch-first did not resolve a capability
     if not slices_dir.is_dir():
@@ -229,12 +298,20 @@ def resolve_active_slice(vault: str | Path, repo_root: str | Path = ".") -> dict
 
     # exactly one non-terminal (the 99% happy path, even from a non-git cwd), OR
     # all-terminal degenerate fallback -> resolve the (most-recent) slice.
+    #
+    # slice-069: THIS is the arm the two-human shape routes through. With exactly ONE live slice in a
+    # SHARED vault, that slice belongs to SOMEBODY ELSE -- and this branch hands it over confidently
+    # ("no new friction"), which is precisely how the A2 spike reproduced the cross-slice write. The
+    # >=2 AMBIGUOUS guard above never fires on it. So it is gated.
     pool = non_terminal if non_terminal else scored
     pool.sort(key=lambda s: (s[2], s[3]), reverse=True)  # at desc, then NNN desc
-    return _slice_info(pool[0][0], "vault-scan")
+    return _apply_ownership(_slice_info(pool[0][0], "vault-scan"), vault, repo_root,
+                            "vault-scan", owner_check, allow_foreign)
 
 
-def resolve_slice_by_id(vault: str | Path, slice_id: str) -> dict | None:
+def resolve_slice_by_id(vault: str | Path, slice_id: str, repo_root: str | Path = ".",
+                        owner_check: bool = True,
+                        allow_foreign: bool | None = None) -> dict | None:
     """Resolve a slice folder BY ID across BOTH ``slices/`` AND ``slices/archive/``
     (active first, then archive), matching on the NNN number so ``slice-5``,
     ``slice-005`` and ``slice-005-enrich-slice-story`` all resolve. Returns
@@ -245,7 +322,18 @@ def resolve_slice_by_id(vault: str | Path, slice_id: str) -> dict | None:
     exclusion is load-bearing for /reflect, /critique, /design-slice), this is the
     archive-AWARE lookup ``/slice-story`` uses to target a slice that may already be
     shipped + archived: ``/commit-slice``'s on-ship auto-emit runs AFTER ``/reflect``
-    moved the folder to ``archive/`` (B1). Read-only; no git branch needed."""
+    moved the folder to ``archive/`` (B1). Read-only; no git branch needed.
+
+    ``repo_root`` (slice-069 / M4) is where the CALLER's git identity is read — the caller's clone,
+    NOT the slice's worktree. It was previously absent, which left the by-id arms with no identity
+    source at all (and the CLI silently dropped ``--repo-root`` on the ``--slice`` path). A non-repo
+    ``repo_root`` legitimately falls back to git's GLOBAL config (measured), so a forked agent's cwd
+    is safe.
+
+    **The ``by-id-archive`` arm WARNS but never REFUSES** (ADR-072): a terminal, shipped slice has no
+    live collision to guard, while the archive is BY CONSTRUCTION where identity drift accumulates —
+    this project's own vault carries a stale owner email for the same human (slice-001/002/003), so
+    enforcing here would refuse the rightful owner on his own shipped slices."""
     m = re.match(r"^\s*slice-0*(\d+)(?:-.*)?\s*$", str(slice_id))
     if not m:
         return None
@@ -257,7 +345,8 @@ def resolve_slice_by_id(vault: str | Path, slice_id: str) -> dict | None:
         for p in sorted(base.iterdir()):
             fm = _SLICE_FOLDER_RE.match(p.name)
             if p.is_dir() and fm and int(fm.group(1)) == num:
-                return _slice_info(p.resolve(), source)
+                return _apply_ownership(_slice_info(p.resolve(), source), vault, repo_root,
+                                        source, owner_check, allow_foreign)
     return None
 
 
@@ -283,11 +372,33 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--folder-only", action="store_true",
                    help="print ONLY the resolved slice folder NAME (basename; empty if none/ambiguous) — for "
                         "`_worktree_paths.py --slice-folder` and other name-keyed call sites")
+    p.add_argument("--allow-foreign-slice", action="store_true",
+                   help="proceed on a slice claimed by ANOTHER git identity (slice-069). The env var "
+                        "AI_SDLC_ALLOW_FOREIGN_SLICE=slice-NNN is the equivalent, and is the only channel "
+                        "that reaches a forked skill's bash line. Both print a loud stderr WARN.")
+    p.add_argument("--no-owner-check", action="store_true",
+                   help="skip the ownership check entirely — the AUDITED opt-out for read-only orientation "
+                        "consumers (/pulse). NOT for a skill that writes.")
     return p
 
 
 def _is_ambiguous(info) -> bool:
     return isinstance(info, dict) and info.get("source") == "ambiguous"
+
+
+def _is_ownership_refused(info) -> bool:
+    return isinstance(info, dict) and info.get("source") == "ownership-refused"
+
+
+def _emit_ownership_refusal(info: dict) -> None:
+    """Fail-visible refusal to STDERR (never stdout — the machine-mode contract stays uncontaminated).
+
+    The `SLICE-OWNERSHIP-REFUSED:` prefix is greppable and deliberately distinct from the import-time
+    `INFO: AI-SDLC vault root = …` line, so a reader (human or agent) can never mistake one for the
+    other. The message NAMES the owner and NAMES the override (AC3)."""
+    print(info.get("message") or
+          f"SLICE-OWNERSHIP-REFUSED: {info.get('refused_slice')} is not yours ({info.get('reason')}).",
+          file=sys.stderr)
 
 
 def _emit_ambiguous_halt(info: dict, repo_root: str | Path) -> None:
@@ -311,32 +422,61 @@ def _emit_ambiguous_halt(info: dict, repo_root: str | Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     args = _build_arg_parser().parse_args(argv)
+    owner_check = not args.no_owner_check
+    # M2: pass the override as a real PARAMETER. It used to be applied by stuffing the env var with
+    # args.slice -- which meant that on the no-arg (active-slice) path there was no id to stuff and
+    # the flag did NOTHING, silently. An override that silently fails to override is worse than none:
+    # the operator believes they proceeded deliberately. The env var (AI_SDLC_ALLOW_FOREIGN_SLICE=
+    # slice-NNN) remains the channel for a forked skill, and is still slice-scoped.
+    allow_foreign = True if args.allow_foreign_slice else None
     if args.slice:  # archive-aware by-id lookup (/slice-story on a possibly-shipped slice)
-        info = resolve_slice_by_id(_root(args.vault), args.slice)
+        # M4: --repo-root is now THREADED here. It used to be silently DROPPED on this branch --
+        # which is the DEFAULT way this repo drives the loop -- leaving the by-id arms with no
+        # identity source at all.
+        info = resolve_slice_by_id(_root(args.vault), args.slice, args.repo_root, owner_check,
+                                   allow_foreign)
     else:
-        info = resolve_active_slice(_root(args.vault), args.repo_root)
+        info = resolve_active_slice(_root(args.vault), args.repo_root, owner_check, allow_foreign)
 
     ambiguous = _is_ambiguous(info)
+    refused = _is_ownership_refused(info)
+    blocked = ambiguous or refused          # both sentinels: no usable path is handed out
 
     # Observability (must_not_defer #3) — STDERR ONLY, so the machine-mode stdout
     # (--path-only/--folder-only/--json) stays EXACTLY the value with no contamination (m3).
     if ambiguous:
         _emit_ambiguous_halt(info, args.repo_root)
+    elif refused:
+        _emit_ownership_refusal(info)
     elif isinstance(info, dict) and info.get("slice"):
-        print(f"active-slice resolved: {info['folder']} via {info['source']}", file=sys.stderr)
+        # THE PASS PATH SPEAKS TOO (AC4): "never silently ALLOWS" is satisfied by SPEECH, not by an
+        # exit code — a silent allow would be indistinguishable from an unchecked one.
+        own = info.get("ownership") or {}
+        verdict = own.get("verdict")
+        if verdict == "owner":
+            note = f"; owner-verified <{(own.get('caller') or {}).get('git_email', '?')}>"
+        elif verdict in ("unowned", "legacy"):
+            note = f"; owner UNKNOWN ({verdict}) — proceeding UNVERIFIED"
+        else:
+            note = ""
+        print(f"active-slice resolved: {info['folder']} via {info['source']}{note}", file=sys.stderr)
+        if own.get("warning"):
+            print(own["warning"], file=sys.stderr)
+
+    exit_code = EXIT_AMBIGUOUS if ambiguous else (EXIT_OWNERSHIP if refused else 0)
 
     if args.path_only:  # BB-10: single-value capture for SKILL.md sub-shells
-        print(info["path"] if (info and not ambiguous and info.get("path")) else "")
-        return EXIT_AMBIGUOUS if ambiguous else 0
+        print(info["path"] if (info and not blocked and info.get("path")) else "")
+        return exit_code
     if args.folder_only:  # NAME (basename) for `_worktree_paths.py --slice-folder` and peers
-        print(info["folder"] if (info and not ambiguous and info.get("folder")) else "")
-        return EXIT_AMBIGUOUS if ambiguous else 0
+        print(info["folder"] if (info and not blocked and info.get("folder")) else "")
+        return exit_code
     if args.json:
-        if ambiguous or info:
-            print(json.dumps(info, ensure_ascii=False))  # full ambiguous payload OR resolved info
+        if blocked or info:
+            print(json.dumps(info, ensure_ascii=False))  # full sentinel payload OR resolved info
         else:
             print(json.dumps({"slice": None, "source": "none", "exists": False}, ensure_ascii=False))
-        return EXIT_AMBIGUOUS if ambiguous else 0
+        return exit_code
 
     # human text mode
     if ambiguous:
@@ -345,6 +485,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"active slice: AMBIGUOUS — {len(cands)} in flight ({ids}); pass --slice <slice-NNN> "
               f"or work from the slice worktree")
         return EXIT_AMBIGUOUS
+    if refused:
+        owner = info.get("owner") or {}
+        print(f"active slice: OWNERSHIP-REFUSED — {info.get('refused_slice')} is claimed by "
+              f"{owner.get('git_user') or '?'} <{owner.get('git_email') or '?'}> (see stderr)")
+        return EXIT_OWNERSHIP
     if isinstance(info, dict) and info.get("slice"):
         print(f"active slice: {info['folder']} (stage={info['stage']}, "
               f"next={info['next_action']}, via {info['source']})")

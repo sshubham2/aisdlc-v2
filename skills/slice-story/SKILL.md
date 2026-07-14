@@ -39,6 +39,7 @@ The printed `active_slice_dir` is **the ONE authoritative `<target-slice>` path*
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"   # a slice id (e.g. /commit-slice's on-ship auto-emit) may target an ARCHIVED slice
 if [ -n "$ARG" ]; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY -c "import json,glob,os,sys; d=sys.argv[1] or None; have=[os.path.basename(f) for f in sorted(glob.glob(f'{d}/*.json'))] if d else []; mb=json.load(open(f'{d}/mission-brief.json',encoding='utf-8')) if d and os.path.exists(f'{d}/mission-brief.json') else {}; ms=json.load(open(f'{d}/milestone.json',encoding='utf-8')) if d and os.path.exists(f'{d}/milestone.json') else {}; print(json.dumps({'active_slice_dir':d,'slice':mb.get('slice'),'title':mb.get('title'),'mode':mb.get('mode'),'risk_tier':mb.get('risk_tier'),'stage':ms.get('stage'),'artifacts_present':have},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 

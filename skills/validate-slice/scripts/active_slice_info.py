@@ -48,7 +48,17 @@ def _info(vault: Path, repo_root: str, slice_id: str | None = None) -> dict:
     # mirroring active_slice_brief.py / active_slice.py --slice -- so `/validate-slice slice-NNN` resolves the
     # named slice from a main session; the no-arg path keeps resolve_active_slice (branch-first + exit-4 HALT).
     # A named-but-missing id -> None -> the `if not slc` branch below -> ready_to_validate=false (exit-0 preserved).
-    slc = resolve_slice_by_id(vault, slice_id) if slice_id else resolve_active_slice(vault, repo_root)
+    slc = (resolve_slice_by_id(vault, slice_id, repo_root) if slice_id
+           else resolve_active_slice(vault, repo_root))
+    if isinstance(slc, dict) and slc.get("source") == "ownership-refused":
+        # slice-069: /validate-slice WRITES validation.json into the slice folder -- refuse before
+        # any byte, and NAME the owner (exit-0 preserved: ready_to_validate=false is the signal).
+        owner = slc.get("owner") or {}
+        return {"slice": None, "source": "ownership-refused", "owner": owner,
+                "refused_slice": slc.get("refused_slice"), "ready_to_validate": False,
+                "note": (f"OWNERSHIP REFUSED: {slc.get('refused_slice')} is claimed by "
+                         f"{owner.get('git_user') or '?'} <{owner.get('git_email') or '?'}>, not you. "
+                         f"Do NOT validate (or write to) another owner's slice.")}
     if isinstance(slc, dict) and slc.get("source") == "ambiguous":
         # slice-014 (B1/M-add-1): catch the TRUTHY AMBIGUOUS sentinel BEFORE `if not slc`
         # (else `Path(slc['path'])` crashes on path=None), and NAME the candidates rather

@@ -25,6 +25,12 @@ Active slice (latest):
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root . --folder-only   # slice-014: no 2>/dev/null — an AMBIGUOUS HALT (exit 4) must surface. Vault resolves internally (4.6.1: $AI_SDLC_VAULT_ROOT is not exported).
 ```
 
+> **OWNERSHIP REFUSED (exit 5) — STOP (slice-069 / ADR-072).** This is a load-time **injection** and a
+> **bare invocation** — no `$var` to guard, and (per ADR-025) it must not abort skill-load — so the prose
+> is the guard. If it prints `SLICE-OWNERSHIP-REFUSED`, the active slice is claimed by **another git
+> identity**, and `/supersede-slice` **rewrites that slice's status and writes an ADR**. **STOP. Report
+> the named owner to the user; do not proceed, and do not set `AI_SDLC_ALLOW_FOREIGN_SLICE` yourself.**
+
 ---
 
 ## Step 1 — Validate the archived target

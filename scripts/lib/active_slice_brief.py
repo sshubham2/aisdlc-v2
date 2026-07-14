@@ -9,8 +9,17 @@ designer to read at load time. Read-only.
 CLI: `--vault ROOT [--repo-root .] [--slice slice-NNN]`. With `--slice` it resolves THAT slice
 by id (archive-aware, via `active_slice.resolve_slice_by_id`) — mirroring `active_slice.py --slice`
 so `/design-slice slice-NNN` resolves the named slice's brief from a main session (slice-031 / AC5);
-without it, the active slice. Exit 0 always (an absent slice / brief is a normal early state — print
-a clear note and let the skill proceed).
+without it, the active slice.
+
+Exit 0 for an absent slice / an AMBIGUOUS resolution / a missing brief — those are normal early
+states, and ADR-022 requires them not to abort a skill at load time.
+
+**Exit 5 (EXIT_OWNERSHIP) on an OWNERSHIP REFUSAL** (slice-069 / B3). `/design-slice` WRITES
+design.json + new ADRs into the slice this command resolves, and its SKILL.md call site is a
+```bash BODY block — not a `!`-injection — so it CAN fail closed, and must. The earlier
+"exit-0-always by ADR-022" premise conflated this SCRIPT's contract with that SITE's constraint:
+ADR-022 protects load-time injections, and this is not one. The refusal is ALSO rendered as text on
+stdout, because the agent reads this output — an exit code alone was proven inaudible.
 """
 from __future__ import annotations
 
@@ -27,6 +36,7 @@ if str(_PLUGIN_ROOT) not in sys.path:
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
 from scripts.lib.active_slice import resolve_active_slice, resolve_slice_by_id
+from scripts.lib.slice_ownership import EXIT_OWNERSHIP
 
 
 def _root(vault_arg: str | None) -> Path:
@@ -93,8 +103,34 @@ def main(argv: list[str] | None = None) -> int:
     # slice-031 (AC5): an explicit --slice resolves by id (the SAME archive-aware primitive
     # active_slice.py --slice uses), so design-slice's guard then-branch resolves the named slice
     # from a main session; the no-arg path keeps resolve_active_slice (branch-first + exit-4 HALT).
-    info = (resolve_slice_by_id(_root(args.vault), args.slice) if args.slice
+    # slice-069/M4: --repo-root is THREADED into the by-id path too (it used to be dropped), so the
+    # ownership check has an identity source on that arm.
+    info = (resolve_slice_by_id(_root(args.vault), args.slice, args.repo_root) if args.slice
             else resolve_active_slice(_root(args.vault), args.repo_root))
+
+    if isinstance(info, dict) and info.get("source") == "ownership-refused":
+        # B3 — THE ONE WRITE SITE THAT KEPT A SOCIAL GATE.
+        #
+        # /design-slice WRITES design.json + new ADRs into the slice folder, and it gets its write
+        # target from THIS command. The design originally left it with a text banner only, on the
+        # premise that this script is "exit-0-always by ADR-022". That premise conflated the SCRIPT's
+        # contract with the SITE's constraint: ADR-022's exit-0 rule protects a LOAD-TIME `!`
+        # injection (halting there aborts skill-load before ${ARGUMENTS} binds) -- and
+        # design-slice/SKILL.md:25 is a ```bash BODY block, which can halt perfectly well.
+        #
+        # So the refusal is BOTH: exit 5 (a real, checkable status for the body guard) AND rendered
+        # as TEXT (the agent reads this stdout, so the refusal must be legible to it too -- an exit
+        # code alone is what the round-1 spike proved is inaudible).
+        #
+        # exit 0 is PRESERVED for absent / AMBIGUOUS -- which is what ADR-022 actually protects.
+        owner = info.get("owner") or {}
+        print(f"(OWNERSHIP REFUSED — {info.get('refused_slice')} is claimed by "
+              f"{owner.get('git_user') or '?'} <{owner.get('git_email') or '?'}>, not you. "
+              f"DO NOT write to this slice. Coordinate with the owner; if you are an agent, STOP and "
+              f"report this to the user rather than overriding it yourself.)")
+        print(info.get("message") or "", file=sys.stderr)
+        return EXIT_OWNERSHIP
+
     if isinstance(info, dict) and info.get("source") == "ambiguous":
         # slice-014 (B1/M-add-1): the AMBIGUOUS sentinel is a TRUTHY dict, so it must be
         # caught BEFORE `if not info` (else `Path(info['path'])` would crash on path=None),

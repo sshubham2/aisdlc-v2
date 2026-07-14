@@ -33,6 +33,13 @@ elsewhere (a second resolution can disagree).
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --json)"; else AS="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --json)"; fi   # no-arg keeps --repo-root . so an exit-4 AMBIGUOUS HALT surfaces (NO 2>/dev/null); capture+emit degrades it to a VISIBLE note, never a launch-abort
+rc=$?; if [ "$rc" -ne 0 ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; exit "$rc"; fi
+# The guard MUST be the first statement after the capture: `rc=$?` reads the LAST command executed,
+# so any command in between (even a display `if`) makes it read THAT command's 0 and the guard becomes
+# a total no-op. /reflect shipped exactly that (code-review CR1) -- and note this site captures --json,
+# whose refusal SENTINEL is printed to stdout, so an `[ -z "$AS" ]` test is FALSE on a refusal too:
+# the exit code is the only honest signal here, and it must be read immediately.
+if [ -z "$AS" ]; then echo "HALT: no slice resolved -- refusing to guess." >&2; exit 1; fi
 if printf '%s' "$AS" | grep -q 'by-id-archive'; then echo "(M3: $ARG is already shipped/archived -- /reflect runs on the ACTIVE slice, not an archived one; nothing to reflect.)"; else printf '%s\n' "$AS"; fi
 ```
 
