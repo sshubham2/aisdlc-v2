@@ -50,6 +50,7 @@ SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VA
 else
 SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"
 fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$SDIR" 2>/dev/null || echo "(project-frame unavailable)"
 ```
 
@@ -120,6 +121,7 @@ SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$
 else
 SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"
 fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py" "$SDIR"; audit_rc=$?
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type critique-review "$SDIR/critique-review.json"; lint_rc=$?
 # each: exit 0 = clean · 1 = violations (re-prompt + rewrite + re-validate) · 2 = usage/tooling error (surface, NOT a clean pass)

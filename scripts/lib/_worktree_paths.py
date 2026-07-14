@@ -115,6 +115,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--repo-root", type=Path, default=Path("."),
         help="Main repo root (default: cwd). The worktree is its sibling -wt dir.",
     )
+    p.add_argument(
+        "--print", dest="print_field", choices=("path", "branch", "both"), default="both",
+        help="Which field to print. DEFAULT 'both' keeps the historical TWO-LINE stdout contract "
+             "(path on line 1, branch on line 2) that ~12 SKILL.md call sites depend on. Use "
+             "'path' when you want the worktree alone -- it is safer than `| head -1`, which "
+             "MASKS this command's exit status (a pipeline's status is the LAST command's).",
+    )
     return p
 
 
@@ -139,8 +146,21 @@ def main(argv: list[str] | None = None) -> int:
     # (backslash = escape) and is inconsistent with the hook's forward-slash $AI_SDLC_VAULT_ROOT.
     # Forward slashes are accepted by both git-bash AND git on Windows. (CLI-only; the imported
     # canonical_worktree_path() Path API is unchanged, so branch_workflow_audit is unaffected.)
-    print(wt.as_posix())
-    print(branch)
+    #
+    # TWO-LINE STDOUT CONTRACT (slice-069 / ADR-072). This command prints the PATH on line 1 and the
+    # BRANCH on line 2. That contract was undocumented, and ~12 SKILL.md call sites silently depend
+    # on it by piping through `| head -1`. ADR-069 mistook that pipe for a defensive mask and told
+    # the builder to DROP it -- which would have handed every one of those sites a two-line string,
+    # breaking `git -C "$wt"` for the OWNER and (via slice_diff_base's HEAD fallback) producing an
+    # EMPTY DIFF: a false green, on the happy path, everywhere. Use `--print path` at a call site
+    # that wants one value; the contract is now pinned by tests/test_worktree_paths_contract.py.
+    if args.print_field == "path":
+        print(wt.as_posix())
+    elif args.print_field == "branch":
+        print(branch)
+    else:
+        print(wt.as_posix())
+        print(branch)
     return 0
 
 

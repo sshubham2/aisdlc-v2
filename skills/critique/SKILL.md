@@ -28,6 +28,7 @@ folder) for the Step-1 reads.
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi   # no 2>/dev/null — surface an AMBIGUOUS HALT (exit 4) instead of silently mis-resolving
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY -c "import json,sys; f=sys.argv[1]; d=json.load(open(f+'/mission-brief.json',encoding='utf-8')) if f else {}; print(json.dumps({k:d.get(k) for k in ['slice','name','mode','risk_tier','critic_required']},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
@@ -145,6 +146,7 @@ garbage path).
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 # Deliberate divergence from /code-review's _worktree_paths (a convention string, NO existence check):
 # worktree_ctx reuses pulse_worktree_resolver --detect (git-registered worktrees ONLY), so the 'main tree'
 # degrade is existence-checked. Do NOT harmonize onto _worktree_paths.
@@ -234,6 +236,7 @@ malformed file.
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type critique "$SDIR/critique.json"; rc=$?
 # exit 0 = clean (proceed to Step 3.5) · 1 = schema violation (re-prompt the Critic, rewrite, re-lint) · 2 = usage/tooling error (surface, NOT a clean pass)
 [ "$rc" = 0 ] || echo "ARTIFACT-LINT: critique.json did not conform (rc=$rc) -- re-prompt the Critic to re-emit a conforming artifact; do NOT proceed to Step 3.5."
@@ -260,6 +263,7 @@ verdict, so both homes share ONE computation:
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/tournament_convergence.py" --slice "$SDIR" --json
 # is_full_convergence:true -> the convergence trigger HOLDS (DR-1 mandatory). state:indeterminate
 # (absent/malformed design.json) -> NO trigger, fail-visible, NEVER read as convergent.
@@ -427,6 +431,7 @@ to count-only (never hard-raising to block the append) on a stray disposition:
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 cr_args="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/triage_precision.py" --critique-review-args --slice-dir "$SDIR")"; cr_rc=$?
 if [ "$cr_rc" != 0 ]; then
   # CR1: a NON-ZERO exit (usage error / unreadable critique-review.json) must NOT masquerade as "DR-1 skipped".

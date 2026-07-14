@@ -97,6 +97,32 @@ _GITHUB_RE = re.compile(r"^(?:https?://github\.com/|git@github\.com:)([^/]+)/(.+
 _PR_STATE_MERGED = "MERGED"
 
 
+def _warn_if_foreign(vault, slice_id: str, info: dict) -> None:
+    """M8 — the ownership gate is DEFERRED for /commit-slice's git ops (out_of_scope), NOT exempt.
+
+    So this does not refuse — it SPEAKS. Merging, pushing or force-deleting someone else's slice
+    branch is the most destructive designation in the pipeline; the operator must at least be told.
+    Best-effort: never raises, never blocks (a broken warning must not break a merge).
+    """
+    try:
+        from scripts.lib.slice_ownership import check_ownership
+        # CR7: pass the ARM the slice actually resolved through. Hardcoding "by-id-active" made an
+        # ARCHIVED slice warn as `foreign` on nothing more than identity drift (the real vault holds a
+        # stale email for the same human) -- a false alarm on exactly the shipped slices /commit-slice
+        # touches most. The archive arm is diagnostic-only by design (ADR-072).
+        arm = info.get("source") or "by-id-active"
+        res = check_ownership(vault, slice_id, repo_root=".", arm=arm)
+        if res.get("verdict") == "foreign" and res.get("enforced"):
+            owner = res.get("owner") or {}
+            print(f"WARNING: {slice_id} is claimed by {owner.get('git_user') or '?'} "
+                  f"<{owner.get('git_email') or '?'}>, not you. /commit-slice will rebase/merge/push "
+                  f"(and may delete) THEIR branch. The ownership gate is deliberately NOT enforced on "
+                  f"git ops (out of scope for slice-069) — proceed only if you mean to.",
+                  file=sys.stderr)
+    except Exception:  # noqa: BLE001 — a warning must never break the merge path
+        pass
+
+
 def _norm(p: str) -> str:
     return (p or "").replace("\\", "/").rstrip("/")
 
@@ -387,9 +413,18 @@ def resolve_target(
     if explicit_slice:
         if not vault:
             return _plan("none", reason=f"--slice {explicit_slice} needs a vault to resolve")
-        info = resolve_slice_by_id(vault, explicit_slice)
+        # slice-069 / M8 — THE OWNERSHIP GATE IS **DEFERRED** HERE, NOT EXEMPT.
+        #
+        # This function designates what /commit-slice rebases, merges into the integration branch,
+        # pushes, and force-deletes -- the most destructive write designation in the pipeline. The
+        # mission-brief's out_of_scope explicitly excludes /commit-slice git ops, so the gate is NOT
+        # applied (a refusal here would block a merge, which needs its own decision). It is opted out
+        # EXPLICITLY, is on the guard-audit's allowlist, and it WARNS loudly (below) rather than
+        # pretending to be a read-only consumer. A follow-up candidate is filed for the real gate.
+        info = resolve_slice_by_id(vault, explicit_slice, owner_check=False)
         if not info:
             return _plan("none", reason=f"slice {explicit_slice} not found in the vault")
+        _warn_if_foreign(vault, explicit_slice, info)
         branch = _folder_to_branch(info["folder"])
         return _attach_state(
             _plan("resolved", resolution="explicit", slice_id=info["slice"], branch=branch,

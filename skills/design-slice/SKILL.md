@@ -24,8 +24,17 @@ step that BINDS an explicit `/design-slice slice-NNN` `$ARG`. A `!`-injection ru
 **folder** for the `<active-slice>` placeholder in Step 0.5 and the Step-1 reads.
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
-ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --slice "$ARG"; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --repo-root .; fi   # exit-0-always: a no-arg AMBIGUOUS note degrades VISIBLY, never an exit-4 HALT (ADR-022)
+ARG="${ARGUMENTS[0]:-}"; if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --slice "$ARG" --repo-root .; else $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice_brief.py" --vault "$VAULT" --repo-root .; fi   # exit 0 for absent/AMBIGUOUS (they degrade to a VISIBLE note, never a load-abort — ADR-022). EXIT 5 = OWNERSHIP REFUSED (slice-069): this block is a BODY block, so it CAN and DOES fail closed there.
 ```
+
+> **OWNERSHIP REFUSED (exit 5) — STOP (slice-069 / ADR-072).** This command is a **bare invocation**: its
+> output is read by YOU, not captured into a shell variable, so there is no `$var` for a shell guard to
+> test. That makes the prose the guard. If the block prints `OWNERSHIP REFUSED` (or exits 5), the slice
+> you were about to design belongs to **another git identity** — and `/design-slice` **writes**
+> `design.json` and new ADRs into that slice's folder. **STOP. Do not reconstruct the path from the slice
+> id and write anyway. Do not set `AI_SDLC_ALLOW_FOREIGN_SLICE` yourself.** Report the named owner to the
+> user and let them decide. (This is a collision guard against an honest mistake, not a permission
+> system — which is exactly why quietly routing around it defeats its entire purpose.)
 
 ## Prior-lesson recall — resolve in a BODY step (feeds the shared designer context)
 

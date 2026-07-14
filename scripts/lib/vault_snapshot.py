@@ -147,10 +147,17 @@ def main(argv: list[str] | None = None) -> int:
         for name in args.presence:
             sections.append(_presence(name, vault / name))
     else:
-        info = resolve_active_slice(vault, ".")
+        # slice-069: the AUDITED read-only opt-out (owner_check=False). /pulse is ORIENTATION -- it
+        # must still SHOW a teammate's in-flight slice, so it does not run the ownership check at
+        # all. The guard protects the WRITE designation, not the READ. This opt-out is declared here
+        # and enforced by active_slice_guard_audit's allowlist; it can never be taken silently.
+        info = resolve_active_slice(vault, ".", owner_check=False)
         # slice-019 (AC4): the AMBIGUOUS sentinel is truthy with path=None -> treat as no-active-slice
-        # (else Path(info["path"]) TypeErrors on the None path — the slice-019 crash class).
-        if isinstance(info, dict) and (info.get("source") == "ambiguous" or info.get("path") is None):
+        # (else Path(info["path"]) TypeErrors on the None path — the slice-019 crash class). The
+        # ownership-refused sentinel carries path=None too, so this same branch absorbs it safely
+        # even if the opt-out above is ever removed.
+        if isinstance(info, dict) and (info.get("source") in ("ambiguous", "ownership-refused")
+                                       or info.get("path") is None):
             info = None
         slice_dir = Path(info["path"]) if info else None
         if slice_dir is None:

@@ -66,7 +66,9 @@ Therefore:
   else
     slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- the no-arg AMBIGUOUS exit-4 HALT surfaces HERE (the body is the fail-closed consumer)
   fi
-  wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+  rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+  wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"
+  rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
   cd "$wt"                       # fresh shell each block — re-derive + re-cd every time
   ```
 - **Code I/O uses `"$wt/<relpath>"` ABSOLUTE paths** — plan-mode Reads, task Edits/Writes, the smoke gate, and
@@ -247,7 +249,9 @@ if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
 else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # NO 2>/dev/null -- the exit-4 AMBIGUOUS HALT surfaces HERE (slice-014)
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"   # SC-043: fork point vs the LOCAL integration branch (never origin/HEAD); HEAD fallback, never aborts
 changed="$( { git -C "$wt" diff --name-only "$base"; git -C "$wt" ls-files --others --exclude-standard; } | sort -u )"
 # --changed-test-files = the subset of $changed matching the project's test layout (tests/**, *_test.*, *.test.*)
@@ -263,6 +267,7 @@ if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
 else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"   # NO 2>/dev/null -- the exit-4 AMBIGUOUS HALT surfaces HERE (slice-014)
 fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py" --slice "$slice_folder" --changed-files <list> --json
 ```
 Address each applicable Critical rule, attest it in `build-log.json` (e.g. "BC-PROJ-3: this slice performs no
@@ -278,7 +283,9 @@ if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
 else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"   # NO 2>/dev/null -- the exit-4 AMBIGUOUS HALT surfaces HERE (slice-014)
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$(basename "$slice_folder")" --repo-root "$repo_root" | head -1)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$(basename "$slice_folder")" --repo-root "$repo_root" --print path)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 [ -d "$wt" ] || { echo "STOP: worktree '$wt' does not exist -- refusing to run the pre-finish gate against it. m3/C3: fail-visible, never a silent main-tree audit. (Belt-and-braces: pre_finish_gate.py itself now exits 2 on an invalid --worktree — no cwd fallback.)" >&2; exit 2; }
 cd "$wt"
 base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"   # SC-043: fork point vs the LOCAL integration branch
