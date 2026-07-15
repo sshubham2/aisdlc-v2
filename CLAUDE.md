@@ -195,6 +195,16 @@ Code restart to register the new skill + agent** (NAW-1: the agent registry load
   None); the `--merge` WRITE path REFUSES on a full trunk-degrade (no `aisdlc-uat` AND no ai-sdlc-managed `uat`) —
   keyed on resolution SOURCE, never name-equality — so it never advances the released trunk without an integration
   branch. **There is NO per-commit version-bump mandate — the bump lives only in the release cut.**
+  **CI pre-flight gate (2.39.1) — the cut REFUSES a red/unverified integration branch.** `/release` Step 1a runs
+  `skills/release/scripts/ci_gate.py`: the integration branch's **EXACT HEAD SHA** must be green on CI or the cut
+  stops (red / pending / no-run BLOCK; no-GitHub-CI DEGRADES to a warning). This exists because a slice merged to
+  the integration branch **locally** is NOT CI-tested until it is **pushed** — 2.39.0 shipped slices 066-069 RED to
+  `master` precisely because they were merged to `aisdlc-uat` locally and never pushed, so CI first saw them on the
+  released trunk. **Operating rule: push the integration branch and let CI go green BEFORE cutting.**
+  **Post-cut checkout — `release_cut.py` returns you to the integration branch, never `master`.** `master` is
+  release-only, so ending a cut checked out on it invites an accidental direct-to-master commit (exactly how a
+  post-2.39.0 CI-fix commit first landed on master before being moved). The cut restores the integration-branch
+  checkout as its last step; you do not need to `git checkout` back by hand.
   **Transition (one-time, POST-slice-022-ship) — ✅ EXECUTED 2026-06-19 (genesis = master@2.36.0; SC-048):** `uat` +
   the durable `release-genesis` tag were established from `master` at the FIRST release under this model —
   master@**2.36.0** (the first clean new-model baseline, NOT 2.35.1; slice-022 itself bootstrapped via the old
