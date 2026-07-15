@@ -120,6 +120,19 @@ def test_happy_path_one_commit(tmp_path):
     assert run_git(repo, "merge-base", "--is-ancestor", "master", "uat").returncode == 0
 
 
+# ── the cut must NOT leave the operator on the release-only trunk (post-2.39.0 fix) ──
+@gitok
+def test_cut_returns_operator_to_integration_branch(tmp_path):
+    rc = _load()
+    repo = _repo(tmp_path, uat_ahead=True)  # fixture leaves HEAD on master
+    r = rc.run_release_cut(repo, "2.36.0", git=run_git, bump=_fake_bump, changelog=_fake_changelog)
+    assert r["action"] == "released"
+    # master is release-only; ending the cut on it invites an accidental direct-to-master
+    # commit. release_cut must return the operator to the integration branch.
+    cur = run_git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    assert cur == "uat", f"cut must end on the integration branch, not the release-only trunk (got {cur})"
+
+
 # ── slice-061 AC3: with aisdlc-uat present, the cut targets the namespaced branch ─
 @gitok
 def test_resolves_and_merges_aisdlc_uat(tmp_path):

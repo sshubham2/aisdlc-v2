@@ -8,22 +8,36 @@ All notable changes, newest first. Versions are reconstructed from git history; 
 
 _Nothing unreleased._
 
+## [2.39.2] — 2026-07-15
+
+### Changed
+
+- embed the release CI pre-flight + post-cut-checkout discipline
+
+### Fixed
+
+- release_cut leaves the operator on the integration branch, not master
+
 ## [2.39.1] — 2026-07-15
+
+### Changed
+
+- release 2.39.1: merge aisdlc-uat -> master + bump + changelog
+
+## [2.39.0] — 2026-07-15
 
 ### Added
 
 - gate the release cut on integration-branch CI being green
 
+### Changed
+
+- release 2.39.0: merge aisdlc-uat -> master + bump + changelog
+
 ### Fixed
 
 - ci_gate.py reconfigures stdout to UTF-8 (UTF8-STDOUT-1)
 - green 2.39.0 CI — cross-block false-positive + security-gate test deps
-
-## [2.39.0] — 2026-07-15
-
-### Changed
-
-- release 2.39.0: merge aisdlc-uat -> master + bump + changelog
 
 ## [2.38.2] — 2026-07-09
 

@@ -183,15 +183,19 @@ def run_release_cut(repo_root, new_version=None, *, level=None, source=None,
                 "reason": f"commit failed ({cm.stderr.strip()}); rolled back to {captured[:10]}.", "exit_code": 1}
     res["release_sha"] = git(repo_root, "rev-parse", released).stdout.strip()
 
-    # Post-commit (forward-only): sync the integration branch back to the new release.
+    # Post-commit (forward-only): sync the integration branch back to the new release,
+    # then LEAVE THE OPERATOR ON THE INTEGRATION BRANCH. `master` is release-only, so
+    # ending the cut checked out on it invites an accidental direct-to-master commit --
+    # the next slice/commit must land on the integration branch. release_cut therefore
+    # returns you home to `src` (an earlier version left the operator on `released`, which
+    # is exactly how a post-2.39.0 CI-fix commit landed on master).
     git(repo_root, "checkout", src)
-    sb = git(repo_root, "merge", "--ff-only", released)
-    git(repo_root, "checkout", released)  # leave the operator on the released trunk
+    sb = git(repo_root, "merge", "--ff-only", released)  # ff-only: on failure HEAD stays on src
     if sb.returncode != 0:
         res["sync_back"] = "failed"
-        res["hint"] = (f"master is released at {new_version} but the {src} sync-back failed; run "
-                       f"`git checkout {src} && git merge --ff-only {released}` before the next "
-                       f"slice or {src} will re-deliver released work (m2).")
+        res["hint"] = (f"master is released at {effective_version} but the {src} sync-back failed; run "
+                       f"`git merge --ff-only {released}` on {src} before the next slice or {src} "
+                       f"will re-deliver released work (m2).")
     else:
         res["sync_back"] = "ok"
     res["action"] = "released"
