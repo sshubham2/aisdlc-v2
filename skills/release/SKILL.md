@@ -97,6 +97,25 @@ advances `master` (AC4). The USER supplies the target (`--new-version X.Y.Z`, th
 `--level patch|minor|major`) — NEVER infer a version or "helpfully" default `--level patch`; no user-stated
 target = no cut.
 
+**CI pre-flight gate (mandatory — added after 2.39.0 shipped slices 066-069 RED to `master`).** A slice merged to
+the integration branch **locally** is NOT CI-tested until the branch is PUSHED — so a cut can advance the
+marketplace-served trunk on code CI has never seen (exactly how 066-069 landed red). BEFORE the confirmation gate,
+verify the integration branch's HEAD is **green on CI**:
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+integration="aisdlc-uat"; git -C "$repo_root" rev-parse --verify "$integration" >/dev/null 2>&1 || integration="uat"
+$PY "${CLAUDE_SKILL_DIR}/scripts/ci_gate.py" --repo-root "$repo_root" --branch "$integration"; rc=$?
+[ "$rc" = 0 ] || echo "CI GATE: not green (rc=$rc) — read the JSON gate/message before deciding" >&2
+```
+Read the JSON `gate` + exit code: **green (0)** → proceed to the confirmation gate. **red / pending /
+no-run-for-sha (1)** → **STOP, do NOT cut** — surface the `message` (fix CI, or wait for the run, or push the
+integration branch + let CI run first); advancing `master` on unverified code is the 066-069 failure. **gh-absent /
+not-github (3)** → the repo has no GitHub CI to consult; **DEGRADE** — WARN the user the cut is proceeding
+CI-unverified and continue (the release model must work without GitHub). The check keys on the EXACT
+integration-branch HEAD SHA, so a green run for an older uat commit never green-lights newer work. The integration
+branch must therefore be **pushed and green before the cut** — if `ci_gate` reports `no-run-for-sha`, push the
+integration branch, wait for CI to finish green, then re-run (`release_cut.py` itself does not push).
+
 **Confirmation gate (mandatory — this is the single most consequential git action in the plugin: it advances
 the released trunk the marketplace serves).** Before running the cut, present via `AskUserQuestion`:
 the resolved target version (current → new), the resolved integration branch (`aisdlc-uat` / legacy `uat`)
@@ -337,5 +356,7 @@ Report what was written (repo doc paths + the vault manifest), the `ungrounded_c
   Step 4.6 now **offers** a `/release --docs changelog` refresh on ship when a `doc-manifest.json` exists
   (roadmap Theme 6 [P3], landed as a non-blocking reminder, not an auto-run). `/drift-check` `stale-doc` consumes the manifest this writes.
 - auto-advance: false.
-- user-input gates: Step 1a release-cut confirmation (mandatory `AskUserQuestion` echoing resolved version +
-  branches BEFORE `--confirmed` is passed); Step 3 overwrite confirmation for any existing hand-written doc.
+- user-input gates: Step 1a CI pre-flight (`ci_gate.py` — the integration branch's HEAD must be green on CI, or
+  STOP; degrades only when there is no GitHub CI) THEN the release-cut confirmation (mandatory `AskUserQuestion`
+  echoing resolved version + branches BEFORE `--confirmed` is passed); Step 3 overwrite confirmation for any
+  existing hand-written doc.

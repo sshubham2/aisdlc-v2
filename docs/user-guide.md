@@ -506,6 +506,7 @@ post-ship bug.
 ```
 /release
 /release --docs readme,changelog,api,guide
+/release --new-version X.Y.Z
 ```
 
 Generates and maintains README / CHANGELOG / API-reference / user-guide grounded in code reality
@@ -513,6 +514,14 @@ Generates and maintains README / CHANGELOG / API-reference / user-guide grounded
 (`readme`, `changelog`, `api`, `guide`). CHANGELOG is assembled deterministically from per-slice
 `changelog.json` records. Writes docs to the code repo and a `doc-manifest.json` provenance record
 to the vault so `/drift-check` can flag docs that drift from code.
+
+When invoked to **cut a release** (`--new-version X.Y.Z`, or `--level patch|minor|major`), it merges the
+integration branch (`aisdlc-uat`) into `master`, bumps the plugin version, and regenerates the CHANGELOG —
+atomically, as one commit. It first runs a **CI pre-flight**: the integration branch's HEAD must be **green on
+CI**, or the cut is refused. This blocks the failure mode where a slice merged to the integration branch
+*locally* (never pushed, so never CI-tested) is advanced onto the marketplace-served `master`. Push the
+integration branch and wait for CI to go green before cutting. (The gate degrades to a warning only when the repo
+has no GitHub CI to consult.)
 
 ### `/sync` (Heavy mode only) — bidirectional vault-code reconciliation
 
