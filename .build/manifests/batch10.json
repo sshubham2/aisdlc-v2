@@ -10,7 +10,7 @@
       {
         "name": "product-doc",
         "when": "Step 2, after the CRG public surface + vault context are gathered (skipped if only --docs changelog requested)",
-        "purpose": "Forked author: drafts README / API-reference / user-guide markdown from the handed CRG surface + vault context, grounding every interface fact in a real CRG node (omits, never invents, what it cannot verify) and returns structured product-doc-draft JSON; writes no files"
+        "purpose": "Forked author: drafts README / API-reference / user-guide markdown from the handed CRG surface + vault context, grounding every interface fact in a real CRG node (omits, never invents, what it cannot verify), Writes each draft to a staging directory the skill provides (never the repo or vault) and returns their paths + grounding as structured product-doc-draft@2 JSON"
       }
     ],
     "methodology_tools": [
