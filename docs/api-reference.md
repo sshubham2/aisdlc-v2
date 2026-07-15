@@ -1,9 +1,7 @@
 # ai-sdlc API Reference
 
-Interface reference for the `ai-sdlc` Claude Code plugin (v2.38.2, `aisdlc-uat` integration branch — some
-described behavior (slices 066–069) has not yet been cut to the `master` release branch; see the plugin's
-uat/master release model in the main [README](../README.md)). This is a **reference**, not a tutorial — for
-task-oriented walkthroughs see the [User Guide](user-guide.md).
+Interface reference for the `ai-sdlc` Claude Code plugin, **v2.39.0**. This is a **reference**, not a tutorial —
+for task-oriented walkthroughs see the [User Guide](user-guide.md).
 
 Every command, flag, script, environment variable, and config file below is grounded in a real file in this
 repo (a `SKILL.md`, a bundled script, or a shared library module) — nothing here is inferred or aspirational.

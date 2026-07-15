@@ -358,7 +358,7 @@ Licensed under the **MIT License** — see [LICENSE](LICENSE).
 
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.38.2
+Shubhendu Shubham · plugin `ai-sdlc` v2.39.0
 
 ---
 
