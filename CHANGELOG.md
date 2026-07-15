@@ -8,7 +8,24 @@ All notable changes, newest first. Versions are reconstructed from git history; 
 
 _Nothing unreleased._
 
-## [2.39.0] — 2026-07-10
+## [2.39.1] — 2026-07-15
+
+### Added
+
+- gate the release cut on integration-branch CI being green
+
+### Fixed
+
+- ci_gate.py reconfigures stdout to UTF-8 (UTF8-STDOUT-1)
+- green 2.39.0 CI — cross-block false-positive + security-gate test deps
+
+## [2.39.0] — 2026-07-15
+
+### Changed
+
+- release 2.39.0: merge aisdlc-uat -> master + bump + changelog
+
+## [2.38.2] — 2026-07-09
 
 ### Added
 
@@ -20,6 +37,7 @@ _Nothing unreleased._
 
 ### Changed
 
+- release 2.38.2: merge aisdlc-uat -> master + bump + changelog
 - cut token waste across loop skills + slice-story transit fix
 - gitignore review-out/ (ephemeral review-tool output)
 - refresh README + user-guide, add API reference for the v2.38.2 surface
@@ -28,12 +46,6 @@ _Nothing unreleased._
 ### Fixed
 
 - un-red UTF8-STDOUT-1 — enforce the property, not the spelling
-
-## [2.38.2] — 2026-07-09
-
-### Changed
-
-- release 2.38.2: merge aisdlc-uat -> master + bump + changelog
 
 ## [2.38.1] — 2026-07-08
 

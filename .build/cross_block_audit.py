@@ -64,9 +64,17 @@ POS_BARE_RE = re.compile(r"\$([0-9]+)\b")
 
 
 def collect_assigns(line: str, into: set) -> None:
-    for rx in ASSIGN_RES:
-        for m in rx.finditer(line):
-            into.add(m.group(1))
+    # Apply the anchored assignment forms to the whole line AND to each command-separated
+    # segment. An inline assignment after a separator -- `cmd ...; rc=$?`, `a && b=1` --
+    # is a same-block assignment, but the `^\s*VAR=` anchor only sees the FIRST token of the
+    # line, so without the split the var reads as a false cross-block use (the `; rc=$?`
+    # rc-check idiom, slice-067+). Splitting only ever ADDS assignments (marks more vars
+    # in-block-safe), so it can never raise a false alarm -- at worst it masks a genuine
+    # cross-block use behind a look-alike inline assignment.
+    for seg in [line, *re.split(r"[;&|]+", line)]:
+        for rx in ASSIGN_RES:
+            for m in rx.finditer(seg):
+                into.add(m.group(1))
     m = READ_MULTI_RE.search(line)
     if m:
         for tok in m.group(2).split():
