@@ -1,6 +1,6 @@
 ---
 name: supersede-slice
-description: "Establish a formal bidirectional supersession link between an archived slice whose design has been contradicted by reality and the active slice that fixes it (SUP-1). Appends a supersession block to the archived reflection.json, sets the Supersedes field in the active mission-brief.json, and validates the link via supersede_audit. (It does NOT write _index.json — per 3.12 the index regenerators drop non-canonical fields; the reflection.json block is the durable record.)"
+description: "Establish a formal bidirectional supersession link between an archived slice whose design has been contradicted by reality and the active slice that fixes it (SUP-1). Appends a supersession block to the archived reflection.json, sets the Supersedes field in the active mission-brief.json, and validates the link via supersede_audit. (It does NOT write _index.json — the index regenerators drop non-canonical fields; the reflection.json block is the durable record.)"
 when_to_use: "Trigger phrases: /supersede-slice, 'supersede slice NNN', 'mark slice obsolete', 'retire shipped slice', 'link supersession'. Use when an archived slice's claims would otherwise stand as live assertions while a new active slice corrects them. Optional maintenance step — most archived slices need no supersession."
 argument-hint: "<archived-slice-id>"
 allowed-tools: Read, Edit, Glob, Bash, AskUserQuestion
@@ -24,6 +24,12 @@ Active slice (latest):
 ```!
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root . --folder-only   # slice-014: no 2>/dev/null — an AMBIGUOUS HALT (exit 4) must surface. Vault resolves internally (4.6.1: $AI_SDLC_VAULT_ROOT is not exported).
 ```
+
+> **OWNERSHIP REFUSED (exit 5) — STOP (slice-069 / ADR-072).** This is a load-time **injection** and a
+> **bare invocation** — no `$var` to guard, and (per ADR-025) it must not abort skill-load — so the prose
+> is the guard. If it prints `SLICE-OWNERSHIP-REFUSED`, the active slice is claimed by **another git
+> identity**, and `/supersede-slice` **rewrites that slice's status and writes an ADR**. **STOP. Report
+> the named owner to the user; do not proceed, and do not set `AI_SDLC_ALLOW_FOREIGN_SLICE` yourself.**
 
 ---
 

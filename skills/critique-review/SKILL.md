@@ -1,7 +1,7 @@
 ---
 name: critique-review
 description: "Meta-Critic (DR-1) review of the first Critic's critique.json for false positives, false negatives, and severity miscalibrations. Runs inline on the main agent thread; spawns a 'critique-review' subagent via the Agent tool. Reads mission-brief.json, design.json, critique.json, and project-frame; classifies each finding as VALID/SUSPICIOUS/SEVERITY-WRONG; surfaces missed findings; writes critique-review.json; runs the structural audit + schema lint on the written file. Use AFTER /critique, BEFORE /critique Step 4.5 TRI-1."
-when_to_use: "Trigger phrases: /critique-review, 'meta-review the critique', 'second-pass critique', 'review the Critic', 'dual review'. Tier-driven (NOT mode-gated) — MANDATORY (CRP-1-enforced) when risk_tier=high OR critic_required is true (auth/data-model/contracts/security/methodology surface; Heavy forces it everywhere) OR first-Critic findings >=5; ADVISORY on a 3+ consecutive-clean calibration smell. See the canonical trigger table in /critique Step 3.5. Not required otherwise."
+when_to_use: "Trigger phrases: /critique-review, 'meta-review the critique', 'second-pass critique', 'review the Critic', 'dual review'. Tier-driven (NOT mode-gated) — MANDATORY (CRP-1-enforced) when risk_tier=high OR critic_required is true (auth/data-model/contracts/security/methodology surface; Heavy forces it everywhere) OR first-Critic findings >=5 OR the design tournament fully converged (no disjoint pair); ADVISORY on a 3+ consecutive-clean calibration smell. See the canonical trigger table in /critique Step 3.5. Not required otherwise."
 argument-hint: "[slice-id]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent
 ---
@@ -50,6 +50,7 @@ SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VA
 else
 SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"
 fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$SDIR" 2>/dev/null || echo "(project-frame unavailable)"
 ```
 
@@ -120,6 +121,7 @@ SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$
 else
 SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"
 fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/scripts/critique_review_audit.py" "$SDIR"; audit_rc=$?
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type critique-review "$SDIR/critique-review.json"; lint_rc=$?
 # each: exit 0 = clean · 1 = violations (re-prompt + rewrite + re-validate) · 2 = usage/tooling error (surface, NOT a clean pass)

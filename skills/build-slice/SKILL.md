@@ -31,8 +31,8 @@ if [ -n "$SDIR" ]; then cat "$SDIR/mission-brief.json" 2>/dev/null || true; else
 
 Critic constraints (Critic findings the build must respect):
 ```!
-# slice-036: at-a-glance ONLY + exit-0 tolerant -- never abort skill-load (the BODY resolution sites below own the named-slice resolution + the fail-closed exit-4 HALT; SC-064/ADR-022).
-SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only || true)"   # slice-036: || true (NOT 2>/dev/null) -- tolerate the non-zero exit so skill-load never aborts, but SURFACE the AMBIGUOUS stderr (slice-014 AC4: never swallow the resolver's HALT)
+# at-a-glance ONLY + exit-0 tolerant -- same rules as the injection above (SC-064/ADR-022)
+SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root . --path-only || true)"   # || true (NOT 2>/dev/null) -- same rule as the block above
 if [ -n "$SDIR" ]; then cat "$SDIR/critique.json" 2>/dev/null || true; else echo "(no unambiguous active slice -- pass /build-slice slice-NNN)"; fi
 ```
 
@@ -66,7 +66,9 @@ Therefore:
   else
     slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- the no-arg AMBIGUOUS exit-4 HALT surfaces HERE (the body is the fail-closed consumer)
   fi
-  wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+  rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+  wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"
+  rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
   cd "$wt"                       # fresh shell each block — re-derive + re-cd every time
   ```
 - **Code I/O uses `"$wt/<relpath>"` ABSOLUTE paths** — plan-mode Reads, task Edits/Writes, the smoke gate, and
@@ -99,7 +101,7 @@ Then — **resolve which slice FIRST (slice-036):** the slice is the one NAMED b
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder slice-NNN-<name> --repo-root "$repo_root"
    git worktree add <wt_path> -b slice/NNN-<name> "$default"
    ```
-3. **Wrong branch / other slice**: STOP — ask user to switch context or document `WORKTREE=skip` in build-log.json events. **Carve-out (slice-036):** an explicit named-slice-from-main invocation (`/build-slice slice-NNN` from the main tree) is NOT this case — the session branch differing from the slice branch is the EXPECTED main-launch state; resolve `$wt` for the NAMED slice (case 1) and proceed. This STOP fires only when no slice resolves (no arg + ambiguous → the exit-4 HALT) or the *resolved* slice's worktree genuinely mismatches its branch.
+3. **Wrong branch / other slice**: STOP — ask user to switch context or document `WORKTREE=skip` in build-log.json events. **Carve-out (slice-036):** the explicit named-slice-from-main state (case 1's EXPECTED main-launch state) is NOT this case — resolve `$wt` for the NAMED slice and proceed. This STOP fires only when no slice resolves (no arg + ambiguous → the exit-4 HALT) or the *resolved* slice's worktree genuinely mismatches its branch.
 4. **Dirty main tree** (legacy pre-BRANCH-3 only): apply the canonical switch-commit-switch-worktree sequence; no auto-stash.
 
 Escape-hatch shape (audit-required): `<YYYY-MM-DD HH:MM> DEVIATION: WORKTREE=skip — rationale: <text>`.
@@ -232,7 +234,7 @@ All of the following must pass before declaring done:
 
 The pre-finish gate is **one consolidated command** — `pre_finish_gate.py` subprocess-orchestrates every
 user-facing audit (WT-ROOT-1, DCE-1, LINT-MOCK, WIRE-1, BC-1, TF-1, BRANCH-1, ARTIFACT-LINT) and emits ONE
-verdict, so no check can be silently skipped (the failure mode of the old hand-run-each-block gate).
+verdict, so no check can be silently skipped.
 (ARTIFACT-LINT = 3.18.7 schema-by-example lint over this slice's vault JSON artifacts; on FAIL, fix the
 offending artifact's required keys / enum values.)
 
@@ -241,13 +243,15 @@ consumes a transcribed list — it derives its own via `--changed-from-git`, so 
 construction; this block feeds only the enumerate pass.) Fresh shell — re-derive `$wt` first (WT-ROOT-1):
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /build-slice slice-NNN (BODY block binds ${ARGUMENTS}; SC-064)
+ARG="${ARGUMENTS[0]:-}"   # bind the explicit slice arg (SC-064)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --folder-only)"
 else
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --folder-only)"   # NO 2>/dev/null -- the exit-4 AMBIGUOUS HALT surfaces HERE (slice-014)
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"   # SC-043: fork point vs the LOCAL integration branch (never origin/HEAD); HEAD fallback, never aborts
 changed="$( { git -C "$wt" diff --name-only "$base"; git -C "$wt" ls-files --others --exclude-standard; } | sort -u )"
 # --changed-test-files = the subset of $changed matching the project's test layout (tests/**, *_test.*, *.test.*)
@@ -257,12 +261,13 @@ changed="$( { git -C "$wt" diff --name-only "$base"; git -C "$wt" ls-files --oth
 strict with your acks):
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /build-slice slice-NNN (BODY block; SC-064)
+ARG="${ARGUMENTS[0]:-}"   # bind the explicit slice arg (SC-064)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
 else
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"   # NO 2>/dev/null -- the exit-4 AMBIGUOUS HALT surfaces HERE (slice-014)
 fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/scripts/build_checks_audit.py" --slice "$slice_folder" --changed-files <list> --json
 ```
 Address each applicable Critical rule, attest it in `build-log.json` (e.g. "BC-PROJ-3: this slice performs no
@@ -272,13 +277,15 @@ destructive git reset of uncommitted work"), and collect the addressed ids for `
 verifies), then run the consolidated gate from the worktree:
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /build-slice slice-NNN (BODY block; SC-064)
+ARG="${ARGUMENTS[0]:-}"   # bind the explicit slice arg (SC-064)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --slice "$ARG" --path-only)"
 else
-  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
+  slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$AI_SDLC_VAULT_ROOT" --repo-root "$repo_root" --path-only)"   # NO 2>/dev/null -- the exit-4 AMBIGUOUS HALT surfaces HERE (slice-014)
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$(basename "$slice_folder")" --repo-root "$repo_root" | head -1)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$(basename "$slice_folder")" --repo-root "$repo_root" --print path)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 [ -d "$wt" ] || { echo "STOP: worktree '$wt' does not exist -- refusing to run the pre-finish gate against it. m3/C3: fail-visible, never a silent main-tree audit. (Belt-and-braces: pre_finish_gate.py itself now exits 2 on an invalid --worktree — no cwd fallback.)" >&2; exit 2; }
 cd "$wt"
 base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"   # SC-043: fork point vs the LOCAL integration branch
@@ -308,9 +315,8 @@ the gate PASSES, append ONE `build-checks` row (`findings-count` = unacknowledge
 path; mode from `triage.json`, tier = `risk_tier` from `mission-brief.json`):
 
 ```bash
-# Gold-standard append shape (same as /critique's gate rows): derive VAULT (4.6.1 — the env
-# var is NOT exported) + --out/--content-file (never pipe+--stdin: the double-apply-under-
-# contention hazard vault_edit itself documents), rc-checked fail-visible.
+# Gold-standard append shape (same as /critique's gate rows): derive VAULT (4.6.1) +
+# --out/--content-file (never pipe+--stdin: the double-apply-under-contention hazard), rc-checked fail-visible.
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
 T="$(mktemp -d "$TMPD/aisdlc-bc-row.XXXXXX")"
@@ -324,12 +330,10 @@ T="$(mktemp -d "$TMPD/aisdlc-bc-row.XXXXXX")"
 rm -rf "$T"
 ```
 
-> **Note — plugin self-audits are NOT in this gate.** Six checks that grade the *plugin's own* static
-> files (`UTF8-STDOUT-1`, `PCA-1`, `BCI-1`, `STP-1`, `NAW-1`, `SVW-1`) used to run here on every slice in every
-> user project, where they are either no-ops or re-scan the plugin install (a constant result per plugin
-> version, zero user value). They now run only in plugin CI (`.build/plugin_self_audits.py`, wired into the
-> GitHub Actions workflow), never on a user's slice. The **SVW-1 routing discipline** below still applies to
-> the Builder when it appends to shared vault files — that is a build-time rule, not a per-slice audit.
+> **Note — plugin self-audits are NOT in this gate.** The six checks that grade the *plugin's own* static
+> files (`UTF8-STDOUT-1`, `PCA-1`, `BCI-1`, `STP-1`, `NAW-1`, `SVW-1`) run only in plugin CI
+> (`.build/plugin_self_audits.py`), never on a user's slice. The **SVW-1 routing discipline** below still
+> applies to the Builder when it appends to shared vault files — a build-time rule, not a per-slice audit.
 
 **BC-1 Critical rule handling**: address each applicable Critical rule, attest in `build-log.json` (e.g. "BC-PROJ-3: this slice performs no destructive git reset of uncommitted work"), then pass the IDs via `--ack-critical`. Important rules may be deferred with rationale logged in `build-log.json`.
 

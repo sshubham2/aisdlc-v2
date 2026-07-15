@@ -31,6 +31,7 @@ pollutes your source tree, and every project gets its own isolated, worktree-sha
 | **PyYAML** | `/diagnose` + `/bug-hunt` (shared pass/finding tooling) + a YAML fallback in `slice-candidates` | installed for you by `/ai-sdlc:setup`; everything else is stdlib-only |
 | **git** | recommended | gives each repo a stable, worktree-shared vault key (works without it, but the vault then keys on the current directory) |
 | **code-review-graph** *(recommended)* | code-graph queries (blast-radius, reachability) in ~15 skills + the CRG MCP server | installed & registered by `/ai-sdlc:setup`; absent → graceful degrade |
+| **bandit + pip-audit** *(optional, Python projects)* | the deterministic security reality gates `/build-slice` and `/validate-slice` run | **not** installed by `/ai-sdlc:setup` — `pip install bandit pip-audit`, or the gate fails **visibly** (`TOOL-MISSING`), never silently |
 
 > **Supply-chain / trust boundary.** `code-review-graph` is a **third-party** package
 > ([github.com/tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph), not this
@@ -69,9 +70,13 @@ After installing the plugin, run the one-time dependency doctor:
 It resolves a working Python, installs the runtime deps (PyYAML + `code-review-graph`) **with visible
 progress**, registers the `code-review-graph` **MCP server** for Claude Code (a project-scoped, gitignored
 `.mcp.json`), scaffolds a repo-tracked `.aisdlc/reality-gates.json` (the pluggable reality-gate declaration that
-`/build-slice`'s pre-finish gate and `/validate-slice` run via `scripts/lib/reality_gate_runner.py`), builds the
-code graph, then prints the next steps — including, on a git repo, a consented offer to commit that new
-`.aisdlc/` config so it reaches your teammates and CI. Two of the next steps matter most:
+`/build-slice`'s pre-finish gate and `/validate-slice` run via `scripts/lib/reality_gate_runner.py`). On a Python
+project (source files and/or a `requirements*.txt` present) it also seeds two deterministic **security reality
+gates** into that manifest — `bandit` (SAST, fails closed on any HIGH finding) and `pip-audit` (dependency CVEs)
+— and vendors the fail-closed guard to `.aisdlc/gates/py_security_gate.py`; `bandit`/`pip-audit` themselves are
+**not** installed for you, so a missing tool fails the gate **visibly** (`TOOL-MISSING`), never a silent pass.
+It then builds the code graph and prints the next steps — including, on a git repo, a consented offer to commit
+that new `.aisdlc/` config so it reaches your teammates and CI. Two of the next steps matter most:
 
 1. **Restart Claude Code** — MCP servers load at startup, so the CRG graph tools only appear on the next launch.
 2. **Approve the one-time trust prompt** for `code-review-graph`; then `/mcp` should show it connected.
@@ -265,7 +270,9 @@ triage / adopt  →  discover  →  (user-test)
 - **Heavy-mode only:** `heavy-architect`, `sync`.
 
 Backlog of work lives in `<vault>/candidates.json` (live) and `<vault>/archive/candidates.json` (shipped); the
-risk ledger is `<vault>/risk-register.json`.
+risk ledger is `<vault>/risk-register.json`. `/slice-candidates --product` materializes the **product's own
+declared scope** (decomposed once from `concept.json`) into that backlog — without it, a backlog can fill
+entirely with pipeline *exhaust* (risks, findings, reflections) and the product itself is never pickable.
 
 Invoke any skill with its slash command — the plugin namespaces them, so `/diagnose` is `/ai-sdlc:diagnose`, etc.
 
@@ -287,8 +294,12 @@ stay genuinely thin.
 
 ### What this is NOT for
 
-- **Teams > ~3 without the CI merge gate installed** — the vault has no locking or ownership beyond
-  claim/heartbeat surfacing in `/pulse`; coordination is social.
+- **Teams > ~3 without the CI merge gate installed** — the vault has no locking. Slice resolution does enforce
+  an ownership **collision guard** (a step run against slice-X refuses to silently read/write into slice-Y's
+  files when a different git identity holds that candidate's claim) — but this is explicitly **not an
+  authorization boundary** (git identity is self-assignable with two `git config` commands); it only catches
+  the *honest* cross-slice mistake between cooperating humans and their forked agents. Coordination beyond that
+  is social, surfaced via claim/heartbeat in `/pulse`.
 - **Audit-grade compliance processes** — Heavy mode adds rigor (forced Critic, human sign-off, threat model),
   but there is no compliance sign-off workflow or audit-trail enforcement. Regulated projects need their own
   compliance review on top; `/triage` will tell you so.
@@ -347,10 +358,11 @@ Licensed under the **MIT License** — see [LICENSE](LICENSE).
 
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.38.1
+Shubhendu Shubham · plugin `ai-sdlc` v2.39.0
 
 ---
 
 ## Further reading
 
 - [User guide](docs/user-guide.md) — step-by-step walkthrough of running the pipeline on a real project
+- [API reference](docs/api-reference.md) — every slash command, CLI script, env var, and config file, grounded in the real files that define them

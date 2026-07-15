@@ -177,7 +177,9 @@ def _recompute_id(finding: dict, pass_name: str) -> str:
     extractor = _signature_extractors.get(pass_name) or _signature_extractors["__default__"]
     signature = extractor(finding)
     payload = f"{category}{primary_path}{signature}".encode("utf-8")
-    digest = hashlib.sha1(payload).hexdigest()[:8]
+    # usedforsecurity=False: this is a content-addressing digest (a stable finding id),
+    # NOT a cryptographic integrity check -- clears bandit B324 for the seeded security gate.
+    digest = hashlib.sha1(payload, usedforsecurity=False).hexdigest()[:8]
     return f"F-{_category_short(category)}-{digest}"
 
 

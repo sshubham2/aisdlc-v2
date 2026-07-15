@@ -10,14 +10,24 @@ allowed-tools: Read, Grep, Glob, Bash, Write, AskUserQuestion, Skill
 
 First step of the per-slice loop. A slice = one thin vertical cut, ≤1 day of AI work, big enough to retire risk or
 ship user-visible value. You pick a candidate from the unified backlog, claim it, scaffold it, then auto-advance to
-`/risk-spike`. **Candidate selection comes from `<vault>/candidates.json`** (pre-ranked, pre-materialized from
-risks / diagnose findings / reflections / concept scope) — you do NOT re-run a multi-source fan-out.
+`/risk-spike`. **Candidate selection comes from `<vault>/candidates.json`** (pre-ranked; materialized from
+risks / diagnose findings / reflections, and — once `/slice-candidates --product` has run — the **product's own
+scope**) — you do NOT re-run a multi-source fan-out.
+
+**`/slice` is a READ-ONLY pick path** (slice-068 / [[ADR-067]]). It takes no lock, mutates no vault file, and
+cannot be bricked by a parallel writer. Product scope is materialized in the ONCE-ACT — `/slice-candidates
+--product` — not by a per-pick reconciler tick.
 
 ## Live state — injected
 
 Top live candidates (ranked; blocked-on-spike flagged):
 ```!
 $PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5
+```
+
+Product-scope presence (read-only backstop — slice-068):
+```!
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" census --json
 ```
 
 Stranded-slice consult (R-26 — never define a slice on top of genuinely-stranded prior work):
@@ -29,6 +39,19 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/stranded_slice_audit.py" --repo-root 
   resume via `/commit-slice`, continue its `/build-slice`, or proceed anyway (always offered).
 - `status: clean` with informational entries → one-line note, **proceed** (parallel slices are normal).
 - exit 2 (git unavailable) → surface stderr and continue (fail-visible, never silent).
+
+**Product-scope NOTICE (read-only; never blocks the pick).** If the census reports `counts.PRODUCT == 0`, print
+ONE terse line and proceed:
+
+> The product's own scope is not represented in this backlog — every candidate is exhaust (risks, findings,
+> reflections) or hand-typed. Run `/discover` (if `concept.json` is missing), then `/slice-candidates --product`.
+
+Why this notice exists and is **not** suppressible: across two real vaults, PRODUCT-sourced candidates were **0 of
+145 ever minted** — one product's orchestrator, the thing it exists to be, was never a candidate at all, so eleven
+slices went to peripheral hardening while the core app stayed unbuilt. An opt-out switch here would institutionalize
+"the product's scope is absent and nobody is told," which is precisely the state that produced that number. It is a
+BACKSTOP — the primary path is `/discover`'s hand-off. Print it once, only when `PRODUCT == 0`, and never let it
+block a pick (a non-zero exit from the census is advisory: note it and proceed).
 
 ## Step 1 — recommend (don't just list)
 The injected candidates are already scored (priority.score, effort, blast_radius, blocked-on-spike) and carry a
@@ -56,7 +79,7 @@ someone else needs coordination, never a force-release.
 ### Step 1.5 — reserve the pick (close the selection->claim window; ADR-016)
 The instant the candidate is settled (the Step-1 pick gate resolved), RESERVE it — a soft HOLD a parallel `/slice`
 immediately sees as in-flight, so it can never re-pick the candidate you are about to spend Steps 2-4 defining
-(the gap SC-053 closed). The reservation mints NO slice number and bumps NO counter (the number is issued only at
+The reservation mints NO slice number and bumps NO counter (the number is issued only at
 the Step-5.1 claim), so a later cancel costs nothing:
 ```bash
 $PY "${CLAUDE_SKILL_DIR}/scripts/claim_candidate.py" --candidate <SC-NNN> --reserve --repo-root .
@@ -96,7 +119,7 @@ Check `<vault>/shippability.json` for a row whose `machine_cmd` targets `tests/b
 One AC must assert "the failing repro test passes at slice end". (**WT-ROOT-1 / ADR-012:** the worktree is created in
 Step 5 BEFORE `/repro` runs — the in-loop test is written straight into `$wt` via `/repro --target-root`; a standalone
 test already on the MAIN tree is relocated by **`repro_test_relocate.py`** to the one explicitly-named path, NEVER by
-sweeping `tests/bugs/*`. This is the fix for the cross-slice repro-theft the old glob caused.)
+sweeping `tests/bugs/*`.)
 
 ## Step 3 — define the slice
 - **Name**: verb-object (`add-receipt-upload`, `fix-thumbnail-orientation`). Never `phase-N` / vague nouns.
@@ -209,7 +232,7 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
    the ones still untracked on the main tree:
    ```bash
    repo_root="$(git rev-parse --show-toplevel)"
-   VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: AI_SDLC_VAULT_ROOT is no longer exported -- resolve the vault per-invocation, never inline-read the bare env var
+   VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation; never inline-read the bare env var
    cand=$(VAULT="$VAULT" SKILL_DIR="${CLAUDE_SKILL_DIR}" REPO_ROOT="$repo_root" $PY -c "
    import sys, os, json, subprocess
    # Paths arrive via env, NEVER shell-interpolated into this source: a native Windows vault

@@ -20,6 +20,7 @@ __pycache__/
 diagnose-out/
 .code-review-graph/
 graphify-out/
+review-out/
 
 # ── Generated design record — kept LOCAL as the authoring record, NOT shipped (4.10) ──
 # skill.json (×30) + skill-graph.json are regenerated from .build/manifests/ by

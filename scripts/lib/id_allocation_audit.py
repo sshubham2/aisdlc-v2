@@ -12,6 +12,9 @@ Two checks (a property is only real where an audit ENFORCES it — slice-004/014
     max existing id of that kind across live ∪ archive ∪ on-disk, and no kind has a DUPLICATE id.
     Catches a hand-edited-down counter (m3) AND a model-hand-picked ADR filename that disagrees with
     `counters.adr` (M1 — ADR files are raw-written, so the chokepoint-reject can't cover them).
+    Audited kinds: sc, slice, adr, ship, ps. A counter can live in ANY of three files, so the holder
+    is an explicit per-kind map (`_COUNTERS_HOLDER`) — see the comment at its definition for why a
+    ternary would ship a new kind half-audited.
 
 CLI: `[--root <plugin-root>] [--vault <vault>] [--json]`. Runs whichever inputs are given (root ->
 prose, vault -> counters; default root only). Exit 0 = clean, 1 = violations. Read-only.
@@ -94,9 +97,13 @@ def counters_violations(vault: str | Path) -> list[str]:
         except (OSError, ValueError):
             return {}
 
+    def _counters_of(d):
+        c = d.get("counters")
+        return c if isinstance(c, dict) else {}
+
     cand = load("candidates.json")
     arch = load("archive/candidates.json")
-    counters = cand.get("counters") if isinstance(cand.get("counters"), dict) else {}
+    counters = _counters_of(cand)
 
     sources = {
         "sc": _scan([c.get("id") for c in cand.get("candidates", []) + arch.get("candidates", [])
@@ -108,8 +115,23 @@ def counters_violations(vault: str | Path) -> list[str]:
         "adr": _scan([p.name for p in (vault / "decisions").glob("ADR-*.json")], "adr"),
     }
     ship = load("shippability.json")
-    ship_counters = ship.get("counters") if isinstance(ship.get("counters"), dict) else {}
     sources["ship"] = _scan([r.get("id") for r in ship.get("rows", []) if isinstance(r, dict)], "ship")
+
+    # slice-068 / C13 (RPCD-1): `ps` (PS-NNN product-scope items) is a THIRD counters holder --
+    # counters.ps lives in product-scope.json, not in candidates.json. The old two-way ternary
+    # (`ship_counters if kind == 'ship' else counters`) would have resolved ctr=None for it, the
+    # isinstance(ctr, int) test would have failed, and the counter-STALENESS arm would have silently
+    # NO-OPPED: `ps` would be checked for duplicate ids only, and a hand-edited-down counters.ps --
+    # which RE-ISSUES an existing PS id, the exact collision this audit exists to catch -- would sail
+    # through green. So the holder is an explicit per-kind map, not a ternary: adding a kind without
+    # its counters holder is now a visible omission rather than a silent half-audit.
+    scope = load("product-scope.json")
+    sources["ps"] = _scan([i.get("id") for i in scope.get("items", []) if isinstance(i, dict)], "ps")
+
+    _COUNTERS_HOLDER = {
+        "ship": _counters_of(ship),      # shippability.json
+        "ps": _counters_of(scope),       # product-scope.json
+    }   # every other kind's counter lives in candidates.json
 
     # slice-041 / ADR-027: the slice kind's AUTHORITATIVE identities are its on-disk folder names
     # (slices/ + slices/archive/); a number is a real collision only when >=2 DISTINCT folders carry
@@ -128,7 +150,7 @@ def counters_violations(vault: str | Path) -> list[str]:
         dups = slice_dups if kind == "slice" else {n for n in nums if nums.count(n) > 1}
         if dups:
             out.append(f"{kind}: DUPLICATE id number(s) {sorted(dups)} — the collision this slice kills")
-        ctr = (ship_counters if kind == "ship" else counters).get(kind)
+        ctr = _COUNTERS_HOLDER.get(kind, counters).get(kind)
         if isinstance(ctr, int) and ctr < max(nums):
             out.append(f"{kind}: counters.{kind}={ctr} < max existing {max(nums)} "
                        f"(hand-edited-down / stale counter — would re-issue an existing id)")

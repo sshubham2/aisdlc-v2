@@ -1,6 +1,6 @@
 ---
 name: release
-description: "Cut a release (merge uat->master + version bump + CHANGELOG regen, atomically) AND generate + maintain product documentation grounded in code reality. CHANGELOG.md is assembled deterministically by merging git history (the plugin.json version cut post-merge by /release; no tags) with the per-slice changelog.json records /commit-slice writes, version-grouped; README / API-reference / user-guide are drafted by a forked product-doc agent from the code-review-graph public surface + the vault (concept, slices), with every interface fact grounded in a real CRG node (unverifiable claims are omitted, never invented). Docs are markdown DELIVERABLES written to the code repo; a doc-manifest.json provenance record is written to the vault so /drift-check can flag docs that drift from code. NEVER modifies source code; gates before overwriting a hand-written doc."
+description: "Cut a release (merge uat->master + version bump + CHANGELOG regen, atomically) AND generate + maintain product documentation grounded in code reality. CHANGELOG.md is assembled deterministically by merging git history with the per-slice changelog.json records /commit-slice writes, version-grouped; README / API-reference / user-guide are drafted by a forked product-doc agent from the code-review-graph public surface + the vault (concept, slices), with every interface fact grounded in a real CRG node (unverifiable claims are omitted, never invented). Docs are markdown DELIVERABLES written to the code repo; a doc-manifest.json provenance record is written to the vault so /drift-check can flag docs that drift from code. NEVER modifies source code; gates before overwriting a hand-written doc."
 when_to_use: "Trigger phrases: /release, 'cut a release', 'merge uat to master', 'bump version', 'publish', 'ship to master', 'release the plugin', 'generate docs', 'update the README', 'write API reference', 'regenerate CHANGELOG', 'document this project'. Out-of-loop maintenance — user-invokable any time (after shipping slices, before a release, when onboarding docs go stale). NOT auto-wired into the slice loop."
 argument-hint: "[--docs readme,changelog,api,guide]  (default: all four)"
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, AskUserQuestion
@@ -50,6 +50,24 @@ retrieve them — `code-review-graph embed`) | `genuinely-empty` (no public symb
 silent pass. On `degraded: true`, SHOW the user the `message` (cause + remedy) and carry the degrade flag into the
 Step 3 overwrite gate — do NOT silently let the agent draft interface-stripped prose. (Step 2.5's `graph_stale` is
 an additional advisory.)
+
+**On-demand embeddings build (`embeddings-absent` only — the sole in-loop-remediable cause).** When `cause ==
+embeddings-absent` (a code map WITH public symbols but no vectors, so the semantic harvest can't retrieve them and
+the prose would be interface-light), OFFER to build embeddings before drafting, via `AskUserQuestion`: **build now
+/ proceed degraded / changelog-only**. This is a HEAVY one-time install — `code-review-graph[embeddings]` pulls
+torch + sentence-transformers (~GB) — so it is **user-consented, never silent**, and `/setup` deliberately does NOT
+ship it (the pipeline is stdlib-first; embeddings are a `/release`-only convenience). On **build now**, install +
+local-embed, then RE-RUN the degrade gate:
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+$PY -m pip install "code-review-graph[embeddings]" || echo "pip install failed — will fall back to degraded" >&2
+"${CRG:-code-review-graph}" embed --provider local --repo "$repo_root" || echo "embed failed — will fall back to degraded" >&2
+$PY "${CLAUDE_SKILL_DIR}/scripts/harvest_degrade.py" --repo-root "$repo_root"   # expect degraded:false now
+```
+If the re-check clears (`degraded:false`), RE-HARVEST the public surface (the semantic query now resolves) and
+proceed normally. If it still degrades, or on **proceed degraded**, carry the degrade flag into the Step 3 overwrite
+gate. For any OTHER cause (`graph-unavailable` → build/`update` the graph; `genuinely-empty` → not a degrade), keep
+the existing behavior — only `embeddings-absent` is fixed by an install.
 - **Vault reads:** `concept.json` (what/why/actors), `triage.json` (mode), `slices/_index.json` (shipped features).
 - **Existing docs:** read the current `README.md` + `docs/*` if present — to refresh, not blindly rewrite.
 
@@ -140,11 +158,22 @@ still writes a valid version-grouped CHANGELOG.
 
 ## Step 2 — draft README / API-reference / user-guide (forked agent)
 
+First create a **staging directory** the agent writes its drafts into. The agent writes ONLY here — the skill
+re-verifies grounding (Step 2.5) + runs the overwrite gate (Step 3) before anything lands in the repo, so a
+staging write cannot bypass either gate:
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: no portable temp dir" >&2; exit 1; }
+STAGING="$(mktemp -d "$TMPD/aisdlc-release-docs.XXXXXX")"
+echo "release staging dir: $STAGING"   # NOTE it — pass it to the agent, reuse the SAME path in Step 3
+```
+
 For the requested agent-docs, spawn the **`product-doc`** agent via the **Agent tool**
 (`subagent_type: "product-doc"`). The persona carries the anti-hallucination mandate + output schema — do NOT
-re-state them. Pass only inputs:
+re-state them. Pass only inputs (INCLUDING the staging dir):
 
 ```
+Staging directory: <the $STAGING path above> — Write each requested doc there as README.md / api-reference.md / user-guide.md.
+
 Requested docs: <readme | api-reference | user-guide subset>
 
 # CRG public surface
@@ -166,9 +195,12 @@ surface diff touches (changed/added/removed interface facts). Small docs pass in
 survive (the agent sees the doc's shape and the sections it may rewrite); the cost of re-shipping an unchanged
 2,000-line README into the spawn does not.
 
-**Await the real agent — never fabricate doc content.** It returns one `aisdlc/product-doc-draft@1` JSON object
-(`readme` / `api_reference` / `user_guide` markdown + `grounding` + `ungrounded_claims_omitted`). Surface its
+**Await the real agent — never fabricate doc content.** It Writes each doc into the staging dir and returns one
+`aisdlc/product-doc-draft@2` JSON object (`readme_path` / `api_reference_path` / `user_guide_path` — each an
+absolute staging path or `null` — plus `grounding` + `ungrounded_claims_omitted`). Surface its
 `ungrounded_claims_omitted` to the user — those are real gaps (code the agent couldn't verify), not oversights.
+(Robustness: if an older persona returns doc *content* inline instead of a `*_path`, write that content to the
+staging path yourself before Step 3 — the rest of the flow reads from staging.)
 
 ## Step 2.5 — verify the agent's grounding against reality (slice-015 / ADR-011)
 
@@ -235,9 +267,12 @@ verified). An entry_point packaging label that is not itself a code node (e.g. `
 design and does NOT sink the flag when real exports verify. **M-add-1:** the FULL `public_surface` snapshot is kept
 intact (Step 4) — the verified/unverified split only ANNOTATES it, so `/drift-check`'s baseline-diff is preserved.
 
-## Step 3 — write the docs to the repo (overwrite gate)
+## Step 3 — place the docs into the repo (overwrite gate)
 
-Write each requested agent-doc to the repo: `README.md`, `docs/api-reference.md`, `docs/user-guide.md`.
+Each requested agent-doc now exists in the staging dir (Step 2). Place each at its repo target — `README.md`,
+`docs/api-reference.md`, `docs/user-guide.md` — by reading its staging file (the `*_path` the agent returned) and
+writing that to the target. Read the staging bytes as-is; do **not** re-encode. Skip any doc whose `*_path` was
+`null`. Before overwriting an existing target, apply the gate:
 
 **Overwrite gate (never clobber hand-written docs):** if the target file already exists AND was not produced by a
 prior `/release` run (check `doc-manifest.json` — if the path isn't listed there, treat it as hand-written),
@@ -252,7 +287,7 @@ degrade `cause` + remedy. The degraded branch takes PRECEDENCE over the manifest
 overwrite a populated doc with an interface-stripped one. A genuinely-new/absent target may be written with a
 prominent degraded banner (generic cause text only — no machine-local paths). This composes with the null/omit rule below.
 
-Never write a doc the agent returned `null` for or omitted.
+Never place a doc whose staging `*_path` was `null` (the agent didn't produce it).
 
 ## Step 4 — write the provenance manifest (vault)
 

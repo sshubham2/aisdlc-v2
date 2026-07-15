@@ -50,12 +50,13 @@ Read from the active slice folder:
   rationale in `code-review.json` `triage`, then re-run `/validate-slice`."_ Check:
   ```bash
   repo_root="$(git rev-parse --show-toplevel)"
-  ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+  ARG="${ARGUMENTS[0]:-}"   # bind the explicit slice arg (SC-064; canonical rule in the top block)
   if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
     slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --path-only)"
   else
     slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --path-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
   fi
+  rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
   $PY -c "import json,os,sys; p=sys.argv[1]+'/code-review.json'; d=json.load(open(p,encoding='utf-8')) if os.path.exists(p) else {}; F=d.get('findings') or []; tr=d.get('triage') or {}; D={str(x.get('finding','')).strip() for x in (tr.get('dispositions') or []) if str(x.get('action','')).strip().lower() in {'fixed','overridden'} and str(x.get('rationale','')).strip()}; miss=[str(f.get('id')) for f in F if str(f.get('severity','')).lower()=='blocker' and str(f.get('id','')).strip() not in D]; print('CRD-1 un-dispositioned code-review blocker(s): '+', '.join(miss)) if miss else print('CRD-1: ok'); sys.exit(1 if miss else 0)" "$slice_folder"
   ```
   Exit 1 → STOP. (Major/minor code-review findings are advisory — not gated here.)
@@ -63,8 +64,8 @@ Read from the active slice folder:
   forked `/code-review` self-lints best-effort, but a wholly-forked producer cannot deterministically stop a
   malformed artifact it authored. This prerequisite is the independent, main-thread-enforced gate (a DIFFERENT fork
   than the one that wrote the file) that makes "a malformed code-review.json never advances downstream" literally
-  true — it is the exact boundary the production key-variance bug slipped through. Skip only when `code-review.json`
-  is absent (no `/code-review` yet). Lint it against its schema-by-example; any violation → STOP.
+  true. Skip only when `code-review.json` is absent (no `/code-review` yet). Lint it against its
+  schema-by-example; any violation → STOP.
   ```bash
   repo_root="$(git rev-parse --show-toplevel)"
   ARG="${ARGUMENTS[0]:-}"
@@ -73,14 +74,15 @@ Read from the active slice folder:
   else
     slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --path-only)"
   fi
+  rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
   if [ -f "$slice_folder/code-review.json" ]; then
     $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type code-review "$slice_folder/code-review.json"; rc=$?
     # exit 0 = conforms (proceed) · 1 = schema violation (STOP) · 2 = usage/tooling error (STOP — surface, never a silent pass)
     [ "$rc" = 0 ] || { echo "STOP: code-review.json does not conform to its schema-by-example (rc=$rc) -- the deterministic boundary gate refuses to validate a malformed review artifact (ADR-033). Re-run /code-review to emit a conforming artifact, then re-run /validate-slice." >&2; exit 1; }
   fi
   ```
-  Exit 1 → STOP. (The M-add-1 keystone: the independent, un-skippable enforcement the forked self-check cannot provide.)
-- **NCC-1 — a NO-CODE-CHANGES review must match reality (review sweep 2026-07).** If `code-review.json` says
+  Exit 1 → STOP.
+- **NCC-1 — a NO-CODE-CHANGES review must match reality.** If `code-review.json` says
   `result: "NO-CODE-CHANGES"` but the worktree actually changed, the reviewer's field of view was broken (wrong
   base/worktree resolution, or a scoped diff) — a confident empty review over a real change is the laundered
   false-green class. Cross-check structurally; mismatch → STOP and re-run `/code-review`:
@@ -92,9 +94,11 @@ Read from the active slice folder:
   else
     slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --path-only)"
   fi
+  rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
   res="$($PY -c "import json,os,sys; p=os.path.join(sys.argv[1],'code-review.json'); print((json.load(open(p,encoding='utf-8')).get('result') or '') if os.path.exists(p) else '')" "$slice_folder")"
   if [ "$res" = "NO-CODE-CHANGES" ]; then
-    wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$(basename "$slice_folder")" --repo-root "$repo_root" | head -1)"
+    wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$(basename "$slice_folder")" --repo-root "$repo_root" --print path)"
+    rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
     base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"
     n="$( { git -C "$wt" diff --name-only "$base"; git -C "$wt" ls-files --others --exclude-standard; } 2>/dev/null | grep -c . )"
     [ "$n" -gt 0 ] && { echo "STOP: NCC-1 -- code-review.json claims NO-CODE-CHANGES but the worktree diff has $n changed/untracked file(s). Re-run /code-review (its collection was blind or mis-based) before validating." >&2; exit 1; }
@@ -181,13 +185,15 @@ the repro test live), NOT the main tree. Each code ```bash block below is a fres
 `$wt` and `cd "$wt"` first:
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+ARG="${ARGUMENTS[0]:-}"   # bind the explicit slice arg (SC-064; canonical rule in the top block)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 cd "$wt"
 ```
 Run all three audits before the shippability catalog. Pass `--changed-files` as the list of files this slice
@@ -197,13 +203,17 @@ changed — from `build-log.json`, or (from `$wt`) `git -C "$wt" diff --name-onl
 
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+ARG="${ARGUMENTS[0]:-}"   # bind the explicit slice arg (SC-064; canonical rule in the top block)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"   # WT-ROOT-1: scan worktree code
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"   # WT-ROOT-1: scan worktree code
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+cd "$wt"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/scripts/validate_slice_layers.py" \
   --slice <vault>/slices/slice-NNN-<name> \
   --changed-files <list> \
@@ -225,13 +235,15 @@ Only when `mission-brief.json` sets `variants.walking_skeleton: true`:
 
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+ARG="${ARGUMENTS[0]:-}"   # bind the explicit slice arg (SC-064; canonical rule in the top block)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"   # WT-ROOT-1: re-resolve $wt (fresh shell)
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"   # WT-ROOT-1: re-resolve $wt (fresh shell)
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/brief_variants_audit.py" <vault>/slices/slice-NNN-<name> --variant walking_skeleton --execute --repo-root "$wt"
 ```
 
@@ -264,13 +276,15 @@ Skip if `<vault>/shippability.json` does not exist (first slice — /reflect wil
 **WT-ROOT-1** — the slice's code (fix + repro test) is in the WORKTREE; the main tree must be clean:
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+ARG="${ARGUMENTS[0]:-}"   # bind the explicit slice arg (SC-064; canonical rule in the top block)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/wt_root_audit.py" --worktree "$wt"
 ```
 Non-zero → STOP: slice code leaked into the main tree — move it into `$wt` before validating.
@@ -284,13 +298,17 @@ Non-zero → STOP: fix the row before running the catalog.
 **PTFCD-1** — verifies every `tests/<...>.py` token in Machine-cmd cells resolves to a file on disk (in `$wt`):
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+ARG="${ARGUMENTS[0]:-}"   # bind the explicit slice arg (SC-064; canonical rule in the top block)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+cd "$wt"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_path_audit.py" <vault>/shippability.json
 ```
 Non-zero → STOP: report the phantom test-file citation (the repro test must live in `$wt/tests/bugs/`) and fix it.
@@ -303,9 +321,7 @@ Non-zero → STOP: report the phantom test-file citation (the repro test must li
 > (symmetric absent-test scoping in the path audit). Until SC-058 ships, a sibling's absent repro still STOPs
 > Step 6 here; the slice-025 workaround (filter the catalog to worktree-present rows) applies.
 
-_(SVW-1 — the skill-vault-write-safety scan — is no longer run here. With no `--root` it audited the **plugin's
-own** `SKILL.md` prose (a constant per plugin version, zero per-slice user value — same 1.5 reasoning that evicted
-the other self-audits), and 3.11 demoted it to a CI-only **advisory** check via `.build/plugin_self_audits.py`. The
+_(SVW-1 — the skill-vault-write-safety scan — runs CI-only now (`.build/plugin_self_audits.py`, advisory). The
 real per-slice control against raw shared-file writes is the `vault_edit` wrapper itself, used in Step 9 below.)_
 
 ### Run the catalog (SRSC-1)
@@ -315,13 +331,17 @@ worktree, where this slice's fix AND its repro test both live (running from the 
 the fix → false regression):
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
-ARG="${ARGUMENTS[0]:-}"   # slice-036: bind the explicit /validate-slice slice-NNN (binds in a bash BODY block, NOT a !-injection -- SC-064/ADR-022)
+ARG="${ARGUMENTS[0]:-}"   # bind the explicit slice arg (SC-064; canonical rule in the top block)
 if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --slice "$ARG" --folder-only)"
 else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"; cd "$wt"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+cd "$wt"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 # slice-064/ADR-061: pass an EXPLICIT generous --session-timeout so a hung MERGED session is bounded (AC3).
 # The runner MERGES the mergeable plain-pytest rows into ONE pytest session by default (session fixtures boot
 # ONCE, not once-per-row -- the Step-6 speedup); --no-merge is the per-project escape for a session-order-
@@ -332,9 +352,9 @@ wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-fol
 $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py" <vault>/shippability.json --session-timeout 1800
 ```
 
-> **Harness budget (review sweep 2026-07).** The Bash tool's own ceiling is **600s** (default 120s) —
+> **Harness budget.** The Bash tool's own ceiling is **600s** (default 120s) —
 > BELOW the runner's 1800s bound, so a long catalog dies at the TOOL layer before the runner's timeout /
-> serial-fallback ladder can produce verdicts (the slice-059 fork-returned-early incident class). Run this
+> serial-fallback ladder can produce verdicts. Run this
 > command with an explicit tool `timeout: 600000`. If the catalog legitimately needs longer than 10 minutes,
 > run it with `run_in_background` (the harness notifies on completion — do not poll) or chunk the catalog
 > (`--no-merge` + row subsets); never let the tool default kill it mid-run and read the absence of output
@@ -387,7 +407,9 @@ if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
 else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --repo-root "$repo_root" --folder-only)"
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/reality_gate_runner.py" --repo-root "$wt" --json
 rgc=$?
 [ "$rgc" -eq 0 ] || echo "REALITY-GATES: a declared reality gate FAILED (exit 1) or the manifest is malformed (exit 3) [exit $rgc] -- validation BLOCKED (fail-closed). Set validation.json Result: FAIL and return blocked to the main thread; do NOT advance to /reflect." >&2

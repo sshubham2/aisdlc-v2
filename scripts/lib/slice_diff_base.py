@@ -18,7 +18,8 @@ unreliable; the chosen base ref was the only bug, not the merge-base algorithm.)
 Never aborts a gate: on every unresolvable path (no remote / fresh repo / branch
 unresolvable / empty merge-base output / git unusable) it prints ``HEAD`` -- diffing
 against HEAD matches the WT-ROOT-1 no-remote contract (uncommitted work since the
-branch tip). ALWAYS exits 0; prints EXACTLY the base ref as the sole stdout line;
+branch tip). Exits 0 on a REAL worktree (exits 2, empty stdout, when the worktree is bogus -- see
+Exit codes); prints EXACTLY the base ref as the sole stdout line;
 routes the resolved branch + every degrade reason to stderr ONLY, so a caller's
 ``base="$(...)"`` capture is always the clean base. ASCII-only output.
 
@@ -33,8 +34,11 @@ Usage::
 
 Exit codes (CLI)::
 
-    0  base printed (a SHA, or the HEAD fallback -- ALWAYS 0 once args parse)
-    2  usage error (missing --worktree / --repo-root)
+    0  base printed (a SHA, or the HEAD fallback) for a REAL git worktree root
+    2  usage error, OR --worktree is not an existing git worktree root (EMPTY stdout).
+       slice-069/M2: the old 'ALWAYS exits 0' contract turned an empty/bogus --worktree into
+       `HEAD` -> `git diff HEAD...HEAD` -> an EMPTY DIFF -> a confident false 'no code changes'
+       review. The HEAD fallback still stands for a REAL worktree whose base is unresolvable.
 """
 from __future__ import annotations
 
@@ -95,14 +99,37 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Resolve the slice diff base: the fork point of HEAD against the LOCAL "
             "integration branch (never origin/HEAD). Prints the base ref (or HEAD) "
-            "as the sole stdout line; ALWAYS exits 0 once args parse."
+            "as the sole stdout line. Exits 0 on a real worktree; exits 2 (EMPTY stdout) when --worktree is not an existing git worktree ROOT -- slice-069/M2: the old 'always exits 0' contract turned a bogus worktree into `HEAD`, i.e. an EMPTY DIFF and a false 'no code changes' review."
         ),
     )
     p.add_argument(
-        "--worktree", "--repo-root", dest="worktree", required=True, type=Path,
+        # NO `type=Path` (slice-069 / M2). argparse would convert the EMPTY STRING to `Path('')` ==
+        # `WindowsPath('.')` -- truthy, and `is_dir()` True -- BEFORE any guard can see it, so the
+        # empty capture this gate exists to catch would silently become "the current directory".
+        # Keep the RAW string; validate it; convert afterwards.
+        "--worktree", "--repo-root", dest="worktree", required=True,
         help="The slice worktree (HEAD = the slice branch). --repo-root is an accepted alias.",
     )
     return p
+
+
+EXIT_BAD_WORKTREE = 2
+
+
+def _is_git_worktree_root(worktree: Path) -> bool:
+    """True only when `worktree` is a real, existing git worktree ROOT.
+
+    `is_dir()` alone is NOT sufficient, and that is the whole point (slice-069 / M2): argparse's
+    `type=Path` turns the EMPTY STRING into `Path('')` == `WindowsPath('.')`, which is TRUTHY and
+    whose `is_dir()` is True. So `if not args.worktree:` and `if not args.worktree.is_dir():` are
+    BOTH silent no-ops on the exact input this guard exists to catch."""
+    try:
+        if not worktree.is_dir():
+            return False
+        top = run_git(worktree, "rev-parse", "--show-toplevel")
+        return top.returncode == 0 and bool(top.stdout.strip())
+    except (OSError, ValueError):
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -112,7 +139,25 @@ def main(argv: list[str] | None = None) -> int:
         args = parser.parse_args(argv)
     except SystemExit as e:
         return int(e.code) if isinstance(e.code, int) else 2
-    print(resolve_slice_diff_base(args.worktree))
+
+    # FAIL-CLOSED on an unusable worktree (slice-069 / ADR-072; critique M2 + DR-1 M-add-2).
+    #
+    # This function's HEAD fallback is deliberately generous -- "never abort a gate" -- and that
+    # generosity is exactly what converted an unusable worktree into a CLEAN EMPTY DIFF: with an
+    # empty (or two-line, or otherwise bogus) --worktree, `git -C ""` silently operates on the MAIN
+    # REPO, the integration branch fails to resolve, we print `HEAD`, and the caller runs
+    # `git diff HEAD...HEAD` -> zero lines -> "no code changes" -> a confident false-green review.
+    # The fallback stays for a REAL worktree whose base is genuinely unresolvable; it must NOT stand
+    # in for a worktree that does not exist. Nothing is printed on stdout, so a `$( )` capture goes
+    # EMPTY and the call site's guard fires.
+    raw = "" if args.worktree is None else str(args.worktree)
+    if not raw.strip() or not _is_git_worktree_root(Path(raw)):
+        print(f"slice_diff_base: --worktree is not an existing git worktree root: "
+              f"{raw!r} -- refusing to resolve a base (a bogus worktree here becomes an EMPTY DIFF, "
+              f"i.e. a false 'no code changes' review).", file=sys.stderr)
+        return EXIT_BAD_WORKTREE
+
+    print(resolve_slice_diff_base(Path(raw)))
     return 0
 
 

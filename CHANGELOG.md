@@ -8,22 +8,44 @@ All notable changes, newest first. Versions are reconstructed from git history; 
 
 _Nothing unreleased._
 
-## [2.38.2] — 2026-07-08
+## [2.39.0] — 2026-07-10
+
+### Added
+
+- **critique:** make FULL tournament convergence a mandatory /critique-review (DR-1) trigger (slice-066-add-tournament-convergence-dr1-trigger) [ADR-064, ADR-063]
+- **security:** Add deterministic security reality gates (bandit + pip-audit) on the SC-095 pluggable-gate slot (slice-067-add-deterministic-security-reality-gates) [ADR-065]
+- **backlog:** Make the product's own scope APPEAR in the candidate backlog -- continuously -- so /slice can pick it at all (slice-068-materialize-product-scope-into-backlog) [ADR-066, ADR-067]
+- **resolver:** read the claimed_by mark back at slice resolution and refuse a foreign owner before any vault byte (slice-069-enforce-claim-ownership-at-slice-resolution) [ADR-068, ADR-069, ADR-072]
+- on-demand embeddings build + product-doc staging-dir writes
 
 ### Changed
 
-- refresh README to v2.38.1 + reality-gates scaffold clause
-- refresh user-guide for reality-gates + commit-slice flow
+- cut token waste across loop skills + slice-story transit fix
+- gitignore review-out/ (ephemeral review-tool output)
+- refresh README + user-guide, add API reference for the v2.38.2 surface
+- stamp README + API reference to v2.39.0 for the release
 
 ### Fixed
 
-- green the build-consistency job (cross-block audit + stale examples)
+- un-red UTF8-STDOUT-1 — enforce the property, not the spelling
+
+## [2.38.2] — 2026-07-09
+
+### Changed
+
+- release 2.38.2: merge aisdlc-uat -> master + bump + changelog
 
 ## [2.38.1] — 2026-07-08
 
 ### Changed
 
+- refresh README to v2.38.1 + reality-gates scaffold clause
 - release 2.38.1: merge aisdlc-uat -> master + bump + changelog
+- refresh user-guide for reality-gates + commit-slice flow
+
+### Fixed
+
+- green the build-consistency job (cross-block audit + stale examples)
 
 ## [2.38.0] — 2026-07-08
 

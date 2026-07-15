@@ -55,7 +55,9 @@ if printf '%s' "$ARG" | grep -qE '^slice-[0-9]'; then
 else
   slice_folder="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root "$repo_root" --folder-only)"   # slice-014: NO 2>/dev/null -- no-arg AMBIGUOUS exit-4 HALT surfaces HERE
 fi
-wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" | head -1)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$slice_folder" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
+wt="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_worktree_paths.py" --slice-folder "$slice_folder" --repo-root "$repo_root" --print path)"
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unresolvable (rc=$rc) -- refusing to guess a tree; an empty worktree makes git operate on the MAIN REPO." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 base="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/slice_diff_base.py" --worktree "$wt")"   # SC-043: fork point vs the LOCAL integration branch (never origin/HEAD); always non-empty (HEAD fallback when no remote -- WT-ROOT-1)
 # NO pathspec (review sweep 2026-07; supersedes the slice-056/ADR-050 quoted array): the old hardcoded
 # list ('src/**' 'skills/**' 'agents/**' 'scripts/**' 'tests/**') was THIS PLUGIN'S OWN layout -- on any
@@ -108,6 +110,7 @@ Read any `NEW-UNTRACKED:` files from `"$wt/<path>"` for review (new files aren't
    else
      sf="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root "$repo_root" --path-only)"
    fi
+   rc=$?; if [ "$rc" -ne 0 ] || [ -z "$sf" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
    $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/artifact_lint.py" --type code-review "$sf/code-review.json"; rc=$?
    # exit 0 = clean (proceed) · 1 = schema violation (fix the key + re-lint; surface in Return if still failing) · 2 = usage/tooling error (surface as a tool error, NOT a clean pass)
    [ "$rc" = 0 ] || echo "ARTIFACT-LINT: code-review.json did not conform (rc=$rc) -- fix + re-lint or surface the violations in your Return."

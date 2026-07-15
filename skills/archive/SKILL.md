@@ -1,6 +1,6 @@
 ---
 name: archive
-description: "Archive completed slices (those with reflection.json) from slices/ to slices/archive/ and regenerate both _index.json files. In normal flow /reflect auto-archives each slice; /archive handles batch cleanup and stale index rebuilds. Index regeneration runs via the deterministic slice_index_regen.py — no subagent (supersedes the former Haiku COST-1 dispatch); the main thread owns the compare-and-swap write via vault_edit rewrite. The sweep also backstops CAND-1: a candidate stranded in both candidates.json files by an interrupted /commit-slice Step 6 is deduped (archive wins)."
+description: "Archive completed slices (those with reflection.json) from slices/ to slices/archive/ and regenerate both _index.json files. In normal flow /reflect auto-archives each slice; /archive handles batch cleanup and stale index rebuilds. Index regeneration runs via the deterministic slice_index_regen.py — no subagent; the main thread owns the compare-and-swap write via vault_edit rewrite. The sweep also backstops CAND-1: a candidate stranded in both candidates.json files by an interrupted /commit-slice Step 6 is deduped (archive wins)."
 when_to_use: "Trigger phrases: /archive, 'archive completed slices', 'rebuild slice index', 'regenerate index'. Use after a /reflect was interrupted, after manual slice moves, after fresh clone (--index-only), or to batch-sweep stuck completed slices."
 argument-hint: "[--index-only]"
 allowed-tools: Read, Glob, Bash, Write

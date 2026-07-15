@@ -34,7 +34,12 @@ Before anything else, run the one-time setup in the project directory you want t
 This installs PyYAML and `code-review-graph` (with visible pip progress), registers the CRG MCP server
 in a gitignored `.mcp.json`, scaffolds a repo-tracked `.aisdlc/reality-gates.json` (the pluggable
 reality-gate declaration that `/build-slice`'s pre-finish gate and `/validate-slice` run, fail-closed —
-an absent/empty file is simply a no-op), and builds the initial code graph. When it finishes:
+an absent/empty file is simply a no-op). On a Python project (source files and/or a `requirements*.txt`
+present) it also seeds two deterministic **security gates** into that manifest — `bandit` (SAST, fails on
+any HIGH finding) and `pip-audit` (dependency CVEs) — and vendors the fail-closed guard to
+`.aisdlc/gates/py_security_gate.py`. `bandit`/`pip-audit` themselves are **not** installed for you; run
+`pip install bandit pip-audit` yourself, or the gate fails **visibly** (`TOOL-MISSING`), never silently.
+Setup then builds the initial code graph. When it finishes:
 
 1. **Restart Claude Code** — the MCP server only becomes available on the next launch.
 2. **Approve the one-time trust prompt** for `code-review-graph` when Claude Code restarts.
@@ -101,7 +106,9 @@ Use this when code already exists. `/adopt` replaces `/triage` — do not run bo
 `/adopt` scans the codebase with `code-review-graph`, offers to run `/diagnose` for forensic analysis,
 conducts a structured interview (one question at a time), picks a mode, builds the risk register,
 and reverse-engineers `concept.json` from code reality. After adoption, proceed directly to `/slice`
-(or to `/discover` if the concept still needs sharpening).
+(or to `/discover` if the concept still needs sharpening). Once `concept.json` exists, `/adopt` also hands
+off to `/slice-candidates --product` (see §3 below) — it materializes the product's own scope into the
+backlog so `/slice` can pick the product itself, not just the risks and findings adoption surfaced.
 
 ### 2c. Brownfield forensics — `/diagnose` → `/slice-candidates`
 
@@ -162,6 +169,16 @@ After `/triage` (or after `/adopt` if concept still needs sharpening), run disco
 At the end it names a first slice candidate, confirms via `AskUserQuestion`, and writes `concept.json`,
 updates `risk-register.json`, and appends the first entry to `candidates.json`.
 
+**Then: `/slice-candidates --product`.** `/discover` mints exactly ONE product candidate
+(`first_slice_candidate`) — everything the pipeline mints after that is *exhaust* (risks, findings,
+reflections). Run `/slice-candidates --product` to decompose `concept.json`'s declared scope into
+candidate-shaped items, once: it reads `what` / `non_goals` / `actors[].top_actions` / `constraints`, a
+model drafts the decomposition, and the vault mints every id (`PS-NNN`) — never the model, since two blind
+decompositions of the same concept agreed on only 22% of their own keys. Without this hand-off, a census
+across two real projects found **0 of 145** minted candidates were product-sourced — one product's core
+orchestrator was never even a pickable candidate. Re-running is safe (idempotent); extend or correct the
+scope later with `product_scope.py revise`.
+
 For Standard B2C projects with UX uncertainty, `/discover` will recommend running `/user-test` before
 moving to the slice loop.
 
@@ -184,6 +201,14 @@ user-visible value. The full loop:
 /critique [+ /critique-review] → /slice-story → /build-slice →
 /code-review → /validate-slice → /reflect → /commit-slice
 ```
+
+**Slice resolution is ownership-guarded.** Every step above resolves "the active slice" from the vault +
+git branch; if a different git identity holds that slice's claim, or resolution is genuinely ambiguous
+(parallel slices in flight), the step **HALTs** — naming the recorded owner — rather than silently writing
+into the wrong slice's files. This is a **collision guard for honest mistakes**, not a security boundary
+(git identity is self-assignable) — it exists because a forked step run against the wrong slice folder can
+otherwise write findings/build-log/gate-log rows into a sibling slice unnoticed. If you ARE the owner but
+see a refusal, check that your `git config user.email` matches what `/slice` recorded at claim time.
 
 ### 4a. Pick a candidate — `/slice`
 
@@ -269,14 +294,21 @@ Tier-driven (NOT mode-gated). Runs on `medium`/`high` slices or when `critic_req
 dimensions, writes findings to `critique.json`, then returns to the main thread for the interactive
 **TRI-1 user triage gate** (you classify each finding: accept, defer, reject with rationale).
 
-For `high`-tier slices or when first-Critic findings are ≥ 5, the **meta-Critic** runs:
+The **meta-Critic** (`/critique-review`, "DR-1") runs — mandatorily — whenever ANY of these hold:
+`risk_tier == high`; `critic_required == true` (auth/authz, API contracts, data-model, security paths, or the
+methodology surface `skills/**`/`agents/**`/`scripts/**`; Heavy forces it on every slice); first-Critic
+`findings` count ≥ 5; or the design tournament **fully converged** — no designer pair in `design.json` was
+classified `disjoint` (a slice-066 addition, computed mechanically by `scripts/lib/tournament_convergence.py`,
+never eyeballed). It is advisory (not mandatory) on 3+ consecutive clean first-Critic verdicts.
 
 ```
 /critique-review
 ```
 
 `/critique-review` spawns a second adversarial subagent that reviews the first Critic's `critique.json`
-for false positives, false negatives, and severity miscalibrations. Its findings feed back into TRI-1.
+for false positives, false negatives, and severity miscalibrations, and surfaces anything the first Critic
+missed. It runs IN-LOOP, before the TRI-1 gate — its findings are folded into the SAME triage you do for the
+first Critic's findings, not a separate approval step.
 
 ### 4f. Plain-language report — `/slice-story`
 
@@ -300,7 +332,8 @@ phone over Remote Control. You then approve to proceed to `/build-slice`.
 Plan-mode execution: the Builder explores code with CRG queries and targeted Reads, drafts a task sequence,
 and **halts for your explicit approval** before writing any code. Execution proceeds task-by-task with
 per-task verification, a mandatory mid-slice smoke gate, and a multi-audit pre-finish gate (including
-`/drift-check --fast` and any project-declared reality gates from `.aisdlc/reality-gates.json`, run
+`/drift-check --fast` and any project-declared reality gates from `.aisdlc/reality-gates.json` — including
+the `bandit`/`pip-audit` security gates `/ai-sdlc:setup` seeds by default on Python projects — run
 fail-closed). Writes `build-log.json` and updates `milestone.json`.
 
 ### 4h. Code review — `/code-review`

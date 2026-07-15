@@ -1,6 +1,6 @@
 ---
 name: slice-story
-description: "Turns one slice's internal artifacts into a single plain-language STORY for a mixed technical / non-technical audience (tilted slightly technical, ZERO pipeline jargon), rendered as a standalone story.html and delivered straight to you — including your phone over Remote Control — via SendUserFile. Adaptive across the lifecycle: before building it covers the objective, what was proven in spikes, how it's built, and what the design review changed; after building it adds what was built, what code review found, what reality testing showed, and what was learned. A forked slice-story narrator subagent does the heavy synthesis and returns structured JSON; render_story.py renders the HTML; then you're asked to start /build-slice when ready."
+description: "Turns one slice's internal artifacts into a single plain-language STORY for a mixed technical / non-technical audience (tilted slightly technical, ZERO pipeline jargon), rendered as a standalone story.html and delivered straight to you — including your phone over Remote Control — via SendUserFile. Adaptive across the lifecycle: pre-build it covers the objective, spike proofs, the build approach, and what design review changed; after building it adds build, code-review, reality-testing results and learnings. A forked narrator subagent writes story-sections.json; render_story.py renders the HTML; then you're asked to start /build-slice when ready."
 when_to_use: "Trigger phrases: /slice-story, 'tell the story of this slice', 'plain-language slice report', 'overview before build', 'explain this slice for non-engineers'. Auto-invoked after /critique ONLY when the design review surfaced >=1 finding to narrate (a clean zero-finding review or a skipped low-tier Critic hands straight to /build-slice); always user-invokable any time to get a readable report of where a slice stands. Optional arg: a slice id (default: the active slice)."
 argument-hint: "[slice-id]"
 allowed-tools: Read, Write, Bash, Agent, SendUserFile
@@ -39,6 +39,7 @@ The printed `active_slice_dir` is **the ONE authoritative `<target-slice>` path*
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
 ARG="${ARGUMENTS[0]:-}"   # a slice id (e.g. /commit-slice's on-ship auto-emit) may target an ARCHIVED slice
 if [ -n "$ARG" ]; then SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --slice "$ARG" --path-only)"; else SDIR="$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"; fi
+rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
 $PY -c "import json,glob,os,sys; d=sys.argv[1] or None; have=[os.path.basename(f) for f in sorted(glob.glob(f'{d}/*.json'))] if d else []; mb=json.load(open(f'{d}/mission-brief.json',encoding='utf-8')) if d and os.path.exists(f'{d}/mission-brief.json') else {}; ms=json.load(open(f'{d}/milestone.json',encoding='utf-8')) if d and os.path.exists(f'{d}/milestone.json') else {}; print(json.dumps({'active_slice_dir':d,'slice':mb.get('slice'),'title':mb.get('title'),'mode':mb.get('mode'),'risk_tier':mb.get('risk_tier'),'stage':ms.get('stage'),'artifacts_present':have},indent=2))" "$SDIR" 2>/dev/null || echo "{}"
 ```
 
@@ -107,6 +108,8 @@ translate-don't-transcribe table, the banned-jargon list, the output schema, ton
 Slice: <slice-id> — <title>
 Mode: <minimal | standard | heavy>   Risk tier: <low | medium | high>
 Lifecycle stage reached: <pre-build | built | reviewed | validated | shipped>
+Write target (absolute): <target-slice>/story-sections.json
+Delivery (record verbatim as the `delivery` field): {"status": "<proactive|normal>", "auto_invoked": <true|false>}
 
 # mission-brief.json
 <full JSON>
@@ -130,24 +133,41 @@ Lifecycle stage reached: <pre-build | built | reviewed | validated | shipped>
 <full JSON of build-log / code-review / validation / reflection, each labelled, or "none yet">
 ```
 
-**Await the real agent — never fabricate its output.** The narrator returns ONE JSON object (the
-`aisdlc/story-sections@1` schema; see `examples/story-sections.json`) as its final message. Build the report
-ONLY from what it returns.
+**Await the real agent — never fabricate its output.** The narrator WRITES `<target-slice>/story-sections.json`
+itself (the `aisdlc/story-sections@1` schema; see `examples/story-sections.json`) and returns a SHORT receipt
+(path, stage, section count, headline) — never the full JSON back into this context. Build the report ONLY from
+the file it wrote; do not hand-write the story yourself (that defeats the plain-language synthesis).
 
-If the returned text is wrapped in a ```` ```json ```` fence or has stray prose around it, strip to the JSON
-object before writing. If it is not valid JSON, ask the narrator to re-emit raw JSON only — do not hand-write
-the story yourself (that defeats the plain-language synthesis). **Bounded retry**: if the narrator fails twice
-(invalid JSON / timeout / null), STOP and tell the user: _"The story narrator failed — try `/slice-story`
-again later, or proceed to `/build-slice` without a narrated story."_ Never loop indefinitely.
+**Bounded retry**: if the Step-3 verification fails (file missing / invalid JSON / wrong slice or delivery), or
+the narrator times out / returns null, re-prompt it ONCE to re-write the file. If it fails twice, STOP and tell
+the user: _"The story narrator failed — try `/slice-story` again later, or proceed to `/build-slice` without a
+narrated story."_ Never loop indefinitely.
 
-## Step 3 — write story-sections.json
+## Step 3 — verify story-sections.json (receiving inspection)
 
-Write the narrator's returned object to `<target-slice>/story-sections.json` (raw-write — this is a per-slice
-active-folder artifact, not a shared aggregate, so SVW-1's `vault_edit` requirement does not apply). Set/keep
-`slice`, `title`, `stage`, `mode`, `risk_tier` consistent with Step 0 if the narrator left any blank. Also record
-the delivery mode you will use in Step 5 as a structured field — `"delivery": {"status": "proactive"|"normal",
-"auto_invoked": true|false}` — so the delivery behavior is auditable from the artifact, not just prose-decided
-(auto_invoked = this run was spawned by `/critique` or `/commit-slice`, not typed by the user).
+The narrator wrote `<target-slice>/story-sections.json` itself (raw-write is correct — a per-slice
+active-folder artifact, not a shared aggregate, so SVW-1's `vault_edit` requirement does not apply). The
+`delivery` field it recorded — `{"status": "proactive"|"normal", "auto_invoked": true|false}`, handed to it
+verbatim in the Step-2 prompt (auto_invoked = this run was spawned by `/critique` or `/commit-slice`, not typed
+by the user) — keeps the delivery behavior auditable from the artifact. Verify the file WITHOUT pulling its
+contents into this context (the receipt is not proof; this check is):
+
+```bash
+TS="<target-slice>"
+TS="$TS" $PY -c "
+import json, os
+p = os.path.join(os.environ['TS'], 'story-sections.json')
+d = json.load(open(p, encoding='utf-8'))
+assert d.get('_schema') == 'aisdlc/story-sections@1', 'wrong _schema'
+assert d.get('sections'), 'no sections'
+assert d.get('delivery', {}).get('status') in ('proactive', 'normal'), 'delivery missing/invalid'
+print(json.dumps({'ok': True, 'slice': d.get('slice'), 'stage': d.get('stage'),
+                  'sections': len(d['sections']), 'headline': d.get('headline')}))
+"
+```
+
+Check the printed `slice`/`stage` against Step 0. Any assertion failure or mismatch → the Step-2 bounded retry
+(re-prompt the narrator once, then STOP). Do NOT repair the file by hand-writing story content yourself.
 
 ## Step 4 — render the ONE combined story.html
 
@@ -219,7 +239,9 @@ Slice story ready — <slice-id> <title> (<stage-label>).
 A plain-language overview of the objective, what it took to get here, and — if review happened — what changed
 because of it.
 
-When you're ready, run /build-slice to start building.
+When you're ready, run /build-slice to start building. Tip: starting it in a fresh session
+(/clear first) is cheaper and just as safe — all resume state lives in the vault
+(milestone.json), and a lean context lets the build concentrate on this slice.
 ```
 
 **Shipped** (stage == `shipped` — the on-ship auto-emit from `/commit-slice`, or a manual run against an archived
@@ -243,10 +265,10 @@ pre-build story surfaces something that should change the design, the user can l
 - USE the `Agent` tool (`subagent_type: "slice-story"`). The narrator does the synthesis; do not self-narrate in the main thread.
 - Do NOT restate the narrator's persona/rules in the prompt — they live in `agents/slice-story.md`.
 - NO pipeline jargon in the deliverable. The narrator handles translation; if you spot a leaked code (`AC2`, `C1`, `TRI-1`…) in the output, send it back to re-translate.
-- WRITE story.html from the narrator's returned JSON only — never fabricate the story.
+- RENDER story.html only from the story-sections.json the narrator wrote (Step-3-verified) — never fabricate the story.
 - DELIVER the report with `SendUserFile` so it reaches the user wherever they are (phone included). Use `proactive` status when auto-invoked or the user may be away; `normal` when they're watching. Never fail the skill if delivery is unavailable — fall back to the local path.
 - HALT after reporting — never auto-invoke `/build-slice` (it is user-invoked by design).
-- READ-ONLY on source + the rest of the vault: this skill writes only `story-sections.json` + `story.html` in the slice folder.
+- READ-ONLY on source + the rest of the vault: this run writes only `story-sections.json` (the narrator) + `story.html` (the renderer), both in the slice folder.
 
 ## Anti-patterns
 

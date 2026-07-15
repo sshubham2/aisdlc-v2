@@ -1,7 +1,7 @@
 ---
 name: diagnose
 description: "Deep, owner-facing forensic analysis of a target codebase. Builds a code graph via code-review-graph (CRG), runs 11 structured analysis passes (10 general-purpose subagents + one cross-reference pass) plus a diagnose-narrator for the executive summary, then assembles a single self-contained interactive diagnosis.html. Findings are confirmed by the repo owner in-browser; the annotated file feeds /slice-candidates. NEVER modifies source files."
-when_to_use: "Trigger phrases: /diagnose, 'diagnose this codebase', 'audit this repo', 'deep analysis of legacy code', 'forensic codebase review', 'what's wrong with this codebase', 'owner-facing audit'. Use when adopting, auditing, or inheriting an existing repo and you want a comprehensive diagnostic deliverable for the repo owner. Prerequisite: a non-empty directory with code in it. Pass a repo path as $1 (default: cwd). Pass --parallel to opt into the legacy single-message parallel dispatch (default is sequential per ADR-027)."
+when_to_use: "Trigger phrases: /diagnose, 'diagnose this codebase', 'audit this repo', 'deep analysis of legacy code', 'forensic codebase review', 'what's wrong with this codebase', 'owner-facing audit'. Use when adopting, auditing, or inheriting an existing repo and you want a comprehensive diagnostic deliverable for the repo owner. Prerequisite: a non-empty directory with code in it. Pass a repo path as $1 (default: cwd). Pass --parallel to opt into the legacy single-message parallel dispatch (default: sequential)."
 argument-hint: "[path-to-repo] [--parallel]"
 allowed-tools: Bash, Read, Glob, Grep, Write, Agent
 ---

@@ -1,0 +1,178 @@
+{
+  "_schema": "aisdlc/product-scope-items@1",
+  "_provenance": "The REAL run-B decomposition captured by spike-product-scope-decomposition (slice-068 / B1): one of two INDEPENDENT, BLIND decompositions of aivlc's real concept.json by two forked subagents. The `label`, `title` and `depends_on` DAG are the spike's verbatim captured output (see <vault>/spikes/code/spike-product-priority-axis/spike_b1_keystability.py RUN_B and spike-materialize-composition/spike_d1_d2_mv2.py RUN_B). `description`, `user_visible_outcome`, `assumptions` and `verification_plan` are RECONSTRUCTED from aivlc's real concept.json prose -- the spike recorded only keys, titles and the dependency edges, so those four fields are authored, not captured. The load-bearing property this fixture exists to preserve is REAL and captured: the orchestrator (`pipeline-orchestration-engine`) sits behind TWO unshipped dependencies, which is exactly what killed designer-expert's ready-frontier mint rule at spike D1.",
+  "_note": "This is the MODEL's output shape -- the items a /slice-candidates --product decomposition emits. It carries NO ids: identity is minted by the receiver (id_allocator, in-lock), never by the model (B1 measured 22% cross-run key agreement). `depends_on` is expressed in the model's own run-local labels; `persist` rewrites them into minted PS-NNN ids inside the lock.",
+  "items": [
+    {
+      "label": "vendor-reference-spine",
+      "title": "vendor-reference-spine",
+      "description": "Vendor the MIT reference pipeline's deterministic Python spine (scripts/lib) behind a harness-shim, so aivlc can reuse the reference's agent personas and JSON artifact schemas without depending on Claude Code as the runtime.",
+      "user_visible_outcome": "The operator can import aivlc and call a reference spine function (e.g. a vault write) with no Claude Code installed.",
+      "depends_on": [],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "The reference spine's scripts/lib is importable behind a harness-shim without the Claude Code runtime -- i.e. its harness couplings ($CLAUDE_SKILL_DIR, $PY, the SessionStart hook) are shimmable rather than load-bearing.",
+          "blocking": true,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Import the vendored spine in a bare Python process with no Claude Code on PATH; a real vault write round-trips."
+    },
+    {
+      "label": "backend-adapter-interface",
+      "title": "define-backend-adapter-interface",
+      "description": "Define the pluggable backend adapter interface every AI backend implements (prompt in, structured artifact out), so a stage can be routed to any backend without the engine knowing which.",
+      "user_visible_outcome": "A single documented interface an operator can implement to add a new backend.",
+      "depends_on": [],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "One adapter interface can span the real backend spread (Ollama local/cloud, claude -p CLI, Claude API, Gemini, OpenAI Codex, Antigravity) without leaking backend-specific concepts into the engine.",
+          "blocking": true,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Implement the interface twice against two genuinely different real backends (one CLI, one HTTP API) and run the same stage through both unchanged."
+    },
+    {
+      "label": "backend-adapter-implementations",
+      "title": "implement-backend-adapters",
+      "description": "Implement concrete adapters against the interface for the real backends aivlc targets, starting with the two cheapest to prove (a local Ollama server and the claude -p CLI).",
+      "user_visible_outcome": "The operator configures a backend and a real model call returns a schema-valid artifact.",
+      "depends_on": ["backend-adapter-interface"],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "Each target backend can be driven headlessly to return a SCHEMA-VALID artifact -- weaker/local models can be constrained to the JSON contract, not merely prompted toward it.",
+          "blocking": true,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Drive one real stage end-to-end through each implemented adapter against the live backend; assert the emitted artifact validates."
+    },
+    {
+      "label": "pipeline-orchestration-engine",
+      "title": "build-pipeline-orchestration-engine",
+      "description": "The deterministic Python engine that drives the pipeline's stage DAG and adversarial review structure -- auto-advance, halt gates, and stage sequencing. THE CORE PRODUCT: aivlc's 11 shipped slices never once materialized this as a candidate.",
+      "user_visible_outcome": "The operator runs one command and the engine drives a real multi-stage pipeline run to a halt gate.",
+      "depends_on": ["vendor-reference-spine", "backend-adapter-interface"],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "The reference pipeline's control flow (auto-advance vs halt gate) is faithfully expressible as a deterministic stage DAG driven from outside a Claude Code session -- the harness is not itself load-bearing to the control flow.",
+          "blocking": true,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Drive a real 3-stage run (a stage, a halt gate, a resumed stage) against a real backend; assert the observed stage order and halt point match the declared DAG."
+    },
+    {
+      "label": "per-stage-backend-routing",
+      "title": "add-per-stage-backend-routing",
+      "description": "Make backend+model routing a first-class configurable surface per pipeline stage / role, so the operator can mix strong models for adversarial reasoning with cheap local models for mechanical work.",
+      "user_visible_outcome": "The operator routes design-slice to one backend and code-review to another in config, and each stage demonstrably calls the backend it was routed to.",
+      "depends_on": ["pipeline-orchestration-engine", "backend-adapter-implementations"],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "Per-stage routing can be resolved at stage-dispatch time without the engine holding backend-specific state across stages.",
+          "blocking": true,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Route two stages of one real run to two different live backends; assert from each backend's own activity log that it served exactly its routed stage."
+    },
+    {
+      "label": "thin-cli-frontend",
+      "title": "build-thin-cli-frontend",
+      "description": "The thin CLI frontend over the engine -- also the channel through which the human-in-the-loop gates are answered.",
+      "user_visible_outcome": "The operator drives a pipeline run entirely from the terminal.",
+      "depends_on": ["pipeline-orchestration-engine"],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "A CLI can carry every human-in-the-loop gate the pipeline needs (mode pick, plan approval, Critic triage, candidate pick) without a richer UI affordance.",
+          "blocking": true,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "A real operator answers each gate type through the CLI in one uninterrupted run."
+    },
+    {
+      "label": "human-in-the-loop-gates",
+      "title": "implement-human-in-the-loop-gates",
+      "description": "Implement the pipeline's blocking human gates (mode selection, plan approval, Critic triage, candidate pick) as engine-level halts the CLI renders.",
+      "user_visible_outcome": "The engine halts and waits for the operator at each gate, and resumes with the operator's decision recorded.",
+      "depends_on": ["thin-cli-frontend"],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "A halt gate can suspend and resume a run across process boundaries without losing stage state.",
+          "blocking": true,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Halt at a real gate, kill the process, resume, and assert the run continues from the gate with the decision applied."
+    },
+    {
+      "label": "artifact-schema-validation",
+      "title": "validate-stage-artifacts",
+      "description": "Enforce that every stage artifact validates against its JSON schema regardless of which backend produced it -- the operator's core need, since weak backends produce weak JSON.",
+      "user_visible_outcome": "A backend emitting a malformed artifact fails loudly at the stage boundary instead of poisoning downstream stages.",
+      "depends_on": ["vendor-reference-spine", "pipeline-orchestration-engine"],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "Schema violations from a weak backend can be detected and either repaired by a bounded retry or failed VISIBLY -- never silently accepted.",
+          "blocking": true,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Route a stage to a deliberately weak local model; assert the malformed artifact is rejected at the boundary with an actionable message."
+    },
+    {
+      "label": "pipeline-state-resume",
+      "title": "add-pipeline-state-resume",
+      "description": "Persist pipeline run state so an interrupted run resumes from its last completed stage rather than restarting.",
+      "user_visible_outcome": "The operator interrupts a long run and resumes it without redoing completed stages.",
+      "depends_on": ["pipeline-orchestration-engine"],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "Stage state is fully externalizable to the vault -- no in-process state is required to resume a run correctly.",
+          "blocking": true,
+          "spike_status": "unproven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Kill a real run mid-DAG, resume, and assert no completed stage re-executes and the final artifacts are identical to an uninterrupted run."
+    }
+  ]
+}
