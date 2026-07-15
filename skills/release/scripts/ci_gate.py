@@ -29,9 +29,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import pathlib
 import shutil
 import subprocess
 import sys
+
+# --- single-skill import bootstrap (cannot use `python -m` for a bundled script) ---
+_REPO = pathlib.Path(__file__).resolve().parents[3]  # skills/<name>/scripts/X.py -> <plugin>
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
+from scripts.lib import _stdout  # noqa: E402
 
 # gh `conclusion` values that mean the run did NOT pass (skipped/neutral are NOT failures).
 FAIL_CONCLUSIONS = {"failure", "cancelled", "timed_out", "startup_failure", "action_required", "stale"}
@@ -106,6 +114,7 @@ _EXIT = {"green": 0, "red": 1, "pending": 1, "no-run-for-sha": 1, "gh-absent": 3
 
 
 def main(argv: list[str] | None = None) -> int:
+    _stdout.reconfigure_stdout_utf8()
     ap = argparse.ArgumentParser(prog="ci_gate")
     ap.add_argument("--repo-root", default=".")
     ap.add_argument("--branch", required=True, help="integration branch to check (e.g. aisdlc-uat)")
