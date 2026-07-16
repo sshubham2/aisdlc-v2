@@ -104,10 +104,36 @@ T="$(mktemp -d "$TMPD/aisdlc-reflect.XXXXXX")"
 
 For each **Discovered** item:
 - Append to `<vault>/risk-register.json` via `vault_edit append` (R-32 safe channel).
-- Append to `<vault>/candidates.json` via `vault_edit append` (future slice seed). OMIT the `id` — the allocator mints `SC-NNN` in-lock; a caller-supplied id is rejected (slice-019 / [[ADR-013]]).
+- **Capture** to `<vault>/candidates.json` through the **residue gate** — record-on-capture (see below).
 
 For each **Deferred** item:
-- Append to `<vault>/candidates.json` via `vault_edit append` (OMIT the `id` — the allocator mints `SC-NNN` in-lock; a supplied id is rejected).
+- **Capture** to `<vault>/candidates.json` through the **residue gate** — record-on-capture (see below).
+
+### Record-on-capture — the residue gate (`residue_disposition`, slice-072 / [[ADR-077]])
+
+At `/reflect` the owning slice is **closing** — Step 6 auto-archives it in this same run — so there is **no
+resolve-in-owning-slice option** to offer (nothing live to resolve into). Every Deferred/Discovered item is
+therefore **GUARANTEED captured** to `candidates.json`, exactly as before: **the capture is never dropped**
+(regressing today's auto-capture safety net is forbidden). What changes is only that each capture now carries a
+**recorded reason**. Build the candidate payload through `residue_disposition.py`, which stamps `ejected_from`
+(the just-archived owning slice) + a **required, non-empty** `ejection_reason` and **fail-closes** if the reason
+is empty — on refusal you **surface it and re-prompt the user for a reason, you never silently drop the item**.
+The reason is the user's (main-thread); the gate only enforces that a non-empty one was recorded. Then append
+through the SVW-1 `vault_edit` channel, **OMITTING** the `id` (the allocator mints `SC-NNN` in-lock; a supplied
+id is rejected — slice-019 / [[ADR-013]]):
+
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+T="$(mktemp -d "$TMPD/aisdlc-reflect.XXXXXX")"
+# Write the item body (title/description/source/rationale/… — NO id) to "$T/item.json", then build + append:
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/residue_disposition.py" \
+    --item-file "$T/item.json" --ejected-from slice-NNN \
+    --ejection-reason "<why this residue left its owning slice — a recorded, non-empty reason>" \
+    --json > "$T/cand.json"
+rc=$?; [ "$rc" = 0 ] || { echo "STOP: residue gate refused (rc=$rc) — supply a non-empty ejection_reason; NEVER drop the capture" >&2; exit "$rc"; }
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file candidates.json --array candidates --content-file "$T/cand.json"
+rm -rf "$T"
+```
 
 ---
 
