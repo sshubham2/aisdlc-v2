@@ -72,6 +72,102 @@ def _identity(rule: dict) -> tuple:
     )
 
 
+# ── shared build-check-rule shape validator (slice-071 / SC-151 / ADR-075) ──────
+# NOTE (M-add-2): ADR-075 is sealed/append-only; its prose framing corrections live in
+# the slice's design.json, NOT in the ADR body. `_identity` above stays a SEPARATE
+# structural encoder — colocation here does not wire it to this validator, so ADR-075's
+# "removes the 3-site drift" claim is corrected (in design.json) to "removes mint<->audit
+# drift only" (P3). What IS de-drifted: `_as_str_list` + `applies_when_is_fireable` below
+# are the ONE coercion the audit parser (`build_checks_audit._parse_rules` imports
+# `_as_str_list`) AND the fireable predicate share, so 'can this ever fire' cannot diverge
+# from how `_rule_applies` actually reads a rule (M3).
+
+def _as_str_list(value) -> list:
+    """Coerce a JSON field that may be a string or list of strings into a clean list of
+    non-empty stripped strings. THE single coercion shared by the audit's rule parser
+    (`build_checks_audit._parse_rules` imports it) and `applies_when_is_fireable` below, so
+    a rule's 'can this ever fire' decision cannot drift from how `_rule_applies` reads it
+    (slice-071 / M3 — e.g. ``{"keywords": [""]}`` coerces to ``[]`` in BOTH places)."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    out: list[str] = []
+    for item in value:
+        s = str(item).strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def applies_when_is_fireable(applies_when) -> bool:
+    """True iff an `applies_when` object carries at least one trigger that can EVER make
+    ``build_checks_audit._rule_applies`` return True: ``always`` truthy, OR >=1 non-empty
+    ``glob``, OR >=1 non-empty ``keyword``. Anchors alone never fire (they gate keywords);
+    negative_anchors only suppress. Uses ``_as_str_list`` — the SAME coercion the parser
+    uses — so this predicate cannot drift from real firing (slice-071 / M3)."""
+    if not isinstance(applies_when, dict):
+        return False
+    if bool(applies_when.get("always")):
+        return True
+    if _as_str_list(applies_when.get("glob")):
+        return True
+    if _as_str_list(applies_when.get("keywords")):
+        return True
+    return False
+
+
+def validate_rule_shape(rule, *, tier: str) -> list:
+    """Shared structural validator for a build-check rule (slice-071 / ADR-075).
+
+    ``tier='mint'``  — the PRODUCER check at ``vault_edit`` append/update: ``applies_when``
+                       must be a JSON object. A non-object (bare string, list, or
+                       ABSENT/None) enforces NOTHING downstream (build_checks_audit drops
+                       it), so it is rejected at mint. Fireability is NOT checked at mint (a
+                       new ``{}`` is a dict — it mints, and the audit warns; graduated +
+                       migration-safe, M-add-1).
+    ``tier='audit'`` — the CONSUMER endpoint check at ``build_checks_audit``: a non-object
+                       ``applies_when`` is a DROP-causing ``non-object-applies-when`` problem
+                       (hard block), AND a well-typed-but-INERT rule (dict ``applies_when``
+                       with no fireable trigger) is an ``inert`` problem (surfaced, NON-block).
+
+    Returns a list of problem dicts (empty == clean); it NEVER raises — each caller decides
+    the disposition (mint raises ``ValueError`` -> exit 2; audit -> a Critical violation for
+    a drop-causing problem, a visible warning for an inert one). Per M-add-3 a problem names
+    the offending FIELD + the rule's own ``rule``/title text; the ``id`` is populated ONLY
+    when one already exists (an audit-tier rule) — at mint the id is unallocated, so callers
+    must name the field + rule-text + array index, never a BC-PROJ id."""
+    problems: list = []
+    if not isinstance(rule, dict):
+        problems.append({
+            "kind": "non-object-rule", "field": "(rule)", "id": "", "rule_text": str(rule),
+            "message": f"rule is not a JSON object ({type(rule).__name__}); it enforces NOTHING",
+        })
+        return problems
+    rid = str(rule.get("id", "")).strip()
+    text = str(rule.get("rule", "")).strip()
+    aw = rule.get("applies_when")
+    if not isinstance(aw, dict):
+        problems.append({
+            "kind": "non-object-applies-when", "field": "applies_when", "id": rid,
+            "rule_text": text,
+            "message": (f"`applies_when` is not a JSON object "
+                        f"({'absent' if aw is None else type(aw).__name__}); a rule with a "
+                        f"non-object `applies_when` enforces NOTHING until repaired"),
+        })
+        return problems  # cannot assess fireability on a non-object
+    if tier == "audit" and not applies_when_is_fireable(aw):
+        problems.append({
+            "kind": "inert", "field": "applies_when", "id": rid, "rule_text": text,
+            "message": (f"`applies_when` {aw!r} has no fireable trigger (no `always`, "
+                        f"non-empty `glob`, or non-empty `keywords`); the rule can never "
+                        f"fire and enforces nothing until a trigger is added"),
+        })
+    return problems
+
+
 @dataclass
 class CheckResult:
     status: str = "conformant"   # conformant | drift | warn | usage

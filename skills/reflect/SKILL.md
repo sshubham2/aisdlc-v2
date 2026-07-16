@@ -180,7 +180,7 @@ Ask the user:
 > Promote: "Image uploads need EXIF orientation normalization" — third time this slice hit it.
 > Do NOT promote: one-off typo fixes, library version bumps, endpoint-specific bugs.
 
-If yes, gather: **title** (imperative), **severity** (`critical`/`important`), **applies_when** (glob or `always:true`), **rule** (actionable check), **rationale**, **validation_hint**. Build `bc-rule.json` **WITHOUT an `id`** —
+If yes, gather: **title** (imperative), **severity** (`critical`/`important`), **applies_when** (a JSON **object**, e.g. `{"glob": "**/*.py"}` or `{"always": true}` — never a bare string like `always:true`; a non-object `applies_when` is rejected at mint and would enforce nothing), **rule** (actionable check), **rationale**, **validation_hint**. Build `bc-rule.json` **WITHOUT an `id`** —
 `build-checks.json`/`rules` is a MANAGED array: the allocator mints `BC-PROJ-N` in-lock and a caller-supplied id
 is rejected, so two parallel reflects can never collide on an id.
 
