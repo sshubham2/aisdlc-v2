@@ -95,6 +95,15 @@ from typing import Any
 
 from scripts.lib import _stdout
 from scripts.lib._vault_paths import VAULT_ROOT
+# slice-071 / M3: import the ONE coercion + fireable predicate from the shared lib so the
+# audit-tier 'can this fire' decision cannot drift from how `_rule_applies` reads a rule.
+# `_as_str_list` was MOVED to build_checks_integrity (single source); `_rule_applies` below
+# consumes the fields `_parse_rules` coerces with THIS same function.
+from scripts.lib.build_checks_integrity import (
+    _as_str_list,
+    applies_when_is_fireable,
+    validate_rule_shape,
+)
 
 
 # Required fields per rule
@@ -140,10 +149,12 @@ class BuildCheckViolation:
     path: str
     index: int    # 0-based rules[] index; -1 for file-level errors
     rule_id: str  # may be empty for file-level errors
-    kind: str     # parse: "missing-field" | "invalid-severity" | "format"
+    kind: str     # parse: "malformed-rule" (drop-causing: missing key / non-dict
+                  # applies_when — slice-071) | "invalid-severity" | "format"
                   # | "anchor-not-in-keywords" | "negative-anchor-overlaps-positive";
                   # strict gate (BCSG-1): "unacknowledged-critical"
-    severity: str  # "Important" for parse errors; "Critical" for "unacknowledged-critical"
+    severity: str  # "Important" for most parse errors; "Critical" for "malformed-rule"
+                   # (drop-causing) and "unacknowledged-critical"
     message: str
 
     def to_dict(self) -> dict:
@@ -152,20 +163,30 @@ class BuildCheckViolation:
 
 @dataclass
 class AuditResult:
-    """Audit output: rules applicable to this slice + any parse violations."""
+    """Audit output: rules applicable to this slice + any parse violations + warnings.
+
+    ``warnings`` (slice-071 / M-add-1) is a fail-VISIBLE, NON-blocking channel: an INERT
+    rule (well-typed `applies_when` dict with no fireable trigger) is surfaced here rather
+    than dropped silently, but does NOT contribute to the exit code — so escalating a
+    latent inert rule to fail-visible cannot brick an existing/upgraded user vault (no
+    un-migrated hard block; the actively-malformed drop-causing cases still hard-fail via
+    ``violations``)."""
     applicable: list[BuildCheckRule] = field(default_factory=list)
     skipped: list[BuildCheckRule] = field(default_factory=list)
     violations: list[BuildCheckViolation] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "applicable": [r.to_dict() for r in self.applicable],
             "skipped": [r.to_dict() for r in self.skipped],
             "violations": [v.to_dict() for v in self.violations],
+            "warnings": list(self.warnings),
             "summary": {
                 "applicable_count": len(self.applicable),
                 "skipped_count": len(self.skipped),
                 "violation_count": len(self.violations),
+                "warning_count": len(self.warnings),
                 "critical_applicable": sum(
                     1 for r in self.applicable if r.severity.lower() == "critical"
                 ),
@@ -208,21 +229,8 @@ def _matches_glob(path: str, pattern: str) -> bool:
     return re.fullmatch(regex, norm_path) is not None
 
 
-def _as_str_list(value: Any) -> list[str]:
-    """Coerce a JSON field that may be a string or list of strings into a clean
-    list of non-empty stripped strings."""
-    if value is None:
-        return []
-    if isinstance(value, str):
-        value = [value]
-    if not isinstance(value, (list, tuple)):
-        return []
-    out: list[str] = []
-    for item in value:
-        s = str(item).strip()
-        if s:
-            out.append(s)
-    return out
+# `_as_str_list` now lives in scripts.lib.build_checks_integrity (imported above) — the
+# single coercion shared with the mint-tier validator + `applies_when_is_fireable` (M3).
 
 
 def _dedup_lower(values: list[str]) -> tuple[str, ...]:
@@ -240,20 +248,29 @@ def _parse_rules(
     data: Any,
     source: str,
     path: str,
-) -> tuple[list[BuildCheckRule], list[BuildCheckViolation]]:
-    """Parse rules + violations from a loaded build-checks.json document."""
+) -> tuple[list[BuildCheckRule], list[BuildCheckViolation], list[str]]:
+    """Parse rules + violations + warnings from a loaded build-checks.json document.
+
+    slice-071 (SC-151 / ADR-075): a DROP-causing malformed rule (missing required key,
+    non-dict `applies_when`) is labelled a distinct ``malformed-rule`` Critical violation
+    with an 'enforces NOTHING' message (M2 — the gate already FAILs on these, this improves
+    the label/diagnosability). A well-typed but INERT rule (dict `applies_when` with no
+    fireable trigger — silently `skipped` before) is surfaced as a fail-VISIBLE, NON-blocking
+    ``warnings`` string (M-add-1), so it no longer enforces nothing in silence but also
+    cannot brick an existing/upgraded vault."""
     rules: list[BuildCheckRule] = []
     violations: list[BuildCheckViolation] = []
+    warnings: list[str] = []
 
     raw = data.get("rules") if isinstance(data, dict) else None
     if raw is None:
-        return rules, violations  # no rules key -> empty (silent)
+        return rules, violations, warnings  # no rules key -> empty (silent)
     if not isinstance(raw, list):
         violations.append(BuildCheckViolation(
             path=path, index=-1, rule_id="", kind="format", severity="Important",
             message="`rules` is not a JSON array.",
         ))
-        return rules, violations
+        return rules, violations, warnings
 
     for idx, entry in enumerate(raw):
         if not isinstance(entry, dict):
@@ -270,13 +287,17 @@ def _parse_rules(
             f for f in _REQUIRED_FIELDS if not str(entry.get(f, "")).strip()
         )
         if missing:
+            # slice-071 / M2: missing a required key is DROP-causing (the rule is skipped
+            # and enforces nothing). Already exit 1 today; escalate the LABEL to a distinct
+            # `malformed-rule` Critical so it stands out of the deferrable Important floor.
             violations.append(BuildCheckViolation(
-                path=path, index=idx, rule_id=rule_id, kind="missing-field",
-                severity="Important",
+                path=path, index=idx, rule_id=rule_id, kind="malformed-rule",
+                severity="Critical",
                 message=(
                     f"rules[{idx}] (id={rule_id or '?'}): missing required "
                     f"field(s): {', '.join(missing)}. Required: "
-                    f"{', '.join(sorted(_REQUIRED_FIELDS))}."
+                    f"{', '.join(sorted(_REQUIRED_FIELDS))}. This rule is DROPPED and "
+                    f"enforces NOTHING until repaired."
                 ),
             ))
             continue
@@ -300,10 +321,19 @@ def _parse_rules(
         if applies_when is None:
             applies_when = {}
         if not isinstance(applies_when, dict):
+            # slice-071 / M2: a non-dict `applies_when` is DROP-causing (build drops the
+            # rule -> enforces nothing). Already exit 1 today; escalate the LABEL to a
+            # distinct `malformed-rule` Critical with an 'enforces NOTHING' message. This is
+            # the exact BC-PROJ-11 shape (bare string) the mint guard now also rejects.
             violations.append(BuildCheckViolation(
-                path=path, index=idx, rule_id=rule_id, kind="format",
-                severity="Important",
-                message=f"rule {rule_id}: `applies_when` is not a JSON object.",
+                path=path, index=idx, rule_id=rule_id, kind="malformed-rule",
+                severity="Critical",
+                message=(
+                    f"rule {rule_id}: `applies_when` is not a JSON object "
+                    f"({type(applies_when).__name__}). This rule is DROPPED and enforces "
+                    f"NOTHING until repaired (expected an object, e.g. "
+                    f'{{"glob": "**/*.py"}} or {{"always": true}}).'
+                ),
             ))
             continue
 
@@ -342,6 +372,18 @@ def _parse_rules(
                     ),
                 ))
 
+        # slice-071 / M-add-1: a well-typed but INERT rule (dict `applies_when` with no
+        # fireable trigger) parses fine yet can never fire — silently `skipped` before. Route
+        # it through the SHARED audit-tier validator (whose fireable check is the SAME
+        # coercion `_rule_applies` uses — M3) and surface it as a fail-VISIBLE, NON-blocking
+        # warning (does NOT touch the exit code, so it cannot brick an upgraded user vault).
+        for _prob in validate_rule_shape(entry, tier="audit"):
+            if _prob.get("kind") == "inert":
+                warnings.append(
+                    f"[warning] rule {rule_id} (rules[{idx}]): {_prob['message']} "
+                    f"This is fail-visible but NON-blocking — repair or remove it."
+                )
+
         rule_text = str(entry.get("rule", "")).strip()
         rules.append(BuildCheckRule(
             source=source,
@@ -357,7 +399,7 @@ def _parse_rules(
             index=idx,
         ))
 
-    return rules, violations
+    return rules, violations, warnings
 
 
 def _negative_anchor_match(rule: BuildCheckRule, slice_text: str) -> bool:
@@ -491,10 +533,11 @@ def audit_slice(
             data = None
 
         if data is not None:
-            rules, violations = _parse_rules(
+            rules, violations, warnings = _parse_rules(
                 data, source="project", path=str(project_checks),
             )
             result.violations.extend(violations)
+            result.warnings.extend(warnings)
             for r in rules:
                 if _rule_applies(r, changed_files, slice_text):
                     result.applicable.append(r)
@@ -541,6 +584,13 @@ def _format_human(
                 f"  [{v.severity}] {v.path} {loc} ({v.kind})\n"
                 f"    {v.message}\n\n"
             )
+
+    # slice-071 / M-add-1: fail-VISIBLE, NON-blocking warnings (inert rules). Printed so
+    # they are never silent, but they do NOT contribute to the gate exit code.
+    if result.warnings:
+        out.append(f"{len(result.warnings)} build-checks warning(s) (non-blocking):\n\n")
+        for w in result.warnings:
+            out.append(f"  {w}\n\n")
 
     if not result.applicable:
         out.append("No build-checks rules apply to this slice.\n")

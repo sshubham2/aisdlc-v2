@@ -337,16 +337,19 @@ def test_set_refused_on_managed_array_path(run_script, vault):
 def test_append_build_checks_mints_bc_id(run_script, vault):
     # review sweep 2026-07: /reflect's BC-PROJ promotion is now allocator-minted (managed
     # kind 'bc'), seeded above the live max, UNPADDED per the established BC-PROJ-9/10 style.
+    # slice-071/SC-151: a minted bc rule must carry an object-shaped `applies_when` (the mint
+    # shape guard rejects a non-object/absent one), so the payloads carry a valid applies_when
+    # — this test exercises id allocation, not the shape guard (see the malformed-mint test).
     f = "build-checks.json"
     (vault / f).write_text(json.dumps({"rules": [
         {"id": "BC-PROJ-9", "title": "a"}, {"id": "BC-PROJ-10", "title": "b"}]}))
     r = _ve(run_script, vault, "append", "--file", f, "--array", "rules",
-            "--json", '{"title": "Normalize EXIF orientation", "severity": "important"}')
+            "--json", '{"title": "Normalize EXIF orientation", "severity": "important", "applies_when": {"always": true}}')
     assert r.returncode == 0, r.stderr
     data = json.loads((vault / f).read_text(encoding="utf-8"))
     assert data["rules"][-1]["id"] == "BC-PROJ-11"
     # a caller-supplied id is rejected (the no-explicit-PK guard, slice-019/AC2)
     r2 = _ve(run_script, vault, "append", "--file", f, "--array", "rules",
-             "--json", '{"id": "BC-PROJ-99", "title": "x"}')
+             "--json", '{"id": "BC-PROJ-99", "title": "x", "applies_when": {"always": true}}')
     assert r2.returncode == 2
     assert "minted in-lock" in r2.stderr

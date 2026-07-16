@@ -444,6 +444,27 @@ def _cmd_append(args: argparse.Namespace) -> int:
         # IN-LOCK and REJECTS any caller-supplied id (the no-explicit-PK guard). The seed floor is
         # computed once from live ∪ archive; the persisted counter is authoritative thereafter.
         kind = _managed_kind_for(_root(args), target, key)
+        # slice-071 / SC-151 (ADR-075): mint-time shape guard for build-check rules. A rule
+        # whose `applies_when` is not a JSON object silently enforces NOTHING downstream
+        # (build_checks_audit drops it), so reject it at MINT. Placed right after the kind
+        # lookup and BEFORE the --stdin duplicate-suppressor + id allocation (m2) so no path
+        # can return a false success for a malformed rule. The message names the field +
+        # rule-text + array index, NEVER a BC-PROJ id (unallocated here — M-add-3). raise
+        # ValueError -> _run_mutate exit 2 + safe_mutate_text leaves the file untouched. The
+        # UPDATE write leg has its own post-mutation guard (_cmd_update — M1).
+        if kind == "bc":
+            from scripts.lib.build_checks_integrity import validate_rule_shape
+            for _off, _rule in enumerate(element if isinstance(element, list) else [element]):
+                _problems = validate_rule_shape(_rule, tier="mint")
+                if _problems:
+                    _p = _problems[0]
+                    raise ValueError(
+                        f"vault_edit append: refusing to mint a malformed build-check rule "
+                        f"at rules[{len(arr) + _off}] — {_p['message']}. "
+                        f"(rule text: {_p['rule_text']!r}). Fix the `applies_when` shape "
+                        f"(an object, e.g. {{\"glob\": \"**/*.py\"}} or {{\"always\": true}}) "
+                        f"and re-append; nothing was written."
+                    )
         # slice-050 / SC-041 (ADR-040 + ADR-043): bounded, --stdin-scoped duplicate guard. Runs
         # BEFORE the id-mint so the PRE-mint element compares against the id-stripped existing
         # records. On a hit, raise DuplicateAppendSuppressed — safe_mutate_text leaves the target
@@ -542,6 +563,21 @@ def _cmd_update(args: argparse.Namespace) -> int:
             if not isinstance(lst, list):
                 raise ValueError(f"--append target {field!r} is not a JSON array")
             lst.append(elem)
+        # slice-071 / SC-151 (ADR-075 / M1): POST-mutation shape guard on the update leg. The
+        # managed guard above refuses only the id KEY; `update --set applies_when=<string>` was
+        # proven OPEN (exit 0, live rule corrupted). Re-validate the RESULTING record and raise
+        # if `applies_when` is no longer a JSON object -> _run_mutate exit 2, file untouched. The
+        # record already carries an id here, so the message may name it (M-add-3, audit-side).
+        if kind == "bc":
+            from scripts.lib.build_checks_integrity import validate_rule_shape
+            _problems = validate_rule_shape(rec, tier="mint")
+            if _problems:
+                _p = _problems[0]
+                raise ValueError(
+                    f"vault_edit update: refusing to write a malformed build-check rule "
+                    f"{rec.get('id', '?')!r} — {_p['message']}. The update is rejected and "
+                    f"{target.name} is left unchanged; fix the `applies_when` shape and retry."
+                )
         return _dump(data)
 
     return _run_mutate(target, mutate)
