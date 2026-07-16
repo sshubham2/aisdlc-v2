@@ -9,7 +9,9 @@
     "started_at": "timestamp the slice started (set when /slice claims the candidate); null until claimed",
     "assumptions[].spike_status": "unproven | proving | proven | failed  (the BINARY gate -- `conditional` is deliberately NOT a value here; blocking failed => slice halts at the /risk-spike step-0 gate until fallback is re-spiked)",
     "assumptions[].spike_verdict": "null | go | no-go | conditional  (the spike's TERNARY verdict, set by risk-spike's terminal write alongside spike_status; absent/null on legacy records = unknown -- never default-filled; ADR-002)",
-    "assumptions[].spike_constraints": "string[] -- the CONDITIONAL verdict's named constraints the design must respect; REQUIRED non-empty when spike_verdict=conditional; RE-SET to [] on every non-conditional terminal write (vault_edit --set cannot delete keys); artifact_lint flags a non-conditional verdict carrying non-empty constraints as a stale leak"
+    "assumptions[].spike_constraints": "string[] -- the CONDITIONAL verdict's named constraints the design must respect; REQUIRED non-empty when spike_verdict=conditional; RE-SET to [] on every non-conditional terminal write (vault_edit --set cannot delete keys); artifact_lint flags a non-conditional verdict carrying non-empty constraints as a stale leak",
+    "ejected_from": "slice-072 (ADR-077): OWNING slice a residue-born candidate was ejected/captured FROM (slice-NNN). Present ONLY on residue-born candidates (reflect record-on-capture of a Deferred/Discovered item; build-slice mint-split). NORMAL candidates OMIT this key entirely (never null). Sibling of ejection_reason -- built by scripts/lib/residue_disposition.py.",
+    "ejection_reason": "slice-072 (ADR-077): the RECORDED, non-empty reason the residue left its owning slice (the legitimate case being an ENVIRONMENT-forced cut no slice budget could absorb). Fail-closed: residue_disposition.py refuses to build a reason-less capture. artifact_lint runs a presence-SYMMETRIC per-row co-constraint keyed on VALUE truthiness -- `ejected_from` truthy <=> `ejection_reason` non-empty; normal rows omit BOTH keys."
   },
   "project": "<project name>",
   "updated": "<stamped by tooling>",
@@ -113,6 +115,28 @@
       "verification_plan": "Full test suite green + grep confirms zero references to the shim.",
       "history": [
         { "event": "created", "by": "slice-candidates", "at": "<ts>", "ref": "diagnosis.html#finding-03a-dead-code-7" }
+      ]
+    },
+    {
+      "id": "SC-041",
+      "title": "extract-shared-retry-helper",
+      "status": "candidate",
+      "progress": "not-started",
+      "slice": null,
+      "claimed_by": null,
+      "started_at": null,
+      "source": [{ "type": "reflection-deferred", "ref": "slice-072" }],
+      "description": "Pull the duplicated retry backoff into a shared helper.",
+      "rationale": "Deferred out of slice-072 as an out-of-scope cut; recorded on capture so the cut is not forgotten.",
+      "user_visible_outcome": "No user-visible change; one shared retry path instead of duplicated backoff logic.",
+      "dependencies": [],
+      "priority": { "score": 3, "likelihood_impact": "low×low", "severity": "low", "effort": "S", "blast_radius": "shared/lib" },
+      "assumptions": [],
+      "ejected_from": "slice-072",
+      "ejection_reason": "Out of budget for slice-072; a deliberate out-of-scope cut recorded on capture (residue provenance, ADR-077).",
+      "verification_plan": "Full test suite green + both call sites use the shared helper.",
+      "history": [
+        { "event": "created", "by": "reflect", "at": "<ts>", "ref": "slice-072#deferred" }
       ]
     }
   ],
