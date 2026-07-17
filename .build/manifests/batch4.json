@@ -16,7 +16,7 @@
     "methodology_tools": [
       {
         "name": "project_frame_synth",
-        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py\" --repo-root . --slice-dir <vault>/slices/slice-NNN-<name>",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py\" --slice-dir <vault>/slices/slice-NNN-<name>",
         "purpose": "Synthesizes project Identity/Trajectory/Impact frame to give the Critic strategic-direction context (PFS-1/ADR-080)"
       },
       {
@@ -228,7 +228,7 @@
     "methodology_tools": [
       {
         "name": "project_frame_synth",
-        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py\" --repo-root . --slice-dir <vault>/slices/slice-NNN-<name>",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py\" --slice-dir <vault>/slices/slice-NNN-<name>",
         "purpose": "Synthesizes project frame so the meta-Critic can re-check the first Critic's review against strategic direction (PFS-1/ADR-080)"
       },
       {
