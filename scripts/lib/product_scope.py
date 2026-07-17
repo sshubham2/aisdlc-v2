@@ -623,7 +623,30 @@ def _check_deps(items: list[dict], where) -> None:
                 )
 
 
-def _check_contract(items: list[dict], *, exempt_spiked: frozenset[str] = frozenset()) -> None:
+_CONTRACT_FIELD_MEANING = {
+    "verification_plan": "how the capability will be CHECKED against reality",
+    "user_visible_outcome": "what the user VISIBLY gets when it works",
+}
+
+
+def _nonempty_contract_str(value: object) -> bool:
+    """Shape-level membership for a contract field: a non-empty string after `.strip()`.
+
+    The `isinstance(str)` guard is deliberate (slice-076 / critique m2). A bare `str(value or '')`
+    coercion would let a NON-string pass -- `str(['a','b'])` is a truthy ``"['a', 'b']"`` -- and the
+    value would then persist as a list a downstream string op misreads. That is the parser
+    differential the LangSec frame (ADR-087) exists to eliminate, so a non-string REFUSES here rather
+    than coercing. `.strip()` refuses whitespace-only ('   '), the 'no real way to check itself' the
+    slice rejects."""
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _check_contract(
+    items: list[dict],
+    *,
+    exempt_spiked: frozenset[str] = frozenset(),
+    prev_by_id: dict[str, dict] | None = None,
+) -> None:
     """The model->vault decomposition contract. TWO-PHASE (slice-073 / ADR-079 §1).
 
     Every scope item must carry a title, a label, and >=1 BLOCKING assumption (ADR-067 §5). The
@@ -658,6 +681,17 @@ def _check_contract(items: list[dict], *, exempt_spiked: frozenset[str] = frozen
     NON-empty list, which is maximally misleading at exactly the boundary the message exists to
     explain. Three distinct causes, named distinctly: genuinely absent / present-but-none-blocking /
     present-but-all-proven-and-not-exempt.
+
+    slice-076 / ADR-087 — TWO CONTRACT-COMPLETENESS FIELDS. `verification_plan` and
+    `user_visible_outcome` are the fields that give a capability MEANING; both are demanded here in
+    the Phase-1 band (never waived by `exempt_spiked` -- a meaning-giving field is orthogonal to
+    spike status). The check is SHAPE-LEVEL only: a non-empty string, NOT a runnable/testable plan
+    (a placeholder like 'TODO' still passes) -- the message says so and disclaims a testability
+    guarantee (AC4 / A2). On REVISE the value validated is the EFFECTIVE one the persist merge
+    (:1328/:1331) will actually WRITE -- `it.get(field) or prev.get(field)`, via the caller-supplied
+    `prev_by_id` map (mirroring `exempt_spiked`: persist passes none -> strict, effective == item;
+    revise passes the in-lock `cur`). So the check and the write agree on the same value, and neither
+    a whitespace-only nor a non-string field can slip past the check to be persisted.
     """
     for it in items:
         if not str(it.get("title") or "").strip():
@@ -684,6 +718,24 @@ def _check_contract(items: list[dict], *, exempt_spiked: frozenset[str] = frozen
                 f"step-0, the pipeline's reality gate, on exactly the least-understood work in the "
                 f"product (ADR-067 section 5). Add a blocking assumption and re-run.",
             )
+
+        # Phase 1 (slice-076 / ADR-087) — the two contract-completeness fields must be PRESENT and
+        # non-empty, ALWAYS, on both verbs. Validated on the EFFECTIVE value (item OR prev) so the
+        # check agrees with the persist merge at :1328/:1331; on persist `prev_by_id` is None, so
+        # `prev` is {} and the effective value is the item's own field (strict).
+        prev = (prev_by_id or {}).get(iid) or {}
+        for field, meaning in _CONTRACT_FIELD_MEANING.items():
+            effective = it.get(field) or prev.get(field)   # mirrors the bare `or` of :1328/:1331
+            if not _nonempty_contract_str(effective):
+                raise _Refuse(
+                    2, "usage",
+                    f"scope item {named} has no non-empty `{field}` -- the field that states "
+                    f"{meaning}. A capability that declares neither how it is checked nor what the "
+                    f"user gets is untestable prose, so the crossing refuses it. NOTE: this is a "
+                    f"SHAPE-LEVEL check -- it requires a non-empty string, NOT a runnable or testable "
+                    f"plan; presence is necessary, not sufficient (a placeholder like 'TODO' still "
+                    f"passes). Supply a non-empty `{field}` and re-run.",
+                )
 
         # Phase 2 — it must still be UNPROVEN, unless this item has already been through step-0.
         if iid and iid in exempt_spiked:
@@ -743,6 +795,23 @@ def _topo(items: list[dict], dep_key) -> list[dict]:
 
 # ── materialize — the deterministic, idempotent, create-only mint ────────────────────────────────
 
+def _require_contract_field(item: dict, field: str) -> str:
+    """Read a contract field the single recognizer (`_check_contract`) has already guaranteed
+    non-empty. Fail-VISIBLE belt-and-braces (slice-076 / ADR-087): NOT a second recognizer -- it
+    converts a would-be SILENT bug (a `None` `user_visible_outcome`, or the `KeyError`/placeholder
+    the deleted repair used to mask an empty `verification_plan`) into a labelled `_Refuse` naming
+    the item, should an unrecognized item ever reach materialize."""
+    value = item.get(field)
+    if not _nonempty_contract_str(value):
+        raise _Refuse(
+            2, "usage",
+            f"materialize reached scope item {(item.get('id') or _label(item))!r} with an empty or "
+            f"non-string `{field}` -- the contract recognizer (_check_contract) should have refused "
+            f"it upstream. Refusing to mint a candidate from an unrecognized item.",
+        )
+    return value
+
+
 def _candidate_from(item: dict, sc_id: str, dep_sc: list[str], ts: str) -> dict:
     """The FULL candidate record (M-add-4), mirroring build_backlog._candidate_from field-for-field."""
     blocking = [a for a in item.get("assumptions") or [] if a.get("blocking")]
@@ -761,7 +830,7 @@ def _candidate_from(item: dict, sc_id: str, dep_sc: list[str], ts: str) -> dict:
             f"materialized so /slice can pick it at all. {len(blocking)} blocking assumption(s) "
             f"unproven -- /risk-spike step-0 gates this candidate."
         ),
-        "user_visible_outcome": item.get("user_visible_outcome"),
+        "user_visible_outcome": _require_contract_field(item, "user_visible_outcome"),
         "dependencies": dep_sc,
         "priority": {
             "score": PRODUCT_PRIORITY["score"],
@@ -773,9 +842,10 @@ def _candidate_from(item: dict, sc_id: str, dep_sc: list[str], ts: str) -> dict:
             "blast_radius": f"product-scope: {_label(item)}",
         },
         "assumptions": _normalize_assumptions(item),
-        "verification_plan": item.get("verification_plan")
-            or f"Prove the blocking assumption(s) at /risk-spike step-0, then verify "
-               f"{item.get('user_visible_outcome') or 'the stated outcome'} against reality.",
+        # slice-076 / ADR-087: the placeholder-substitution repair is DELETED. An empty plan is
+        # refused at the recognizer (`_check_contract`), never masked here into a synthesised string
+        # while scope.json stays empty (the parser differential the LangSec frame exists to close).
+        "verification_plan": _require_contract_field(item, "verification_plan"),
         "history": [{"event": "created", "by": "slice-candidates", "at": ts, "ref": item["id"]}],
     }
 
@@ -1232,7 +1302,10 @@ def cmd_revise(vault: Path, args) -> dict:
         live = _load_json(vault / "candidates.json").get("candidates") or []
         exempt = {ref for c in _observed(vault, [c for c in live if isinstance(c, dict)])
                   if (ref := owner_ref(c))} & set(cur)
-        _check_contract(items_in, exempt_spiked=frozenset(exempt))
+        # slice-076 / ADR-087 + M-add-1: pass the in-lock `cur` as `prev_by_id` so the two
+        # contract-completeness fields are validated on the EFFECTIVE value (item OR prev) the persist
+        # merge at :1328/:1331 will write -- the check and the write agree on the same value.
+        _check_contract(items_in, exempt_spiked=frozenset(exempt), prev_by_id=cur)
 
         ordered = _topo(items_in, lambda it: str(it.get("id") or _label(it)))
         key_to_ps: dict[str, str] = {}
@@ -1335,6 +1408,12 @@ def cmd_materialize(vault: Path, args) -> dict:
         )
     if args.scope_file:
         items = _load_items(args.scope_file)
+        # slice-076 / ADR-087 (m3 + M-add-2): the dry-run --scope-file replay reaches _candidate_from
+        # WITHOUT the write-path recognizer (_load_items runs only _check_identities). Recognize the
+        # replayed items here -- strict/no-prev, exactly like persist -- so an empty verification_plan
+        # or user_visible_outcome refuses BY NAME instead of leaking a silent None / bare index onto
+        # the read surface. (The WRITE path via --scope-file is already refused above, C7.)
+        _check_contract(items)
     else:
         items = [i for i in _scope(vault, required=True).get("items") or [] if isinstance(i, dict)]
     return _materialize(vault, items, dry_run=bool(args.dry_run),
