@@ -131,7 +131,7 @@ Pattern-recognition inputs (query JSON vault directly; use code-review-graph / C
 
 Project-frame (PFS-1): run via Bash and capture stdout:
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir <active-slice-folder>
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --slice-dir <active-slice-folder>
 ```
 On non-zero/empty output: pass `(project-frame unavailable)` — advisory, never a gate.
 

@@ -292,7 +292,7 @@
     "methodology_tools": [
       {
         "name": "project_frame_synth",
-        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py\" --repo-root . --slice-dir <vault>/slices/slice-NNN-<name>",
+        "invocation": "$PY \"${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py\" --slice-dir <vault>/slices/slice-NNN-<name>",
         "purpose": "Emit an ephemeral <=40-line project-frame (Identity / Trajectory / Impact) so the design is direction-aware before any writing begins; advisory, never a gate."
       }
     ],
