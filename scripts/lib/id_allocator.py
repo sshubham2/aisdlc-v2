@@ -34,12 +34,20 @@ Why `ps` exists (slice-068): the model's decomposition of a concept into product
 `outside data` — spike B1 measured only 22% cross-run key agreement between two BLIND decompositions
 of the SAME concept, and 5 of 7 semantically-identical items (including the orchestrator itself)
 drifted their key. So a model-emitted key can never be a cross-run identity, and `ps` ids are minted
-by the RECEIVER, in-lock, exactly like every other managed kind. `product-scope.json`/`items` is
-deliberately NOT in `vault_edit._MANAGED_KIND`: product_scope.persist must rewrite the model's
-run-local depends_on labels into minted ids INSIDE one lock, which `vault_edit append` (which mints
-internally and returns nothing to the caller) cannot express — so persist calls `reject_supplied_id`
-itself, as the first statement in its own mutate closure. This follows the risk-register `risks[]`
-precedent documented at vault_edit.py:137-140.
+by the RECEIVER, in-lock, exactly like every other managed kind.
+
+`product-scope.json`/`items` IS registered in `vault_edit._MANAGED_KIND` (slice-073 / [[ADR-080]],
+which supersedes [[ADR-067]] §3 on this point). The append-side rationale that once justified its
+ABSENCE still holds and is unchanged: product_scope.persist must rewrite the model's run-local
+depends_on labels into minted ids INSIDE one lock, which `vault_edit append` (which mints internally
+and returns nothing to the caller) cannot express — so persist does its own `safe_mutate_text` and
+calls `reject_supplied_id` itself, as the first statement in its own mutate closure. It does not
+route through vault_edit. What that argument MISSED is that one _MANAGED_KIND entry drives FOUR legs:
+`remove` and `set --path` were each deleting a scope item at rc=0 with no record, so the entry is
+required for the REMOVAL legs (the `ps` APPEND leg is refused outright there instead of minting —
+a raw append would produce a real-id, contract-free item that SKIPS /risk-spike step-0). Registering
+it also means `ps` ids are RETIRABLE (`revise --cut`), which is why `seed_max_for('ps')` below scans
+the revisions[] ledger and not just items[].
 """
 from __future__ import annotations
 
@@ -177,9 +185,32 @@ def seed_max_for(vault, kind: str, data: dict) -> int:
         return scan_max([r.get("id") for r in data.get("rules", []) if isinstance(r, dict)], "bc")
     if kind == "r":  # risk-register.json risks[] — retired risks stay in-file (no archive), so
         return scan_max([r.get("id") for r in data.get("risks", []) if isinstance(r, dict)], "r")
-    if kind == "ps":  # product-scope.json items[] — create-only + revise-preserves-by-id, so the
-        # live items[] IS the full history: an id is never retired and never moves to an archive.
-        return scan_max([i.get("id") for i in data.get("items", []) if isinstance(i, dict)], "ps")
+    if kind == "ps":
+        # product-scope.json items[] PLUS the revisions[] retirement ledger.
+        #
+        # slice-073 (critique B1, blocker) CHANGED THE PREMISE THIS ARM USED TO REST ON. It read:
+        # "create-only + revise-preserves-by-id, so the live items[] IS the full history: an id is
+        # never retired and never moves to an archive." `revise --cut PS-NNN` falsifies that — a cut
+        # id is RETIRED, a lifecycle state `ps` never had. Left unchanged, the floor silently stopped
+        # covering retired ids: the FULL chain was executed through supported verbs only —
+        # seed_max_for('ps') = 2 -> cut PS-002 -> seed_max 1 (FLOOR DROPPED) -> `vault_edit set
+        # --path counters.ps --value 0` (rc=0; that leg is unguarded and is filed as its own
+        # candidate — this scan is defense-in-depth against it, NOT a closure of it) -> next_id ->
+        # 'PS-002' RE-ISSUED, aliasing a brand-new capability onto the shipped candidate the original
+        # PS-002 minted.
+        #
+        # So revisions[].cut IS the ps retirement history, and the floor scans it. This mirrors the
+        # cc/cn/gs arm below EXACTLY — there, runs[].proposals[] keep a retired check's id past its
+        # removal so it is never re-issued. Same law, same shape, different ledger.
+        #
+        # KNOWN GAP, stated so it is never mistaken for coverage (DR-1's caveat on B1): an item
+        # dropped via `vault_edit rewrite` leaves NO revisions[] record, so this floor cannot see it.
+        # rewrite is a CAS whole-file replace that never consults _MANAGED_KIND, is symmetric for
+        # every vault file, and is deliberately out of scope (ADR-080 #6).
+        mx = scan_max([i.get("id") for i in data.get("items", []) if isinstance(i, dict)], "ps")
+        return max(mx, scan_max(
+            [c for r in data.get("revisions") or [] if isinstance(r, dict)
+             for c in r.get("cut") or []], "ps"))
     if kind in _CALIBRATION_ARRAYS:
         # Live overlay elements PLUS the run history: runs[].proposals[] keep the ids past
         # proposals minted (check_id/note_id/...), so a RETIRED check's id is never re-issued

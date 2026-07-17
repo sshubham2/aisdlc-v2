@@ -16,7 +16,8 @@ is then a deterministic, idempotent, create-only pass keyed on candidate provena
 
 Covers AC1 (source type + census flip), AC2 (idempotency), AC3 (survives the ship cycle), AC4 (absent
 concept fails VISIBLY), plus the ratified critique constraints: C5 (the source[] normalizer's three
-shapes), C6 (the identity guard lives in `persist`, not _MANAGED_KIND), C7 (--scope-file implies
+shapes), C6 (the identity guard lives in `persist` — and, since slice-073 / [[ADR-080]], the
+_MANAGED_KIND entry ALSO guards the remove/set legs while its append leg refuses), C7 (--scope-file implies
 --dry-run), C10 (the census classifier is explicit, with an `unclassified` tripwire), C12 (materialize
 does NOT require concept.json), C13 (the `ps` kind is not half-audited), C14 (a refused item withholds
 its dependents transitively).
@@ -383,13 +384,32 @@ def test_c6_persist_rejects_a_model_supplied_id(run_script, pvault, tmp_path):
     assert not (pvault / "product-scope.json").exists(), "the write must not have landed"
 
 
-def test_c6_product_scope_is_not_registered_in_managed_kind():
-    """ADR-067 §3 + the repo's OWN documented convention (vault_edit.py:137-140): a cross-referencing
-    appender PRE-mints via `alloc` and carries the id in the payload, which mint-on-append would
-    reject. risk-register's risks[] is the precedent."""
-    from scripts.lib.vault_edit import _MANAGED_KIND
+def test_c6_product_scope_is_registered_in_managed_kind_with_a_refusing_append_leg():
+    """INVERTED by slice-073 / [[ADR-080]], which supersedes ADR-067 §3 on exactly this line.
 
-    assert ("product-scope.json", "items") not in _MANAGED_KIND
+    This test used to assert the entry's ABSENCE, pinning ADR-067 §3. A pinning test must move with
+    the decision it pins, or the decision is not really made — so it now pins ADR-080's two halves
+    together, because either one alone is a defect:
+
+      * REGISTERED — without it, `vault_edit remove` and `set --path items` each delete a scope item
+        at rc=0 with no record, walking around cmd_revise's omission gate entirely (the more
+        DISCOVERABLE door: a model told "remove PS-002" finds the generic documented verb first).
+      * APPEND REFUSES — registration alone would make mint-on-append hand a real PS id to an item
+        with no assumptions, whose candidate then SKIPS /risk-spike step-0 (ADR-067 §5's bypass,
+        reopened by one supported command). Today-unregistered that append crashes loudly; a silent,
+        legitimate-looking, contract-free item would be strictly worse.
+
+    ADR-067 §3's FIRST half is untouched and still tested by
+    test_c6_persist_rejects_a_model_supplied_id: persist keeps its own in-lock reject_supplied_id and
+    never routes through vault_edit.
+    """
+    from scripts.lib.vault_edit import _APPEND_REFUSED_KINDS, _MANAGED_KIND
+
+    assert _MANAGED_KIND.get(("product-scope.json", "items")) == "ps"
+    assert "ps" in _APPEND_REFUSED_KINDS, (
+        "registering the kind without refusing its append leg turns a loud crash into a silent "
+        "contract-free mint -- the two halves of ADR-080 ship together or not at all"
+    )
 
 
 def test_c6_vault_edit_alloc_mints_a_ps_id(run_script, pvault):
@@ -501,8 +521,15 @@ def test_c8_revise_preserves_minted_ids_and_never_re_mints(run_script, pvault, t
     scope = _read(pvault / "product-scope.json")
     core = next(i for i in scope["items"] if i["decomposition_label"] == "core-engine")
 
+    # slice-073: every KEPT item is re-stated. This test's subject is identity PRESERVATION, not
+    # membership -- it previously omitted the other two persisted items, and the (then absent)
+    # omission gate silently honoured that as a DELETION. Re-stating them keeps the subject and both
+    # assertions below unchanged; the omission path is now pinned deliberately, by
+    # tests/bugs/test_product_scope_revise_contract.py (SC-160).
+    others = [dict(i) for i in scope["items"] if i["id"] != core["id"]]
     revised = {"items": [
         dict(core, description="The deterministic core (sharpened after a concept revision)."),
+        *others,
         {"label": "telemetry", "title": "add-telemetry", "description": "See what each stage did.",
          "user_visible_outcome": "Operator sees per-stage activity.", "depends_on": [core["id"]],
          "assumptions": [{"id": "A1", "statement": "Per-stage activity is observable.",
@@ -632,16 +659,18 @@ def test_bc_proj_6_the_detective_backstop_catches_a_hand_authored_duplicate_ps_i
                                                                                   tmp_path):
     """BC-PROJ-6: 'a guard on ONE write path is bypassable through another.'
 
-    persist's in-lock reject_supplied_id covers the PRODUCTION write path. It does NOT cover a
-    hand-authored `vault_edit append --file product-scope.json --array items --json '{"id": "PS-001"}'`
-    — because product-scope.json/items is deliberately NOT a _MANAGED_KIND (ADR-067 section 3), so
-    `append` does not mint and does not reject. That exclusion is DELIBERATE and follows the repo's own
-    documented precedent (vault_edit.py:137-140: risk-register's risks[] behaves identically, because a
-    cross-referencing appender must PRE-mint via `alloc` and carry the id — which mint-on-append would
-    reject).
+    slice-073 / [[ADR-080]] CORRECTED THIS TEST'S STATED PREMISE — the test itself is unchanged and
+    still passes, which is exactly why the stale premise was worth hunting down (FBCD-1: count the
+    anchor at EVERY site, not the first two). It used to say the append path was unguarded 'because
+    product-scope.json/items is deliberately NOT a _MANAGED_KIND (ADR-067 section 3)'. That is no
+    longer true: the kind IS registered and `vault_edit append`/`remove`/`set --path items` now all
+    REFUSE.
 
-    The exclusion is only defensible if a DETECTIVE control covers what the preventive one cannot. This
-    is that control, and it is why C13's fix mattered: id_allocation_audit must actually SEE `ps`.
+    What remains true — and is what this test actually exercises — is that a RAW FILE WRITE goes
+    through no guard at all. The body below writes product-scope.json directly (the `vault_edit
+    rewrite` CAS verb, deliberately out of scope per ADR-080 #6, is the same class). No preventive
+    control can cover that, on ANY vault file, so the DETECTIVE control has to. This is that control,
+    and it is why C13's fix mattered: id_allocation_audit must actually SEE `ps`.
     """
     assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
 

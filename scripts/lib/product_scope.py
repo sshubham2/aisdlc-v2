@@ -28,7 +28,11 @@ sludge, which the must-not-defer calls strictly WORSE than the absence it fixes)
     lock closes. Then it materializes, in the same act (ADR-067 §1).
   * `materialize` is a deterministic, idempotent, CREATE-ONLY pass keyed on candidate provenance
     (`source: [{type: "product-scope", ref: "PS-NNN"}]`) across live ∪ archive.
-  * `revise` is the deliberate, user-gated scope correction (preserves minted ids BY id, never re-mints).
+  * `revise` is the deliberate, user-gated scope correction (preserves minted ids BY id, never
+    re-mints). It replaces the WHOLE item list, so it REFUSES a payload that silently omits a live
+    item — that omission used to DELETE it at exit 0 with no trace, on the product's scope of record
+    (slice-073 / SC-160). Removing an item is an explicit act: `--cut PS-NNN --reason '<why>'`,
+    recorded in the append-only `revisions[]` ledger.
   * `census` re-runs the classification that DETECTED this defect, so it can never become invisible again.
 
 AUTHORITATIVE DESIGN RECORD: **ADR-067** (SUPERSEDES ADR-066 — where they disagree, ADR-067 wins).
@@ -38,12 +42,16 @@ Load-bearing decisions it changed, all of which live in this file:
      the first tick, so a level-triggered reconciler had exactly one non-trivial run in its life. It was
      VESTIGIAL, and it made AC3 unfalsifiable. Removing the /slice mutation DISSOLVES the whole
      read-your-own-writes / injection-ordering hazard rather than managing it.
-  2. The identity guard lives HERE, in `persist`'s own in-lock `reject_supplied_id` — NOT in
-     vault_edit._MANAGED_KIND. persist must REWRITE the model's depends_on labels into minted ids inside
-     ONE lock, and `vault_edit append` mints internally and returns nothing to the caller, so persist
-     bypasses vault_edit entirely; a _MANAGED_KIND entry would have guarded a path no writer takes. (This
-     also follows the repo's own documented convention for cross-referencing appenders —
-     vault_edit.py:137-140, the risk-register risks[] precedent.)
+  2. The identity guard lives HERE, in `persist`'s own in-lock `reject_supplied_id`. persist must
+     REWRITE the model's depends_on labels into minted ids inside ONE lock, and `vault_edit append`
+     mints internally and returns nothing to the caller, so persist bypasses vault_edit entirely.
+     STILL TRUE. But ADR-067 went on to conclude that `product-scope.json`/`items` therefore needed
+     NO `vault_edit._MANAGED_KIND` entry at all, and [[ADR-080]] (slice-073) SUPERSEDES that half:
+     one _MANAGED_KIND entry drives FOUR legs, and the argument was only ever made about `append`.
+     `remove` and `set --path` were each deleting a scope item at rc=0, with no record — around
+     every guard in this module. The kind IS registered now; its `append` leg REFUSES outright
+     (a raw append would mint a real id onto an item with no assumptions, which SKIPS /risk-spike
+     step-0); persist's own guard is unchanged and is still the one that runs.
   3. `product-scope` SUPERSEDES the never-emitted `concept-scope` (schemas/slice-candidates.example.json).
      The census PRODUCT set accepts BOTH so a legacy value is never miscounted.
   4. Product candidates carry BLOCKING assumptions. `/risk-spike` step-0 SKIPS a candidate with zero
@@ -71,7 +79,8 @@ a sibling `status` field, so a consumer branches on structured state and never o
     product_scope.py [--vault ROOT] persist --items-file PATH [--json]
     product_scope.py [--vault ROOT] materialize [--dry-run] [--scope-file PATH]
                                                 [--acknowledge PS-NNN ...] [--json]
-    product_scope.py [--vault ROOT] revise --items-file PATH [--json]
+    product_scope.py [--vault ROOT] revise --items-file PATH [--cut PS-NNN ...]
+                                           [--reason TEXT] [--json]
     product_scope.py [--vault ROOT] census [--json]
 
     0  ran (minted N >= 0; a 0-mint states its reason)
@@ -333,13 +342,21 @@ def _label(item: dict) -> str:
     return str(item.get("decomposition_label") or item.get("label") or item.get("title") or "").strip()
 
 
-def _load_items(path: str) -> list[dict]:
+def _load_items(path: str, *, allow_empty: bool = False) -> list[dict]:
+    """The payload reader. `allow_empty` is REVISE-only (slice-073 / critique m2).
+
+    An empty `items` array means two different things to the two verbs, and conflating them named
+    the wrong cause: to `persist` it is a MALFORMED payload (there is nothing to decompose), but to
+    `revise` it is a deliberate SHRINK-TO-ZERO attempt. Refusing the latter with "must carry a
+    non-empty `items` array" describes the payload's shape rather than the act, which is AC4's own
+    complaint one function over. So revise loads it and refuses it BY NAME (cmd_revise).
+    """
     p = Path(path)
     if not p.is_file():
         raise _Refuse(2, "usage", f"--items-file not found: {p}")
     data = _load_json(p)
     items = data.get("items") if isinstance(data, dict) else None
-    if not isinstance(items, list) or not items:
+    if not isinstance(items, list) or (not items and not allow_empty):
         raise _Refuse(2, "usage", f"{p} must carry a non-empty `items` array (the decomposition).")
     for it in items:
         if not isinstance(it, dict):
@@ -383,6 +400,87 @@ def _check_identities(items: list[dict], where) -> None:
             seen[val] = i
 
 
+def _check_membership(items: list[dict], cur: dict, cut, where) -> None:
+    """The revise membership gate — BIDIRECTIONAL, and evaluated IN-LOCK against `cur` (slice-073).
+
+    THE DEFECT THIS CLOSES (SC-160). `cmd_revise` was a whole-list REPLACE, not a delta: a payload
+    that omitted an already-materialized PS id deleted that scope item and exited 0 GREEN. The
+    computed `dropped` was thrown to stdout and nowhere else, so the deletion left ZERO durable
+    trace on the PRODUCT'S SCOPE OF RECORD. A model handed "revise the scope" emits a delta, because
+    that is what the word means.
+
+    WHY IN-LOCK, AND WHY BOTH DIRECTIONS (critique-review M-add-1). The sibling invented-id guard
+    tested the PRE-LOCK snapshot (`existing`), which was safe only while nothing could remove an
+    item -- `existing` was then necessarily a SUBSET of `cur`. `--cut` FALSIFIES that premise: post-
+    cut, `existing` is neither a subset nor a superset of `cur`. So a payload composed before a
+    parallel writer's cut could RESURRECT the cut id -- and the spike-exemption, keyed on
+    MATERIALIZED, would then wave the revived item through as already-spiked and re-adopt its
+    shipped candidate. Both directions are therefore re-checked HERE, against the authoritative
+    in-lock read. The pre-lock check survives only as a cheap early refusal, never as the only one
+    (the in-file precedent is persist: create-only checked at :712, RE-CHECKED under the lock).
+
+    Four properties, each fail-VISIBLE and each naming the offending id(s):
+      1. every `--cut` id EXISTS in `cur`      -- a typo must STOP, not degrade into the very
+                                                  omission it authorizes (BC-PROJ-6)
+      2. every payload id EXISTS in `cur`      -- no invented id, no resurrected one
+      3. no id is BOTH cut and kept            -- contradictory intent must STOP, never be resolved
+      4. every id in `cur` is kept or cut      -- THE omission gate (SC-160)
+
+    A raise propagates out of the caller's mutate closure and `safe_mutate_text` leaves the target
+    UNTOUCHED -- no temp written, no replace (_vault_write.py:319-322). That is what makes the
+    refusal byte-identical STRUCTURALLY, rather than by re-writing identical bytes.
+    """
+    cur_ids = {str(k) for k in cur}
+    payload_ids = [str(it["id"]) for it in items if isinstance(it, dict) and it.get("id") is not None]
+    cut_ids = [str(c).strip() for c in (cut or []) if str(c).strip()]
+
+    unknown_cut = sorted({c for c in cut_ids if c not in cur_ids})
+    if unknown_cut:
+        raise _Refuse(
+            2, "usage",
+            f"{where}: --cut names {', '.join(unknown_cut)}, which this scope does not carry "
+            f"(live ids: {', '.join(sorted(cur_ids)) or 'none'}). A cut must name a REAL item -- a "
+            f"typo'd id would otherwise be accepted as authorization to drop whatever it was meant "
+            f"to name, which is the very omission this gate exists to refuse. Check the id and "
+            f"re-run.",
+        )
+
+    invented = sorted({i for i in payload_ids if i not in cur_ids})
+    if invented:
+        raise _Refuse(
+            2, "usage",
+            f"{where}: scope item(s) carry id(s) {', '.join(invented)}, which this scope does not "
+            f"currently carry. `revise` may REUSE an allocator-minted PS id that is STILL IN THE "
+            f"SCOPE (that is how an item is preserved across a revision) but may never INVENT one, "
+            f"and may never RESURRECT one that was cut -- a cut id's candidate may already be "
+            f"shipped, so re-adopting it would silently alias two capabilities onto one record. "
+            f"Omit `id` to add a NEW item (identity is minted by the receiver).",
+        )
+
+    both = sorted({c for c in cut_ids if c in payload_ids})
+    if both:
+        raise _Refuse(
+            2, "usage",
+            f"{where}: {', '.join(both)} is both --cut AND re-stated as kept in the payload. That "
+            f"is contradictory intent; refusing rather than silently picking a winner (an ambiguous "
+            f"identity must STOP -- minting/retiring is not reversible here). Either drop the "
+            f"--cut or remove the item from the payload.",
+        )
+
+    accounted = set(payload_ids) | set(cut_ids)
+    missing = sorted(i for i in cur_ids if i not in accounted)
+    if missing:
+        raise _Refuse(
+            2, "usage",
+            f"{where}: this revision does not account for {', '.join(missing)}, which the product's "
+            f"scope currently carries. `revise` replaces the WHOLE item list, so an omitted item "
+            f"would be DELETED from the scope of record -- silently, and with no trace. Re-state "
+            f"every item you mean to KEEP (carrying its minted `id` verbatim), or, to remove one "
+            f"deliberately, re-run with `--cut {missing[0]} --reason '<why>'` (repeatable). Nothing "
+            f"was written.",
+        )
+
+
 def _check_deps(items: list[dict], where) -> None:
     """Every depends_on reference must resolve to an item IN THIS BATCH. Fail-VISIBLE (code-review CR3).
 
@@ -408,30 +506,82 @@ def _check_deps(items: list[dict], where) -> None:
                 )
 
 
-def _check_contract(items: list[dict]) -> None:
-    """Every scope item must carry a title, a label, and >=1 BLOCKING unproven assumption (ADR-067 §5).
+def _check_contract(items: list[dict], *, exempt_spiked: frozenset[str] = frozenset()) -> None:
+    """The model->vault decomposition contract. TWO-PHASE (slice-073 / ADR-079 §1).
 
-    The assumption requirement is enforced HERE, at the crossing — not downstream — because /risk-spike
-    step-0 SKIPS a candidate with zero unproven blocking assumptions. Without this, aivlc's
-    orchestrator/state-machine (the largest, least-understood, never-before-attempted item in that
-    product, and the very thing this module exists to surface) would enter the loop with NOTHING TO
-    PROVE and walk straight into the design tournament on an unspiked premise.
+    Every scope item must carry a title, a label, and >=1 BLOCKING assumption (ADR-067 §5). The
+    requirement is enforced HERE, at the crossing — not downstream — because /risk-spike step-0 SKIPS
+    a candidate with zero unproven blocking assumptions. Without it, aivlc's orchestrator/state-machine
+    (the largest, least-understood item in that product, and the very thing this module exists to
+    surface) would enter the loop with NOTHING TO PROVE.
+
+    THE DEFECT THIS FIXES (SC-161): the `unproven` demand was made of EVERY item on EVERY crossing,
+    and `revise` re-runs the contract over the FULL list — so a list containing even ONE item whose
+    spike had already run was rejected WHOLESALE. The scope froze the moment any item was proven,
+    which is precisely when a revision becomes most necessary. The requirement was correct at persist
+    time and was simply never re-thought for revise, where the population NECESSARILY includes spiked
+    items.
+
+    So the demand splits:
+
+      Phase 1 — >=1 BLOCKING assumption, ANY spike_status. Demanded of EVERY item on BOTH verbs,
+                ALWAYS. This is what stops a revise from ERASING assumptions[] to slip an item past
+                step-0: it cannot be waived by having been spiked, because the assumption itself must
+                still be there.
+      Phase 2 — that a blocking assumption is still `unproven`. Demanded of NEW items; WAIVED only
+                for ids in `exempt_spiked`.
+
+    `exempt_spiked` is supplied BY THE CALLER and this function performs NO lookup — persist (:721)
+    passes nothing and therefore keeps the strict pre-slice-073 behaviour EXACTLY, which is the
+    must-not-defer: relaxing revise must not relax persist. That is belt-and-braces even if the
+    parameter were ever mispassed, because persist's own `reject_supplied_id` bans ids outright, so
+    every persist item is new by construction and could never match an exempt id anyway.
+
+    AC4 — THE REFUSAL NAMES THE ACTUAL CAUSE. The old message claimed ``assumptions: []`` against a
+    NON-empty list, which is maximally misleading at exactly the boundary the message exists to
+    explain. Three distinct causes, named distinctly: genuinely absent / present-but-none-blocking /
+    present-but-all-proven-and-not-exempt.
     """
     for it in items:
         if not str(it.get("title") or "").strip():
             raise _Refuse(2, "usage", f"scope item {_label(it) or '<unnamed>'} has no `title`.")
         if not _label(it):
             raise _Refuse(2, "usage", f"scope item {it.get('title')!r} has no `label` to key depends_on on.")
-        blocking = [a for a in it.get("assumptions") or []
-                    if isinstance(a, dict) and a.get("blocking")
-                    and (a.get("spike_status") or "unproven") == "unproven"]
+
+        iid = str(it.get("id") or "").strip()
+        named = f"{_label(it)!r}" + (f" ({iid})" if iid else "")
+        assumptions = [a for a in it.get("assumptions") or [] if isinstance(a, dict)]
+        blocking = [a for a in assumptions if a.get("blocking")]
+
+        # Phase 1 — a BLOCKING assumption must EXIST. Never waived, on either verb.
         if not blocking:
+            if not assumptions:
+                cause = ("carries `assumptions: []`")            # the genuinely-empty case
+            else:
+                cause = (f"carries {len(assumptions)} assumption(s), but NONE is marked "
+                         f"`blocking: true`")
             raise _Refuse(
                 2, "usage",
-                f"scope item {_label(it)!r} carries no BLOCKING unproven assumption. A product "
-                f"capability is UNPROVEN by definition -- with `assumptions: []` this candidate would "
-                f"SKIP /risk-spike step-0, the pipeline's reality gate, on exactly the least-understood "
-                f"work in the product (ADR-067 section 5). Add assumptions[] and re-run.",
+                f"scope item {named} {cause}, so it has no BLOCKING assumption. A product capability "
+                f"is UNPROVEN by definition -- a candidate with nothing blocking SKIPS /risk-spike "
+                f"step-0, the pipeline's reality gate, on exactly the least-understood work in the "
+                f"product (ADR-067 section 5). Add a blocking assumption and re-run.",
+            )
+
+        # Phase 2 — it must still be UNPROVEN, unless this item has already been through step-0.
+        if iid and iid in exempt_spiked:
+            continue
+        if not any((a.get("spike_status") or "unproven") == "unproven" for a in blocking):
+            raise _Refuse(
+                2, "usage",
+                f"scope item {named} carries {len(blocking)} blocking assumption(s), but every one "
+                f"is already `spike_status: proven` -- and this item is not an already-materialized "
+                f"one whose spike could have run (it has no candidate). A NEW product capability is "
+                f"UNPROVEN by definition; declaring it proven at the crossing would walk it past "
+                f"/risk-spike step-0 with nothing to prove (ADR-067 section 5). If the work really "
+                f"is understood, say so with a blocking assumption step-0 can CHECK; if this item "
+                f"was already spiked, revise it (its exemption keys on being materialized, not on "
+                f"carrying an id).",
             )
 
 
@@ -793,20 +943,54 @@ def cmd_revise(vault: Path, args) -> dict:
     """
     scope = _scope(vault, required=True)
     existing = {str(i.get("id")): i for i in scope.get("items") or [] if isinstance(i, dict)}
-    items_in = _load_items(args.items_file)
+    items_in = _load_items(args.items_file, allow_empty=True)
+    cut_ids = [str(c).strip() for c in (getattr(args, "cut", None) or []) if str(c).strip()]
+    reason = getattr(args, "reason", None)
+    reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
 
+    # --reason is required IFF --cut (critique M3, ratified at TRI-1 for crossdomain+expert over
+    # practice's uniform requirement). An ADD is self-describing: the item's own title/description
+    # IS its reason, so demanding one taxes the benign extend path. A CUT destroys the only record
+    # of what was there, so its reason IS the record -- the ledger entry is worthless without it.
+    if cut_ids and not reason:
+        raise _Refuse(
+            2, "usage",
+            f"--cut {' '.join(cut_ids)} requires --reason '<why>'. A cut removes a capability from "
+            f"the product's scope of record; the reason is the only thing that survives it, and the "
+            f"revisions[] entry exists to carry exactly that. (An ADD needs no --reason -- the "
+            f"item's own title and description are self-describing.)",
+        )
+    if not items_in:
+        # m2: NAME the act, not the payload's shape. `_load_items` would otherwise refuse this with
+        # "must carry a non-empty `items` array" -- a message about a MALFORMED payload, when what
+        # was actually attempted is a deliberate shrink-to-zero. That is AC4's own complaint (a
+        # refusal naming the wrong cause) one function over, which is why it is worth the branch.
+        raise _Refuse(
+            2, "usage",
+            f"this revision would leave the product's scope with ZERO items (it carries no `items` "
+            f"and cuts {', '.join(cut_ids) if cut_ids else 'nothing'}). A product with no scope is "
+            f"not a revision of it -- refusing. If the product really has been descoped entirely, "
+            f"that is a deliberate RE-DECOMPOSITION, not a revise: remove {SCOPE_FILE} and re-run "
+            f"/slice-candidates --product against the revised concept.json. Nothing was written.",
+        )
+
+    # A CHEAP EARLY REFUSAL ONLY -- never the only one (critique-review M-add-1). `existing` is a
+    # PRE-LOCK snapshot; once `--cut` can retire an id it is neither a subset nor a superset of the
+    # in-lock `cur`, so the authoritative re-check lives inside the mutate closure below. Keeping
+    # this one costs nothing and refuses the common typo before taking the lock. The in-file
+    # precedent is persist: create-only is checked at :712 and RE-CHECKED under the lock at :734.
     for it in items_in:
         iid = it.get("id")
         if iid is not None and str(iid) not in existing:
             raise _Refuse(
                 2, "usage",
-                f"scope item carries id {iid!r}, which this vault never minted. `revise` may REUSE an "
-                f"allocator-minted PS id (that is how an item is preserved across a revision) but may "
-                f"never INVENT one -- identity is minted by the receiver. Omit `id` for a new item.",
+                f"scope item carries id {iid!r}, which this vault's scope does not carry. `revise` "
+                f"may REUSE an allocator-minted PS id that is still in the scope (that is how an "
+                f"item is preserved across a revision) but may never INVENT one, and may never "
+                f"RESURRECT a cut one -- identity is minted by the receiver. Omit `id` for a new item.",
             )
     # CR1: rejecting an INVENTED id is not enough -- a REPEATED one aliases two items onto one minted
     # candidate. _load_items already ran _check_identities; this is the boundary that made it necessary.
-    _check_contract(items_in)
     _check_deps(items_in, args.items_file)      # CR3: a dep dropped from the revision STOPS, never drops
     ts = _now()
     holder: dict = {}
@@ -814,8 +998,27 @@ def cmd_revise(vault: Path, args) -> dict:
     def mutate(text: str) -> str:
         data = json.loads(text) if text.strip() else {}
         cur = {str(i.get("id")): i for i in data.get("items") or [] if isinstance(i, dict)}
-        ordered = _topo(items_in, lambda it: str(it.get("id") or _label(it)))
 
+        # THE AUTHORITATIVE GATES, against the IN-LOCK read (slice-073). Both were previously
+        # evaluated against the STALE pre-lock snapshot, or not at all:
+        #   _check_membership -- SC-160's omission gate + M-add-1's resurrection guard, bidirectional
+        #   _check_contract   -- relaxed (Phase 2 only) for items whose spike has ALREADY run
+        #                        (SC-161), keyed on the population this gate just verified
+        _check_membership(items_in, cur, cut_ids, args.items_file)
+
+        # THE EXEMPT SET keys on MATERIALIZED, not on minted-`id` presence (ADR-079 section 1). The
+        # design spike REJECTED the id-keyed rule by executing its exploit: an item can carry a
+        # minted id while never having been materialized (materialize REFUSES a provenance
+        # collision, and WITHHOLDS its dependents transitively), so id-presence would exempt an item
+        # /risk-spike step-0 could never have run on -- reopening the ADR-067 section 5 bypass.
+        # Exempt iff a candidate exists THROUGH WHICH step-0 could actually have run. The CALLER
+        # does the lookup; _check_contract performs none.
+        live = _load_json(vault / "candidates.json").get("candidates") or []
+        exempt = {ref for c in _observed(vault, [c for c in live if isinstance(c, dict)])
+                  if (ref := owner_ref(c))} & set(cur)
+        _check_contract(items_in, exempt_spiked=frozenset(exempt))
+
+        ordered = _topo(items_in, lambda it: str(it.get("id") or _label(it)))
         key_to_ps: dict[str, str] = {}
         seed = id_allocator.seed_max_for(vault, "ps", data)
         for it in ordered:
@@ -843,8 +1046,42 @@ def cmd_revise(vault: Path, args) -> dict:
         data.setdefault("project", vault.name)
         data["revised_at"] = ts
         data["items"] = out_items
+
+        # ── the revisions[] ledger (slice-073 / ADR-078) ──────────────────────────────────────
+        # THE DEFECT, verbatim: `dropped` was computed here and thrown to STDOUT, so a deletion from
+        # the PRODUCT'S SCOPE OF RECORD left zero durable trace. A membership change is now written
+        # IN THE FILE, inside this same lock. Append-only: prior entries are never rewritten or
+        # truncated -- that is the defect's own lesson (create-only `persist` was mistaken for
+        # append-only HISTORY).
+        #
+        # `data["revisions"] = (data.get("revisions") or []) + [rec]`, never `setdefault`, and ONLY
+        # when the item set actually changed -- so a no-op / description-only revise never grows the
+        # key and the LIVE revisions-less file stays byte-identical apart from revised_at (AC5).
+        # An absent key is a legal, PERMANENT state meaning "empty history"; there is no migration.
+        #
+        # B1 (blocker) makes this ledger LOAD-BEARING beyond its audit value: `cut` retires a PS id,
+        # which falsifies id_allocator.seed_max_for('ps')'s previous premise that the live items[] IS
+        # the full history. revisions[].cut IS the retirement history the allocator's floor now scans
+        # (id_allocator.py:180-190) -- so this record is not documentation, it is the thing that
+        # stops a retired id being re-issued onto a shipped candidate.
+        kept_ids = {o["id"] for o in out_items}
+        dropped = [i for i in cur if i not in kept_ids]
+        added = [o["id"] for o in out_items if o["id"] not in cur]
+        if dropped or added:
+            data["revisions"] = (data.get("revisions") or []) + [{
+                "at": ts,
+                "cut": dropped,
+                "added": added,
+                # required iff `cut` (M3's taste call, ratified at TRI-1): an ADD is self-describing
+                # -- the item's own title/description IS the reason -- while a CUT destroys the only
+                # record of what was there. Null on an add-only revise.
+                "reason": reason,
+                "items_before": len(cur),
+                "items_after": len(out_items),
+            }]
+
         holder["items"] = out_items
-        holder["dropped"] = [i for i in cur if i not in {o["id"] for o in out_items}]
+        holder["dropped"] = dropped
         return _dump(data)
 
     safe_mutate_text(vault / SCOPE_FILE, mutate)
@@ -854,10 +1091,16 @@ def cmd_revise(vault: Path, args) -> dict:
         "action": "revise", "status": "ok",
         "items": len(items),
         "preserved": [i["id"] for i in items if str(i["id"]) in existing],
-        # A scope item DROPPED from a revised concept leaves its candidate UNTOUCHED (the backlog is
-        # append-only and the candidate may already be shipped). materialize reports it as `orphaned`
-        # and takes NO action -- the owner-deletion cascade the k8s frame wanted is not even expressible.
-        "dropped": holder["dropped"],
+        # A CUT scope item leaves its candidate UNTOUCHED (the backlog is append-only and the
+        # candidate may already be shipped). materialize reports it as `orphaned` and takes NO action
+        # -- the owner-deletion cascade the k8s frame wanted is not even expressible. Unchanged by
+        # slice-073, and deliberately so (out_of_scope).
+        #
+        # This field is now a REPORT of a durable fact, not the only record of it: every id here also
+        # appears in product-scope.json's revisions[].cut. Reporting a deletion ONLY here was the
+        # defect (:847/:860).
+        "cut": holder["dropped"],
+        "dropped": holder["dropped"],   # retained: the pre-slice-073 key, for any existing consumer
         "materialize": mat,
     }
 
@@ -955,6 +1198,18 @@ def _build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("revise", parents=[common],
                        help="explicit scope correction (preserves minted PS ids by id)")
     r.add_argument("--items-file", required=True)
+    # slice-073 / ADR-078. The cut escape is on the CLI, not in the payload -- the design spike
+    # FORCED that (spike-cut-escape): a payload-carried cut is a claim made by the same untrusted,
+    # stochastic producer whose omissions are the defect, so it could not be told apart from the
+    # accident it exists to distinguish. The flag is a SECOND, deliberate, human act. Shape mirrors
+    # `materialize --acknowledge PS-NNN` field-for-field -- the in-module precedent for a repeatable,
+    # CLI-side, per-id override of a refusal.
+    r.add_argument("--cut", action="append", default=[], metavar="PS-NNN",
+                   help="deliberately REMOVE this already-minted scope item (repeatable). "
+                        "Requires --reason. Recorded in product-scope.json's append-only revisions[].")
+    r.add_argument("--reason", default=None,
+                   help="why the --cut item(s) are being removed. REQUIRED with --cut (an added "
+                        "item is self-describing; a cut destroys the only record of what was there).")
 
     sub.add_parser("census", parents=[common],
                    help="classify live u archive into PRODUCT / EXHAUST / HUMAN / unclassified")

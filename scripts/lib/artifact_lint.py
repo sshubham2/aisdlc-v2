@@ -156,6 +156,14 @@ OPTIONAL_KEYS: dict[str, frozenset[str]] = {
     # `heuristic_walkthrough` sibling is made optional by its own `_note` marker in the
     # example (so the dead-row guard still verifies its nested enum paths).
     "user-test": frozenset({"preflight_used"}),
+    # slice-073: `revisions` is the append-only scope-change ledger, written by
+    # `product_scope revise` ONLY when the item set actually changes. Array-shaped, so it
+    # cannot carry the dict-with-`_note` optional marker — this entry is the only
+    # mechanism. It MUST ship in the SAME change that adds revisions[] to the
+    # `product-scope` canonical example (spike A1, constraint 2): the example edit alone
+    # reds every live, revisions-less product-scope.json. An absent key is a legal,
+    # PERMANENT state meaning "empty history", never a state to migrate away from.
+    "product-scope": frozenset({"revisions"}),
 }
 
 # ── slice-013 (ADR-009): documented-enum coverage ════════════════════════════════════
