@@ -437,9 +437,16 @@ def test_c7_scope_file_implies_dry_run(run_script, pvault, tmp_path):
 
 
 def test_c7_dry_run_writes_nothing(run_script, pvault, tmp_path):
+    # slice-076 / ADR-087: the dry-run --scope-file replay now runs _check_contract (m3/M-add-2), so
+    # the item must be contract-COMPLETE (blocking-unproven assumption + both completeness fields) --
+    # this test's subject is "a dry run writes NOTHING", not "an incomplete item is tolerated".
     scope = tmp_path / "scope.json"
-    _write(scope, {"items": [{"id": "PS-001", "title": "would-be-minted", "description": "x",
-                              "depends_on": [], "assumptions": [], "verification_plan": "x"}]})
+    _write(scope, {"items": [{"id": "PS-001", "decomposition_label": "would-be",
+                              "title": "would-be-minted", "description": "x",
+                              "user_visible_outcome": "It runs.", "depends_on": [],
+                              "assumptions": [{"id": "A1", "statement": "s", "blocking": True,
+                                               "spike_status": "unproven"}],
+                              "verification_plan": "Drive one real run."}]})
     before = (pvault / "candidates.json").read_bytes()
 
     r = _run(run_script, pvault, "materialize", "--scope-file", str(scope), "--dry-run", "--json")

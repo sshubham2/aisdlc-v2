@@ -752,3 +752,306 @@ def test_a_revise_that_would_empty_the_scope_names_that_cause(run_script, pvault
         f"the refusal must NAME the shrink-to-zero it actually attempted; got {combined!r}"
     )
     assert (pvault / SCOPE).read_text(encoding="utf-8") == raw_before
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# slice-076 / SC-162 / ADR-087 — enforce the two contract fields that give a product
+# capability MEANING (verification_plan, user_visible_outcome) at the SINGLE
+# _check_contract recognizer, delete the _candidate_from placeholder repair, recognize
+# BOTH fields on the dry-run --scope-file replay, and validate the EFFECTIVE (item OR
+# prev) value on revise so the check agrees with the persist merge (:1255/:1258).
+# ══════════════════════════════════════════════════════════════════════════════════
+
+
+def _persist_items(run_script, vault: Path, tmp_path: Path, payload: dict, name: str = "items.json"):
+    f = tmp_path / name
+    _write(f, payload)
+    return _run(run_script, vault, "persist", "--items-file", str(f), "--json")
+
+
+def _scope_file_item(**over) -> dict:
+    """A single well-formed --scope-file item: title/label/blocking-unproven assumption + BOTH
+    contract fields present, so a field-under-test refusal is isolated to the overridden field
+    (title/label/assumption checks fire earlier and would mask it)."""
+    it = {
+        "id": "PS-001", "decomposition_label": "core-engine", "title": "would-be-minted",
+        "description": "x", "user_visible_outcome": "It runs.", "depends_on": [],
+        "assumptions": [{"id": "A1", "statement": "The core is expressible deterministically.",
+                         "blocking": True, "spike_status": "unproven"}],
+        "verification_plan": "Drive one real run end-to-end.",
+    }
+    it.update(over)
+    return it
+
+
+# ── AC1 — an empty/absent verification_plan is refused; the placeholder repair is gone ──
+
+
+@pytest.mark.parametrize("bad", [{"verification_plan": ""}, "absent"])
+def test_persist_refuses_an_empty_or_absent_verification_plan(run_script, pvault, tmp_path, bad):
+    """AC1. Today `_check_contract` never looks at verification_plan and `_candidate_from:776-778`
+    silently REPAIRS an empty one into a generated placeholder, so an item that declares no way to
+    check itself still mints a PS id. The check must REFUSE it, fail-visibly, naming the field."""
+    payload = _two_items()
+    if bad == "absent":
+        payload["items"][0].pop("verification_plan", None)
+    else:
+        payload["items"][0].update(bad)
+
+    r = _persist_items(run_script, pvault, tmp_path, payload)
+    combined = r.stdout + r.stderr
+
+    assert r.returncode == 2, (
+        "persist ACCEPTED an item with no verification_plan -- the field that states how the "
+        f"capability is checked. exit={r.returncode} stdout={r.stdout!r}"
+    )
+    assert "verification_plan" in combined, f"the refusal must NAME the field; got {combined!r}"
+    assert "core-engine" in combined, f"the refusal must NAME the offending item; got {combined!r}"
+    assert not (pvault / SCOPE).exists(), "the refused persist still created the scope file"
+
+
+def test_the_candidate_placeholder_repair_is_gone(run_script, pvault, tmp_path):
+    """AC1. A COMPLETE decomposition still mints, and the minted candidate's verification_plan is the
+    one the item SUPPLIED -- never the deleted `Prove the blocking assumption(s)...` placeholder that
+    used to mask an empty plan (the parser differential: scope.json empty, candidate synthesised)."""
+    r = _persist_items(run_script, pvault, tmp_path, _two_items())
+    assert r.returncode == 0, r.stderr
+
+    prods = []
+    for rel in ("candidates.json", "archive/candidates.json"):
+        p = pvault / rel
+        if p.exists():
+            prods += [c for c in _read(p).get("candidates", [])
+                      if any(isinstance(s, dict) and s.get("type") == "product-scope"
+                             for s in (c.get("source") or []))]
+    assert prods, "no product candidate minted"
+    for c in prods:
+        vp = c.get("verification_plan")
+        assert isinstance(vp, str) and vp.strip(), f"minted candidate has no verification_plan: {c}"
+        assert not vp.startswith("Prove the blocking assumption(s)"), (
+            f"the deleted placeholder repair re-appeared on a minted candidate: {vp!r}"
+        )
+    # the core-engine item's plan is carried verbatim
+    core = next(c for c in prods if "core" in (c.get("title") or ""))
+    assert core["verification_plan"] == "Drive one real run end-to-end."
+
+
+# ── AC2 — an empty/absent user_visible_outcome is refused ──
+
+
+@pytest.mark.parametrize("bad", [{"user_visible_outcome": ""}, "absent"])
+def test_persist_refuses_an_empty_or_absent_user_visible_outcome(run_script, pvault, tmp_path, bad):
+    """AC2. Today user_visible_outcome is read via a bare `.get()` (:764) and `_check_contract` never
+    validates it -- so it is silently optional and a materialized candidate carries None. Refuse it."""
+    payload = _two_items()
+    if bad == "absent":
+        payload["items"][0].pop("user_visible_outcome", None)
+    else:
+        payload["items"][0].update(bad)
+
+    r = _persist_items(run_script, pvault, tmp_path, payload)
+    combined = r.stdout + r.stderr
+
+    assert r.returncode == 2, (
+        "persist ACCEPTED an item with no user_visible_outcome -- silently optional. "
+        f"exit={r.returncode} stdout={r.stdout!r}"
+    )
+    assert "user_visible_outcome" in combined, f"the refusal must NAME the field; got {combined!r}"
+    assert "core-engine" in combined, f"the refusal must NAME the offending item; got {combined!r}"
+    assert not (pvault / SCOPE).exists()
+
+
+# ── AC3 — contract-complete items (the live PS-001..004 shape) are NOT stranded ──
+
+
+def test_contract_complete_items_are_not_stranded_on_persist_or_revise(run_script, pvault, tmp_path):
+    """AC3 / must-not-defer #2. The tightened contract must ACCEPT items carrying non-empty fields --
+    the exact shape the 4 live PS items already have (measured: verification_plan len 309-490,
+    user_visible_outcome len 220-277). The real vault is unreachable here (run_script strips
+    AI_SDLC_VAULT_ROOT), so this mirrors the live shape with the fixture: both fields non-empty."""
+    scope = _persist_two(run_script, pvault, tmp_path)
+    assert all(i.get("verification_plan") and i.get("user_visible_outcome") for i in scope["items"])
+
+    # a full-list revise of the complete items must not be refused (no strand)
+    r = _revise(run_script, pvault, tmp_path, [dict(i) for i in scope["items"]])
+    assert r.returncode == 0, (
+        f"a full-list revise of contract-complete items was refused -- the live scope is stranded. "
+        f"exit={r.returncode} stderr={r.stderr!r}"
+    )
+    out = _read(pvault / SCOPE)
+    assert [i["id"] for i in out["items"]] == ["PS-001", "PS-002"]
+
+
+# ── AC4 — the refusal is SHAPE-LEVEL honest (presence, not a testability guarantee) ──
+
+
+def test_the_contract_refusal_is_labelled_shape_level_not_a_testability_guarantee(
+    run_script, pvault, tmp_path
+):
+    """AC4 / A2 constraint. The check is presence/non-empty ONLY; a non-empty but meaningless plan
+    ('TODO') still passes. The message must SAY so and must NOT imply it guarantees testability, or
+    it oversells a shape check as a substance check."""
+    payload = _two_items()
+    payload["items"][0]["verification_plan"] = ""
+    r = _persist_items(run_script, pvault, tmp_path, payload)
+    combined = (r.stdout + r.stderr).lower()
+
+    assert r.returncode == 2, r.stdout
+    assert "non-empty" in combined, f"the message must claim non-empty PRESENCE; got {combined!r}"
+    assert "shape-level" in combined, f"the message must label itself shape-level; got {combined!r}"
+    assert "necessary, not sufficient" in combined or "not a" in combined, (
+        f"the message must DISCLAIM a testability guarantee; got {combined!r}"
+    )
+
+
+# ── AC5 — enforcement at BOTH model->vault entry points (persist AND revise) ──
+
+
+def test_both_entry_points_refuse_an_empty_contract_field(run_script, pvault, tmp_path):
+    """AC5. `_check_contract` is the single choke point both persist (:1087) and revise (:1235) route
+    through, so one placement must cover BOTH. Pin persist AND revise each refusing an empty field."""
+    # persist leg — an empty user_visible_outcome on a fresh decomposition
+    payload = _two_items()
+    payload["items"][1]["user_visible_outcome"] = ""
+    rp = _persist_items(run_script, pvault, tmp_path, payload, name="persist.json")
+    assert rp.returncode == 2, f"persist leg accepted an empty field: {rp.stdout!r}"
+    assert not (pvault / SCOPE).exists()
+
+    # revise leg — persist a clean scope, then a revise that INTRODUCES a new item with an empty
+    # field. (An empty field on a KEPT item legitimately inherits its non-empty `prev` via the
+    # effective-value merge and is NOT stranded -- that is pinned separately. A NEW item has no prev,
+    # so its empty field is genuinely empty and must be refused: that is where revise could introduce
+    # an empty contract field.)
+    scope = _persist_two(run_script, pvault, tmp_path)
+    raw_before = (pvault / SCOPE).read_text(encoding="utf-8")
+    items = [dict(i) for i in scope["items"]]           # keep both -> membership passes
+    items.append({
+        "label": "newcap", "title": "add-newcap", "description": "A brand-new capability.",
+        "user_visible_outcome": "The operator sees the new capability.", "depends_on": [],
+        "assumptions": [{"id": "A1", "statement": "It is expressible.", "blocking": True,
+                         "spike_status": "unproven"}],
+        "verification_plan": "",                        # empty on a NEW item -> no prev -> refused
+    })
+    rr = _revise(run_script, pvault, tmp_path, items)
+    combined = rr.stdout + rr.stderr
+    assert rr.returncode != 0, f"revise leg introduced a new item with an empty field: {rr.stdout!r}"
+    assert "verification_plan" in combined, f"the revise refusal must name the field; got {combined!r}"
+    assert (pvault / SCOPE).read_text(encoding="utf-8") == raw_before, (
+        "a refused revise must leave product-scope.json byte-identical"
+    )
+
+
+# ── m2 — whitespace-only and non-string are refused, not accepted/coerced ──
+
+
+@pytest.mark.parametrize("field", ["verification_plan", "user_visible_outcome"])
+def test_persist_refuses_a_whitespace_only_contract_field(run_script, pvault, tmp_path, field):
+    """m2(a). A bare-truthiness check accepts '   ' (three spaces) -- exactly the 'no real way to
+    check itself' the slice rejects. The predicate must strip: str(...).strip() before the test."""
+    payload = _two_items()
+    payload["items"][0][field] = "   "
+    r = _persist_items(run_script, pvault, tmp_path, payload)
+    combined = r.stdout + r.stderr
+    assert r.returncode == 2, f"a whitespace-only {field} was accepted: {r.stdout!r}"
+    assert field in combined, f"the refusal must name {field}; got {combined!r}"
+    assert not (pvault / SCOPE).exists()
+
+
+def test_persist_refuses_a_non_string_verification_plan_rather_than_coercing_it(
+    run_script, pvault, tmp_path
+):
+    """m2(b). str(['a','b']) is a non-empty string, so a bare str()-coercion would PASS a list and
+    persist it as a list, which a downstream string op then misreads (the parser differential the
+    LangSec frame exists to prevent). The isinstance guard must REFUSE a non-string by name."""
+    payload = _two_items()
+    payload["items"][0]["verification_plan"] = ["step a", "step b"]
+    r = _persist_items(run_script, pvault, tmp_path, payload)
+    combined = r.stdout + r.stderr
+    assert r.returncode == 2, f"a NON-STRING (list) verification_plan was coerced-and-accepted: {r.stdout!r}"
+    assert "verification_plan" in combined, f"the refusal must name the field; got {combined!r}"
+    assert not (pvault / SCOPE).exists()
+
+
+# ── M-add-1 — the revise check validates the EFFECTIVE value and mirrors the :1258 merge ──
+
+
+def test_revise_refuses_a_whitespace_field_even_when_prev_carries_a_real_one(
+    run_script, pvault, tmp_path
+):
+    """M-add-1 (DR-1). Persist merge at :1258 uses BARE `or`, so a whitespace-only value on a kept
+    item ('   ' is truthy) is NOT rescued by prev -- it is what gets WRITTEN, unstripped. A per-operand
+    check (prev rescues) would PASS it while persist writes whitespace: the check/persist parser
+    differential re-entering at the revise seam. The check must compute the EFFECTIVE value FIRST then
+    strip -- so a whitespace item on a kept row is refused BEFORE persist writes it."""
+    scope = _persist_two(run_script, pvault, tmp_path)
+    raw_before = (pvault / SCOPE).read_text(encoding="utf-8")
+
+    items = [dict(i) for i in scope["items"]]
+    items[0]["verification_plan"] = "   "       # whitespace on a KEPT item; prev carries a real one
+    assert scope["items"][0]["verification_plan"].strip(), "fixture invariant: prev IS non-empty"
+
+    r = _revise(run_script, pvault, tmp_path, items)
+    combined = r.stdout + r.stderr
+
+    assert r.returncode != 0, (
+        "revise ACCEPTED a whitespace-only verification_plan on a kept item because prev rescued it -- "
+        f"but :1258 writes the item's whitespace, unstripped. exit={r.returncode} stdout={r.stdout!r}"
+    )
+    assert "verification_plan" in combined, f"the refusal must name the field; got {combined!r}"
+    assert (pvault / SCOPE).read_text(encoding="utf-8") == raw_before, (
+        "a refused revise must leave product-scope.json byte-identical"
+    )
+
+
+def test_revise_accepts_a_kept_item_that_inherits_its_field_from_prev(run_script, pvault, tmp_path):
+    """M-add-1, the other direction. The effective-value check must NOT strand a legitimate partial
+    revise: a kept item that OMITS verification_plan inherits prev's real one via :1258, so the
+    effective value is non-empty and the revise must PASS (this is the slice-073 non-strand promise)."""
+    scope = _persist_two(run_script, pvault, tmp_path)
+    items = [dict(i) for i in scope["items"]]
+    items[0].pop("verification_plan", None)     # omitted -> inherits prev's real plan
+    r = _revise(run_script, pvault, tmp_path, items)
+    assert r.returncode == 0, (
+        f"a kept item omitting verification_plan (inheriting a real prev) was stranded. "
+        f"exit={r.returncode} stderr={r.stderr!r}"
+    )
+    out = _read(pvault / SCOPE)
+    kept = next(i for i in out["items"] if i["id"] == "PS-001")
+    assert kept["verification_plan"] == scope["items"][0]["verification_plan"], "prev value must persist"
+
+
+# ── m3 / M-add-2 — the dry-run --scope-file replay recognizes BOTH fields ──
+
+
+@pytest.mark.parametrize("field", ["verification_plan", "user_visible_outcome"])
+def test_dry_run_scope_file_replay_refuses_an_empty_contract_field(
+    run_script, pvault, tmp_path, field
+):
+    """m3 (verification_plan) + M-add-2 (user_visible_outcome). `materialize --scope-file --dry-run`
+    is a READ-ONLY replay that reaches _candidate_from WITHOUT the recognizer (_load_items runs only
+    _check_identities). After deleting the placeholder, an empty verification_plan would yield a
+    silent None candidate and an empty user_visible_outcome silently None -- the exact AC1/AC2 defects
+    surviving on the replay surface. Running _check_contract on the dry-run items closes BOTH."""
+    scope = tmp_path / "scope.json"
+    _write(scope, {"items": [_scope_file_item(**{field: ""})]})
+
+    r = _run(run_script, pvault, "materialize", "--scope-file", str(scope), "--dry-run", "--json")
+    combined = r.stdout + r.stderr
+
+    assert r.returncode == 2, (
+        f"the dry-run replay MINTED (dry) a candidate from an item with an empty {field} -- the "
+        f"replay path bypasses the recognizer. exit={r.returncode} stdout={r.stdout!r}"
+    )
+    assert field in combined, f"the dry-run refusal must name {field}; got {combined!r}"
+
+
+def test_dry_run_scope_file_replay_still_recognizes_a_complete_item(run_script, pvault, tmp_path):
+    """m3/M-add-2, the pass direction. A contract-complete --scope-file item must still dry-run
+    cleanly (the recognizer accepts it), so the fix does not break the legitimate replay surface."""
+    scope = tmp_path / "scope.json"
+    _write(scope, {"items": [_scope_file_item()]})
+    r = _run(run_script, pvault, "materialize", "--scope-file", str(scope), "--dry-run", "--json")
+    assert r.returncode == 0, f"a complete item was refused on the dry-run replay: {r.stderr!r}"
+    out = _read(pvault / SCOPE) if (pvault / SCOPE).exists() else None
+    assert out is None, "a dry run must not write the scope file"
+    assert json.loads(r.stdout)["dry_run"] is True
