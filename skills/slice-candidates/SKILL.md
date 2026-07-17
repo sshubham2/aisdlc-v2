@@ -293,8 +293,12 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" materialize --json 
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" census --json        # PRODUCT / EXHAUST / HUMAN split
 ```
 
-To **extend or correct** the scope, repeat product-2 (`Write` the full revised item list to the same `$ITEMS` path,
-carrying each kept item's minted `id` verbatim), then:
+To **extend or correct** the scope, repeat product-2 (`Write` the **full** revised item list to the same `$ITEMS`
+path, carrying **every** kept item's minted `id` verbatim), then:
+
+> **`revise` is a WHOLE-LIST replace, not a delta — and it REFUSES a payload that leaves a live item out.**
+> Re-state every item you mean to KEEP. An omitted item is not "unchanged": until slice-073 it was silently DELETED
+> from the product's scope of record at exit 0, with no trace. To remove one, say so explicitly with `--cut` (below).
 
 ```bash
 TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
@@ -306,8 +310,33 @@ rc=$?; rm -f "$ITEMS"; exit $rc
 
 `revise` preserves already-minted `PS` ids **by id** and never re-mints; new items omit `id` as usual. An `id` this
 vault never minted is REFUSED (the model may reuse an identity the receiver gave it, never invent one), and so is a
-REPEATED one. A scope item dropped from a revision leaves its candidate untouched — the backlog is append-only and
-it may already be shipped — and `materialize` reports it as `orphaned`, taking no action.
+REPEATED one, and so is one that was previously `--cut` (a cut id's candidate may already be shipped, so reviving it
+would alias two capabilities onto one record).
+
+**To REMOVE a scope item, cut it explicitly** — repeatable, and `--reason` is required (an added item is
+self-describing; a cut destroys the only record of what was there):
+
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+ITEMS="$TMPD/aisdlc-product-scope-items.json"
+[ -s "$ITEMS" ] || { echo "STOP: $ITEMS is missing or empty -- Write the revised decomposition first." >&2; exit 1; }
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" revise --items-file "$ITEMS" \
+    --cut PS-003 --reason "descoped -- the concept revision dropped in-app refunds" --json
+rc=$?; rm -f "$ITEMS"; exit $rc
+```
+
+Every accepted membership change appends a record to `product-scope.json`'s **append-only `revisions[]`**
+(`{at, cut[], added[], reason, items_before, items_after}`) — prior entries are never rewritten. A membership-preserving
+revise (e.g. a description edit) appends nothing. That ledger is load-bearing, not documentation: its `cut` ids are the
+`PS` retirement history the id allocator scans, so a retired id is never re-issued onto a shipped candidate.
+
+A **cut** scope item leaves its candidate untouched — the backlog is append-only and it may already be shipped — and
+`materialize` reports it as `orphaned`, taking no action.
+
+Every refusal names the offending id(s) on stderr with a non-zero exit and leaves `product-scope.json` byte-identical.
+The same protection covers the sibling write paths: `vault_edit remove` / `set --path items` / `append` on
+`product-scope.json`/`items` all REFUSE ([[ADR-080]]) — scope items are written only by `persist`/`revise`, which
+enforce the decomposition contract.
 
 ## Candidate shape (reference)
 

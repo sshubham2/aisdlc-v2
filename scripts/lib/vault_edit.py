@@ -139,15 +139,62 @@ _MANAGED_KIND = {
     # source ref), so they PRE-mint via `alloc --kind r` and carry the id in the payload
     # (the cc/cn/gs pattern), which mint-on-append would reject.
     #
-    # SAME CARVE-OUT, same reason (slice-068 / [[ADR-067]]): ('product-scope.json', 'items') -> 'ps'
-    # is deliberately ABSENT. product_scope.persist must REWRITE the model's run-local depends_on
-    # labels into minted PS ids inside ONE lock — and `append` mints internally and returns nothing to
-    # the caller, so persist could never learn the ids it must substitute. persist therefore does its
-    # own safe_mutate_text and calls id_allocator.reject_supplied_id('ps', items) as the FIRST
-    # statement in its mutate closure; registering the kind here would have guarded only a
-    # hypothetical hand-authored append that no production writer takes. `alloc --kind ps` covers
-    # hand-authored pre-minting.
+    # slice-073 / [[ADR-080]] (SUPERSEDES [[ADR-067]] §3 on this line; ADR-066 said register, ADR-067
+    # said don't, this is the third and final position — read ADR-080 before touching it again).
+    #
+    # ('product-scope.json', 'items') -> 'ps' IS registered, and the reason the old carve-out gave for
+    # omitting it is STILL TRUE — it was just an argument about ONE leg, silently inherited by four.
+    #
+    # WHAT IS STILL TRUE (ADR-067 §3's first half, retained verbatim): product_scope.persist must
+    # REWRITE the model's run-local depends_on labels into minted PS ids inside ONE lock, and `append`
+    # mints internally and returns nothing to the caller, so persist could never learn the ids it must
+    # substitute. persist therefore does its OWN safe_mutate_text and calls
+    # id_allocator.reject_supplied_id('ps', items) as the FIRST statement in its mutate closure. It
+    # does not route through vault_edit and never will. Nothing here changes that.
+    #
+    # WHY IT IS REGISTERED ANYWAY: _MANAGED_KIND is NOT an append-only mechanism. ONE entry is
+    # consulted by _managed_kind_for on FOUR legs — append (:446), update (:538), set --path (:655),
+    # remove (:603). ADR-067 reasoned about `append` ("it would guard only a hypothetical hand-authored
+    # append no production writer takes" — true) and generalized that to the ENTRY. But `remove` and
+    # `set --path` are neither hypothetical nor append: they are the generic, DISCOVERABLE, documented
+    # way a model deletes a vault array element, and executed against the live shape they each DELETED
+    # a scope item at rc=0 with no record and no refusal — walking straight around cmd_revise's
+    # omission gate, which would have made that gate theatre. So the entry is REQUIRED for the
+    # removal legs, and is belt-and-braces on the persist path that never reaches it.
+    #
+    # SWEEP THE VERBS, NOT THE HEADLINE (this is the whole lesson — see ADR-080's consequences): the
+    # `ps` APPEND leg is refused explicitly in _cmd_append rather than minting, because mint-on-append
+    # here would hand a real PS id to an item with no assumptions, `_check_contract` would never run,
+    # and the resulting candidate SKIPS /risk-spike step-0 — ADR-067 §5's bypass, reopened by one
+    # supported command. Any FUTURE entry (or non-entry) must be argued leg by leg, not headline by
+    # headline. `alloc --kind ps` still covers hand-authored pre-minting.
+    #
+    # WHAT THIS ENTRY DOES **NOT** CLOSE — stated precisely, because an over-claimed sweep is the same
+    # defect one level up (code-review CR3, and the honest correction of this very comment's first
+    # draft, which asserted a four-leg sweep it had not earned):
+    #   * `update` is swept for the ID KEY ONLY (_cmd_update rejects `--set id=...`). It does NOT
+    #     enforce the decomposition contract on other fields: `vault_edit update --file
+    #     product-scope.json --array items --id PS-001 --set assumptions=[]` -> rc=0, assumptions
+    #     STRIPPED, and `materialize` then mints a candidate with `assumptions: []` that SKIPS
+    #     /risk-spike step-0. REPRODUCED BY EXECUTION. Not a regression (this leg was equally open
+    #     before the registration) and deliberately NOT closed here — closing it is new, unreviewed
+    #     behaviour on a leg no production writer takes, which is the M1/`rewrite` precedent (a
+    #     pre-existing non-regression escape is NAMED, not closed mid-slice). Filed as its own
+    #     candidate.
+    #   * `rewrite` never consults this map at all (ADR-080 #6).
+    # So the accurate claim is: this entry closes `remove` and `set --path items`, refuses `append`,
+    # and guards `update`'s id key. It is NOT a whole-contract guard on every write verb.
+    ("product-scope.json", "items"): "ps",
 }
+
+# slice-073 / [[ADR-080]] #2: managed kinds whose APPEND leg must REFUSE outright instead of minting.
+# Registering a kind normally means "mint the id in-lock"; for `ps` it means "this array has ONE
+# guarded writer" — scope items are minted by product_scope persist/revise, which enforce the
+# decomposition contract (ADR-067 §5). A raw append cannot, and after registration it would look
+# LEGITIMATE (real id, real counter bump) rather than crashing loudly the way it does unregistered.
+# A named set, not an `if kind == "ps"` in the append leg: the next kind with a guarded writer must
+# be a VISIBLE one-line decision here, not a re-derivation.
+_APPEND_REFUSED_KINDS = {"ps"}
 
 # slice-050 / SC-041 (ADR-040 + ADR-043): the bounded, --stdin-scoped duplicate-append guard.
 # K = how many trailing elements an identical re-submission is checked against. Small on purpose:
@@ -444,6 +491,24 @@ def _cmd_append(args: argparse.Namespace) -> int:
         # IN-LOCK and REJECTS any caller-supplied id (the no-explicit-PK guard). The seed floor is
         # computed once from live ∪ archive; the persisted counter is authoritative thereafter.
         kind = _managed_kind_for(_root(args), target, key)
+        # slice-073 / [[ADR-080]] #2: a managed kind whose array has ONE guarded writer refuses the
+        # raw append outright rather than minting. Placed FIRST -- before the duplicate-suppressor
+        # and before id allocation -- so no path can return a false success (the slice-071 idiom, and
+        # the same reason it sits there: an exit-0 suppression on a write that must never happen is
+        # the worst of both). raise ValueError -> _run_mutate exit 2, target UNTOUCHED (no temp, no
+        # replace), so counters.ps is not bumped either.
+        if kind in _APPEND_REFUSED_KINDS:
+            rel = _vault_rel_key(_root(args), target)
+            raise ValueError(
+                f"vault_edit append: refusing to append to the managed {rel}/{key} array -- scope "
+                f"items are minted by `product_scope persist` / `product_scope revise`, which "
+                f"enforce the decomposition contract (every item carries a BLOCKING assumption, "
+                f"ADR-067 section 5), never appended raw. An item appended here would carry a real, "
+                f"monotonic PS id with NO assumptions, so its candidate would SKIP /risk-spike "
+                f"step-0 -- the pipeline's reality gate -- on exactly the least-understood work in "
+                f"the product. To ADD a capability: re-run `product_scope revise --items-file <the "
+                f"FULL item list, new item last, no `id` on it>`. Nothing was written."
+            )
         # slice-071 / SC-151 (ADR-075): mint-time shape guard for build-check rules. A rule
         # whose `applies_when` is not a JSON object silently enforces NOTHING downstream
         # (build_checks_audit drops it), so reject it at MINT. Placed right after the kind
