@@ -368,6 +368,96 @@ def test_c10_census_unclassified_is_empty_against_the_real_aivlc_taxonomy(run_sc
     assert out["total"] == 14
 
 
+# ── slice-079 / ADR-090 — the two taxonomy extensions (`discover`, `slice-NNN-abandoned`) ──
+
+@pytest.mark.parametrize("slice_ref", ["slice-070-abandoned", "slice-123-abandoned", "slice-9-abandoned"])
+def test_slice079_abandoned_disposition_classifies_exhaust(slice_ref):
+    """AC1 (mechanism evidence, m1): a `slice-NNN-abandoned` teardown ref classifies as EXHAUST — a
+    per-slice disposition structurally identical to the existing discovered/deferred/descope residue.
+    Parametrized over >=2 slice numbers to pin the PATTERN (number varies), not a single literal.
+    Genuinely WRITTEN-FAILING pre-impl: before ADR-090 these returned UNCLASSIFIED (the 2 live SC-152/
+    SC-153 rows are the real defect)."""
+    from scripts.lib.product_scope import classify_source_type
+
+    assert classify_source_type(slice_ref) == "EXHAUST"
+
+
+def test_slice079_discover_literal_classifies_exhaust():
+    """AC2 (mechanism evidence, m1): the bare `discover` source type classifies as EXHAUST — a distinct
+    sibling of the already-present `discovered`. WRITTEN-FAILING pre-impl (returned UNCLASSIFIED)."""
+    from scripts.lib.product_scope import EXHAUST_SOURCES, classify_source_type
+
+    assert "discover" in EXHAUST_SOURCES
+    assert "discovered" in EXHAUST_SOURCES, "the distinct sibling must remain — this is an ADDITION"
+    assert classify_source_type("discover") == "EXHAUST"
+
+
+def test_slice079_extension_is_named_only_no_wildcard_absorption():
+    """must_not_defer #1 / ADR-090: the suspense account is never auto-cleared. The extension adds exactly
+    one named alternation member and one literal — NO `^slice-\\d+-.*$` wildcard — so a novel disposition
+    or a novel bare type still fails every bucket and lands in `unclassified`, keeping the tripwire armed.
+    The over-reach negative the convergent tournament's expert designer prescribed."""
+    from scripts.lib.product_scope import classify_source_type
+
+    assert classify_source_type("slice-070-teleported") == "UNCLASSIFIED", "a novel disposition must NOT be absorbed"
+    assert classify_source_type("slice-070-abandonedX") == "UNCLASSIFIED", "the anchored regex must not over-match"
+    assert classify_source_type("disco") == "UNCLASSIFIED", "a substring of `discover` must not match"
+    assert classify_source_type("imported") == "UNCLASSIFIED", "a novel bare type stays UNCLASSIFIED"
+
+
+def test_slice079_no_crash_on_missing_or_malformed_source_type():
+    """must_not_defer #2: no crash on a malformed/missing source ref. None and '' return UNCLASSIFIED via
+    the existing `(t or '').strip()` guard, never raise."""
+    from scripts.lib.product_scope import classify_source_type
+
+    assert classify_source_type(None) == "UNCLASSIFIED"
+    assert classify_source_type("") == "UNCLASSIFIED"
+    assert classify_source_type("   ") == "UNCLASSIFIED"
+
+
+def test_slice079_census_clears_both_new_types_including_the_discover_occurrence(run_script, tmp_path):
+    """AC3 + M-add-1 (the DR-1 payoff, census-level pin): reproduces the REAL vault's two distinct shapes
+    and asserts BOTH reconciliation clauses, because `counts.UNCLASSIFIED==0` alone is BLIND to the
+    `discover` half.
+
+      * live SC-152/SC-153 shape: source is ONLY `slice-070-abandoned` -> UNCLASSIFIED at the candidate
+        level pre-impl, so it moves `counts.UNCLASSIFIED`.
+      * archived SC-141 shape: source carries `risk` AND `discover` -> already EXHAUST via `risk`, so the
+        `discover` literal moves NO candidate-level count; its ONLY census signal is the `unclassified`
+        OCCURRENCES list emptying.
+
+    So `census['unclassified']==[]` is the sole census-level proof the discover fix landed. Genuinely
+    WRITTEN-FAILING pre-impl: before ADR-090 counts.UNCLASSIFIED==2 and unclassified lists both types."""
+    v = tmp_path / "taxonomy"
+    (v / "archive").mkdir(parents=True)
+    _write(v / "candidates.json", {"candidates": [
+        {"id": "SC-901", "title": "abandoned-a", "source": [{"type": "slice-070-abandoned", "ref": None}]},
+        {"id": "SC-902", "title": "abandoned-b", "source": [{"type": "slice-070-abandoned", "ref": None}]},
+        {"id": "SC-903", "title": "a-real-product-item", "source": [{"type": "product-scope", "ref": "PS-001"}]},
+    ]})
+    _write(v / "archive" / "candidates.json", {"candidates": [
+        {"id": "SC-141", "title": "sc141-shape",
+         "source": [{"type": "risk", "ref": "R-4"}, {"type": "discover", "ref": "concept.json first_slice_candidate"}]},
+    ]})
+
+    r = _run(run_script, v, "census", "--json")
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+
+    # BOTH clauses (M-add-1): the abandoned fix drives counts to 0, the discover fix empties occurrences.
+    assert out["counts"]["UNCLASSIFIED"] == 0, "the abandoned rows must reclassify out of UNCLASSIFIED"
+    assert out["unclassified"] == [], (
+        "the discover OCCURRENCE must be cleared — the only census-level signal the discover half landed; "
+        f"got {out['unclassified']}"
+    )
+    # The abandoned rows are EXHAUST; the SC-141 shape stays EXHAUST via risk; the product row is PRODUCT.
+    assert out["counts"] == {"PRODUCT": 1, "HUMAN": 0, "EXHAUST": 3, "UNCLASSIFIED": 0}
+    # SMOKE ONLY (m1): sum==total is TAUTOLOGICAL — classify_candidate always returns one of four buckets
+    # and cmd_census increments one per candidate, so it holds for ANY input (incl. the pre-impl U==2
+    # state). It is NOT evidence for AC3/no-drop; the assertions above are.
+    assert sum(out["counts"].values()) == out["total"] == 4
+
+
 # ── C6 — the identity guard is on the path that actually RUNS ────────────────────
 
 def test_c6_persist_rejects_a_model_supplied_id(run_script, pvault, tmp_path):

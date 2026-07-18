@@ -164,12 +164,22 @@ EXHAUST_SOURCES = frozenset({
     "spun-off", "adr", "dogfood-incident", "exploratory-charter", "external-review",
     "code-review", "code-review-finding", "critique-finding", "design-review-finding",
     "critic-calibrate-finding", "verified-finding", "finding", "diagnose-finding", "bug-hunt-finding",
+    # `discover` (a DISTINCT sibling of `discovered`): a bespoke concept-decomposition value carried by
+    # exactly ONE archived row (SC-141, ref `concept.json first_slice_candidate`) — NOT a source type any
+    # live skill emits (skills/discover/SKILL.md mints `risk`). It is /discover-run pipeline residue, so
+    # EXHAUST. Count-inert: SC-141 is already EXHAUST via its `risk` sources, so this literal only clears
+    # the census `occurrences` tripwire line — the sole census-level signal it landed is `unclassified==[]`.
+    # slice-079 / ADR-090 / m2.
+    "discover",
 })
 
 #: Per-slice EXHAUST variants the vault genuinely produces (e.g. the real aivlc row
-#: `"source": "slice-007-discovered"`). A named pattern, not a literal, because the slice number varies
-#: — but still explicit, and anything outside it still lands in `unclassified`.
-_EXHAUST_PATTERNS = (re.compile(r"^slice-\d+-(discovered|deferred|descope)$"),)
+#: `"source": "slice-007-discovered"`, or a `slice-NNN-abandoned` disposition written when a slice is torn
+#: down mid-flight — the live SC-152/SC-153 rows). A named pattern, not a literal, because the slice number
+#: varies — but each disposition is an EXPLICIT NAMED alternation member, NEVER a `^slice-\d+-.*$` wildcard
+#: (a wildcard would silently absorb any future/typo'd disposition into EXHAUST and disarm the fail-visible
+#: tripwire). Anything outside it still lands in `unclassified`.
+_EXHAUST_PATTERNS = (re.compile(r"^slice-\d+-(discovered|deferred|descope|abandoned)$"),)
 
 # ── the mint-time priority block (C1, blocker) ────────────────────────────────────────────────────
 #
