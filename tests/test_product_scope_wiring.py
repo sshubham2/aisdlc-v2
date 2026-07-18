@@ -57,8 +57,12 @@ def test_slice_is_read_only_and_carries_the_backstop_notice():
         "/slice must consult the census as a read-only backstop"
     )
     assert "READ-ONLY" in text
+    # slice-081 (m3 / FBCD-1): the mutating-verb set grew 3->4 with `set-component`. A slice that changes
+    # the cardinality of a counted set must extend that set's enumeration (this is the ONLY enumeration
+    # guard -- there is no _DISPATCH-completeness test). Both the quote- and space-forms are enumerated.
     for mutating in ("product_scope.py\" persist", "product_scope.py\" materialize",
-                     "product_scope.py\" revise"):
+                     "product_scope.py\" revise",
+                     "product_scope.py\" set-component", "product_scope.py set-component"):
         assert mutating not in text, (
             f"/slice must never invoke a MUTATING product_scope verb ({mutating}) — it is a read-only "
             f"pick path (ADR-067 section 1)"
@@ -142,6 +146,30 @@ def test_cr2_product_mode_can_author_its_items_file():
     assert text.count("aisdlc-product-scope-items.json") >= 3, (
         "every block touching the items file must re-derive its path (vars do not persist across blocks)"
     )
+
+
+def test_slice_candidates_surfaces_set_component_after_materialize():
+    """slice-081 (M-add-1 / DR-1) — the POSITIVE-wiring twin of m3. This slice's whole reason to exist is
+    de-inerting slice-080's lens; test_product_scope_wiring.py's own premortem (BC-PROJ-10) is that 'a
+    perfectly correct product_scope.py would have shipped INERT because no consumer invoked it.' m3 pins
+    the NEGATIVE wiring (/slice must NOT invoke set-component); this pins its POSITIVE twin: the
+    --product flow must actually SURFACE `set-component` as the post-materialize enabler, or the producer
+    ships and the lens stays inert on the real vault.
+
+    Mirrors test_slice_candidates_documents_the_product_mode_contract: a string-in-SKILL guard on the
+    hand-off the pipeline actually executes (the CONSUMER), not the CLI shape (which the unit tests cover).
+    """
+    text = SLICE_CANDIDATES.read_text(encoding="utf-8")
+    assert "set-component" in text, (
+        "slice-candidates/SKILL.md --product flow must SURFACE `set-component`, or the producer ships INERT"
+    )
+    # positioned as the post-materialize enabler: it appears AFTER the materialize verb is introduced
+    assert text.index("materialize") < text.rindex("set-component"), (
+        "set-component must be documented as the step AFTER materialize (it annotates already-materialized "
+        "capabilities)"
+    )
+    # non-vacuous: still the --product section, and it names what the annotation de-inerts
+    assert "--product" in text and "component" in text
 
 
 def test_the_design_manifest_records_the_wiring():

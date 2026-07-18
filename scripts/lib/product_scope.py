@@ -83,13 +83,15 @@ a sibling `status` field, so a consumer branches on structured state and never o
                                            [--reason TEXT] [--json]
     product_scope.py [--vault ROOT] census [--json]
     product_scope.py [--vault ROOT] done [--item PS-NNN] [--json]
+    product_scope.py [--vault ROOT] set-component --item PS-NNN --component NAME [--json]
 
-    0  ran (minted N >= 0; a 0-mint states its reason)
+    0  ran (minted N >= 0; a 0-mint states its reason; a set-component no-op reports changed:false)
     1  runtime error (fail-visible)
     2  usage error (incl. a model-supplied id, an invented PS id, --scope-file without --dry-run,
-       a `done --item` naming an id this scope does not carry)
+       a `done`/`set-component --item` naming an id this scope does not carry, an empty/whitespace or
+       reserved-'unassigned' set-component --component)
     3  concept.json ABSENT           -> actionable message naming /discover            [decompose-context, persist]
-    4  product-scope.json ABSENT     -> actionable message naming /slice-candidates --product   [materialize, revise, done]
+    4  product-scope.json ABSENT     -> actionable message naming /slice-candidates --product   [materialize, revise, done, set-component]
        product-scope.json ALREADY EXISTS -> create-only refusal naming `revise`        [persist]
 
 A CAPABILITY HAS MANY CANDIDATES (slice-075 / [[ADR-086]], which SUPERSEDES ADR-085). "How many slices
@@ -130,6 +132,13 @@ from scripts.lib._vault_write import safe_mutate_text
 SCOPE_FILE = "product-scope.json"
 SCOPE_SCHEMA = "aisdlc/product-scope@1"
 CANDIDATES_SCHEMA = "aisdlc/slice-candidates@1"
+
+# The reserved catch-all component stratum (slice-080/ADR-091). Single-sourced HERE (slice-081/ADR-092):
+# product_rollup.py re-points its own `UNASSIGNED` to this exact byte string, so the WRITE-seam validator
+# (`_valid_component`, which rejects it) and the read-side catch-all bucket share ONE definition and can
+# never drift. The exact lowercase string is load-bearing (rollup byte-identity + the --component lens
+# known-set); compare against `UNASSIGNED.casefold()`, never a re-hardcoded literal.
+UNASSIGNED = "unassigned"
 
 # ── the candidate source taxonomy (C10: an OPEN SET, so the classifier must be EXPLICIT) ─────────
 #
@@ -1606,6 +1615,99 @@ def cmd_done(vault: Path, args) -> dict:
     }
 
 
+def _valid_component(name: str) -> str:
+    """The WRITE-seam validator (slice-081 / AC4). Returns the stripped value that will PERSIST; raises
+    _Refuse(2,'usage') on the two rejectable shapes. check == persisted-value (slice-076): the single
+    normalized string is both validated here and written by the caller, so no check/write differential.
+
+    Two rejects, and only two (the field stays OPTIONAL — absent/None is a legal un-annotated item, set
+    only by persist/revise, never by this verb):
+      * empty / whitespace-only  -> a component name must be a real label
+      * the reserved sentinel     -> casefold-match of UNASSIGNED. 'unassigned' is a RESIDUAL the rollup
+        buckets un-annotated capabilities into (a suspense account you never post INTO); writing it would
+        merge a genuinely-annotated capability with the truly-unassigned. Compared against
+        UNASSIGNED.casefold() (m1), never a re-hardcoded literal, so the sentinel stays single-sourced.
+    """
+    s = (name or "").strip()
+    if not s:
+        raise _Refuse(2, "usage",
+                      "set-component --component must be a non-empty name (an empty/whitespace value is "
+                      "not a component). To leave a capability un-annotated, simply do not annotate it.")
+    if s.casefold() == UNASSIGNED.casefold():
+        raise _Refuse(2, "usage",
+                      f"set-component --component {name!r} is the reserved sentinel {UNASSIGNED!r} -- the "
+                      f"catch-all bucket un-annotated capabilities fall into, never a destination you "
+                      f"post into. Choose a real component name, or leave the capability un-annotated.")
+    return s
+
+
+def cmd_set_component(vault: Path, args) -> dict:
+    """Assign ONE component to ONE already-materialized PS capability (slice-081 / SC-183 / [[ADR-092]]).
+
+    The producer slice-080's component lens + capability-progress rollup were missing: on the real vault
+    every capability lands in 'unassigned', so the rollup reads 'Whole app 0/N ... N unassigned' -- correct
+    but inert. This verb is the annotation channel that de-inerts it.
+
+    FOCUSED + REUSED, not a flag on `revise` (ADR-092): a genuine in-place read-modify-write of ONLY
+    items[<id>].component via the existing atomic safe_mutate_text path -- it does NOT route through
+    revise's out_items whitelist (which would reshape assumptions + drop non-whitelist fields on untouched
+    items, m4), does NOT re-materialize (product_rollup/candidates_top join component at READ time via
+    owner_refs, so nothing flows into candidates.json), and does NOT extend the revisions[] ledger (a
+    component SET is self-describing + idempotent, exactly the module's ADD-principle; and revisions[].cut
+    is load-bearing for id_allocator.seed_max_for -- keeping the ledger membership-only avoids premise-drift).
+    'recorded' == the atomic write + a revised_at bump.
+
+    Every reject leaves product-scope.json BYTE-IDENTICAL: the _valid_component reject is PRE-LOCK (never
+    opens the file); an absent-`--item` reject raises INSIDE mutate() before the atomic replace, so the
+    target is untouched (per _vault_write). A same-value no-op returns the text verbatim (changed:false,
+    no revised_at churn -- m2).
+    """
+    component = _valid_component(args.component)          # PRE-LOCK reject (AC4); a rejected call never opens the file
+    item_id = str(getattr(args, "item", "") or "").strip()
+    if not item_id:
+        raise _Refuse(2, "usage", "set-component --item PS-NNN is required (the capability to annotate).")
+    _scope(vault, required=True)                          # exit 4 on scope-absent (M1), pre-lock; mirrors revise
+    ts = _now()
+    holder: dict = {}
+
+    def mutate(text: str) -> str:
+        data = json.loads(text) if text.strip() else {}
+        items = [i for i in data.get("items") or [] if isinstance(i, dict)]
+        target = next((i for i in items if str(i.get("id")) == item_id), None)
+        if target is None:
+            # In-lock re-check: a parallel --cut could have retired the id after the pre-lock _scope read.
+            # Mirrors done/revise -- a typo is a USAGE error, never a silent no-op. Raising here leaves the
+            # file byte-identical (safe_mutate_text writes nothing on a raising mutate).
+            live = ', '.join(sorted(str(i.get("id")) for i in items if i.get("id"))) or 'none'
+            raise _Refuse(
+                2, "usage",
+                f"set-component --item {item_id} names a scope item this product does not carry "
+                f"(live ids: {live}). Read {SCOPE_FILE} for the real ids.")
+        prev = target.get("component")
+        if prev == component:
+            # No-op re-annotation to the SAME value: byte-identical, no revised_at churn (m2). Return the
+            # text verbatim so the atomic replace writes back exactly what was there.
+            holder.update(changed=False, previous=prev)
+            return text
+        target["component"] = component                  # genuine in-place set: every OTHER item is untouched (m4)
+        data["revised_at"] = ts
+        holder.update(changed=True, previous=prev)
+        return _dump(data)
+
+    safe_mutate_text(vault / SCOPE_FILE, mutate)
+    return {
+        "action": "set-component",
+        "status": "ok",
+        "vault": str(vault),
+        "item": item_id,
+        "component": component,
+        "changed": holder["changed"],
+        # m5: echo the prior value so a REASSIGNMENT (A->B) is visible in the command result (a component
+        # change writes no durable audit trail by design; the echo is the visibility). null on a first set.
+        "previous": holder.get("previous"),
+    }
+
+
 def cmd_census(vault: Path, args) -> dict:
     """Re-run the classification that DETECTED this defect — shipped, testable, repeatable.
 
@@ -1700,6 +1802,17 @@ def _build_parser() -> argparse.ArgumentParser:
                              "no-children | unknown)")
     dn.add_argument("--item", default=None, metavar="PS-NNN",
                     help="report only this scope item (default: every item)")
+
+    # slice-081 / ADR-092: assign ONE component to ONE already-materialized capability. --item mirrors
+    # done's shape field-for-field; --component is validated at the write seam (empty/reserved rejected).
+    sc = sub.add_parser("set-component", parents=[common],
+                        help="assign a component to ONE materialized scope item (de-inerts the slice-080 "
+                             "component lens / rollup)")
+    sc.add_argument("--item", required=True, metavar="PS-NNN",
+                    help="the already-materialized scope item to annotate")
+    sc.add_argument("--component", required=True, metavar="NAME",
+                    help="the component name to assign (rejected if empty/whitespace or the reserved "
+                         "'unassigned' sentinel)")
     return p
 
 
@@ -1710,6 +1823,7 @@ _DISPATCH = {
     "revise": cmd_revise,
     "census": cmd_census,
     "done": cmd_done,
+    "set-component": cmd_set_component,
 }
 
 
@@ -1750,6 +1864,13 @@ def _text(out: dict) -> str:
             lines.append("  => the product's own scope is ABSENT from this backlog. Run /discover, "
                          "then /slice-candidates --product.")
         return "\n".join(lines)
+    if a == "set-component":
+        if not out["changed"]:
+            return (f"set-component: {out['item']} already component {out['component']!r} -- no change "
+                    f"(byte-identical).")
+        prev = out.get("previous")
+        was = f" (was {prev!r})" if prev else " (was unassigned)"
+        return f"set-component: {out['item']} -> component {out['component']!r}{was}."
     if a in ("persist", "revise"):
         m = out["materialize"]
         return (f"{a}: {out.get('persisted', out.get('items'))} scope item(s) persisted "
