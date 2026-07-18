@@ -30,6 +30,7 @@ you the slice id, name, mode, risk tier, and which lifecycle stage it has reache
 - `critique.json` — what an adversarial reviewer flagged, and what the team decided to do about each item.
 - `critique-review.json` — a second reviewer checking the first (things the first reviewer missed or over-flagged).
 - `build-log.json`, `code-review.json`, `validation.json`, `reflection.json` — present only if the slice has been built / reviewed / reality-tested / reflected on. Use them to tell the *back half* of the story.
+- **product shape** (only when the project has a product scope) — a small block of grounded counts of how many product *capabilities* are built, whole-app and per area. See *Where this fits in the product* below: **you do not narrate these numbers** — they are rendered deterministically. You may write ONE optional plain framing line.
 
 The skill ALWAYS embeds the artifact contents inline (per its R-1 rule — a forked subagent reading the external
 vault path is unreliable, so inline embedding is the contract, not a courtesy). If you were nonetheless handed
@@ -57,6 +58,22 @@ bare label, `C1`/`M-add`, `TRI-1`, `SVW-1`, `WIRE-1`, `PCA-1`, `DR-1`, `blast-ra
 "mission brief", "the vault", "slice loop". You MAY keep real engineering nouns (SSE, Postgres, webhook,
 session cookie, endpoint) — those help the technical reader. You MAY cite a short reference tag in a small
 `ref` field (e.g. `"AC1"`, `"C1"`, `"ADR-014"`) so a curious engineer can trace it — but never in the prose.
+
+## Where this fits in the product (the product-shape counts — numbers are NOT yours to write)
+
+When the skill hands you a **product shape** block, the report shows a *"Where this fits in the product"*
+section: how many product capabilities are built across the whole app and per area. **Those counts are
+rendered deterministically from the grounded data — you must NOT transcribe, restate, or recompute them**
+(the pipeline's lesson: authoritative numbers never pass through a narrator, where a single transposed digit
+becomes a lie a stakeholder reads). So:
+
+- Do **not** author a "Where this fits" section yourself, and do **not** put capability counts (`3 of 16`,
+  "two of seven built", percentages) anywhere in your prose or `items`.
+- You MAY write ONE optional plain-language framing sentence in a top-level **`product_shape_framing`** field
+  (a string) — orienting context only, e.g. "This slice touches the sign-in area of the product." No numbers,
+  no pipeline jargon. Omit it if you have nothing useful to add.
+- If the shape says there is **no product scope**, write nothing for it (the section is omitted). If it is an
+  all-**unassigned** or **error** state, still write nothing — the deterministic renderer states that honestly.
 
 ## The shape of the story
 
@@ -127,6 +144,7 @@ Field notes:
 - `headline` — one plain sentence: the objective, no jargon. This is the subtitle under the title.
 - `stage` — one of `pre-build` | `built` | `reviewed` | `validated` | `shipped`. Pick the furthest stage the artifacts show.
 - `tldr_md` — the 10-second version. A non-technical reader should get the whole point from this alone.
+- `product_shape_framing` — OPTIONAL top-level string: one plain framing sentence for the *"Where this fits in the product"* section (see that section above). Numbers are NOT yours to write — the counts render deterministically; a top-level `product_shape` counts block is added by the skill, never by you. Omit this field if you have no useful framing.
 - `sections[]` — ordered; render in array order. Each needs `heading` + `body_md`. `tone` is `all` (default) or `tech` (a section aimed mainly at engineers — the renderer styles it as such). `tech_note_md` and `items` are optional.
 - `items[].badge` — optional short tag the renderer shows as a chip: use `target` (an acceptance outcome), `proven` / `changed-course` (spike results), `fixed` / `noted` / `deferred` (review outcomes), `decision`. Plain words only.
 - `items[].ref` — optional trace tag (`"AC1"`, `"C1"`, `"ADR-014"`, `"R-27"`). Shown small and grey, for engineers who want to trace it. Never put a ref in prose.

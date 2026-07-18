@@ -96,6 +96,14 @@ _JARGON_RES = [
     # pipeline plumbing vocabulary
     re.compile(r"(?i)\b(?:blast[- ]radius|auto-advance|dispositions?|accepted-(?:pending|fixed)|"
                r"mission[- ]brief|slice loop|the Critic|the Builder|the vault)\b"),
+    # slice-082 (M4/m2): a TRANSCRIPTION backstop for the capability-rollup vocabulary. The projection
+    # (story_inputs.py) already strips these from the substrate render_story renders deterministically, so
+    # this fires only on the OTHER leak path — the narrator transcribing them from design.json/ADR-093
+    # embedded in its prompt. UNDERSCORE-EXACT identifiers + the EXACT done_definition phrase ONLY: never a
+    # space/hyphen-broadened form, because the plain-language 'no children' / 'rejected only' the narrator
+    # MUST be free to write are legitimate prose — a broadened regex would false-FAIL them (APED-1 cry-wolf).
+    re.compile(r"\b(?:rejected_only|no_children|pulse_line|done_definition)\b"),
+    re.compile(r"materialized candidate archived"),
 ]
 
 
@@ -113,6 +121,9 @@ def scan_jargon(data: dict) -> list[tuple[str, str]]:
     hits: list[tuple[str, str]] = []
     hits += _jargon_hits(data.get("headline", ""), "headline")
     hits += _jargon_hits(data.get("tldr_md", ""), "tldr_md")
+    # slice-082: the narrator's optional one-line product-shape framing is prose too (the COUNTS are the
+    # deterministic product_shape block, not scanned — they carry no jargon by construction).
+    hits += _jargon_hits(data.get("product_shape_framing", ""), "product_shape_framing")
     for i, sec in enumerate(data.get("sections") or []):
         if not isinstance(sec, dict):
             continue
@@ -276,6 +287,75 @@ def _render_signoff(signoff: dict) -> str:
     )
 
 
+def _ip_clause(st: dict) -> str:
+    """' (N in progress)' when a stratum has in-flight work (m3), else ''. Plain, jargon-free."""
+    ip = int(st.get("in_progress") or 0)
+    return f" ({ip} in progress)" if ip else ""
+
+
+def _render_product_shape(shape: dict, framing: str = "") -> str:
+    """slice-082 / [[ADR-093]]: the DETERMINISTIC 'Where this fits in the product' section. render_story
+    OWNS the numbers (M-add-1 — they are read from the projected substrate, never transcribed by the
+    narrator); the narrator supplies only the optional one-line plain-language `framing`. The section is
+    OMITTED when there is no product scope, and renders an honest note on the empty / all-unassigned / error
+    states (AC3 graceful degrade — it never crashes and never silently drops a fail-visible state)."""
+    if not isinstance(shape, dict):
+        return ""
+    # CR1 belt-and-braces: render ONLY the deterministic, main-thread-INJECTED block (stamped by
+    # story_inputs.inject). A product_shape a narrator authored against its persona rule carries no such
+    # stamp, so its LLM-authored counts are never rendered — the M-add-1 'numbers out of the LLM's hands'
+    # guarantee holds even if the inject step failed and left an un-overwritten narrator block.
+    if shape.get("_source") != "story_inputs.inject":
+        return ""
+    state = shape.get("state")
+    if not state or state == "no_scope":
+        return ""                                      # no product scope -> section omitted entirely
+    unit = str(shape.get("unit") or "capabilities")
+    framing_html = _md(str(framing)) if isinstance(framing, str) and framing.strip() else ""
+
+    def _wrap(inner: str) -> str:
+        return (f'<section class="section product-shape"><h2>Where this fits in the product</h2>'
+                f"{framing_html}{inner}</section>")
+
+    if state == "error":
+        why = html.escape(str(shape.get("error") or "the product view is unavailable"), quote=False)
+        return _wrap(f'<p class="ps-note">Where this slice sits in the wider product could not be shown '
+                     f"right now — {why}.</p>")
+    if state == "empty_scope":
+        note = html.escape(str(shape.get("note") or "No capabilities have been broken out yet."), quote=False)
+        return _wrap(f'<p class="ps-note">{note}</p>')
+
+    # populated | degenerate_unassigned — the substrate guarantees whole_app here (M3 branch order).
+    w = shape.get("whole_app") or {}
+    wd, wt = int(w.get("done") or 0), int(w.get("total") or 0)
+    whole = (f'<p class="ps-whole">Across the whole product, '
+             f"<strong>{wd} of {wt} {html.escape(unit, quote=False)}</strong> are built{_ip_clause(w)}.</p>")
+
+    body = whole
+    comps = shape.get("components") or []
+    if comps:
+        rows = []
+        for c in comps:
+            if not isinstance(c, dict):
+                continue
+            name = html.escape(str(c.get("name", "")).strip(), quote=False)
+            cd, ct = int(c.get("done") or 0), int(c.get("total") or 0)
+            rows.append(f'<li><span class="ps-comp">{name}</span> — {cd} of {ct} built{_ip_clause(c)}</li>')
+        if rows:
+            body += f'<p class="ps-sub">By area:</p><ul class="ps-list">{"".join(rows)}</ul>'
+        u = shape.get("unassigned") or {}
+        if int(u.get("total") or 0):                   # cross-cutting caps not filed under any component
+            ud, ut = int(u.get("done") or 0), int(u.get("total") or 0)
+            body += (f'<p class="ps-unassigned">Not yet grouped into an area: '
+                     f"{ud} of {ut} built{_ip_clause(u)}.</p>")
+    else:
+        # degenerate_unassigned: the honest note (m1 — the COMMON live case until SC-183). Never 'no progress'.
+        note = html.escape(str(shape.get("note") or ""), quote=False)
+        if note:
+            body += f'<p class="ps-note">{note}</p>'
+    return _wrap(body)
+
+
 _CSS = """
 :root{--ink:#1a1d23;--muted:#5b6470;--line:#e4e7ec;--bg:#fbfbfc;--card:#fff;
 --accent:#2563eb;--good:#0f7b4f;--good-bg:#e6f4ed;--warn:#9a6700;--warn-bg:#fdf3d8;
@@ -309,6 +389,15 @@ font-weight:700;margin-bottom:4px;}
 .section{background:var(--card);border:1px solid var(--line);border-radius:12px;
 padding:22px 24px;margin:18px 0;}
 .section.tech{background:var(--tech-bg);}
+.product-shape{border-left:4px solid var(--accent);}
+.product-shape .ps-whole{font-size:16.5px;margin:.2em 0 .4em;}
+.product-shape .ps-sub{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+color:var(--muted);margin:.6em 0 .3em;}
+.product-shape .ps-list{list-style:none;padding-left:0;margin:.2em 0;}
+.product-shape .ps-list>li{border-top:1px solid var(--line);padding:7px 0;}
+.product-shape .ps-list>li:first-child{border-top:none;}
+.product-shape .ps-comp{font-weight:600;}
+.product-shape .ps-unassigned,.product-shape .ps-note{color:var(--muted);font-size:14.5px;margin:.5em 0 0;}
 .section h2,.glossary h2{font-size:20px;margin:0 0 12px;}
 .section p{margin:.6em 0;}
 .section code,.tldr code{background:var(--grey-bg);border-radius:5px;padding:1px 5px;
@@ -397,6 +486,10 @@ def render(data: dict, *, tournament_section: str = "", tournament_css: str = ""
         tldr_html = f'<div class="tldr"><div class="lbl">In short</div>{_md(str(tldr))}</div>'
 
     signoff_html = _render_signoff(data.get("signoff") or {})
+    # slice-082: the deterministic 'Where this fits in the product' section (counts owned by the renderer,
+    # M-add-1). Sits after the sign-off panel as orienting context, before the narrative sections.
+    product_shape_html = _render_product_shape(
+        data.get("product_shape") or {}, data.get("product_shape_framing") or "")
 
     sections_html = "\n".join(
         _render_section(s) for s in (data.get("sections") or []) if isinstance(s, dict)
@@ -419,6 +512,7 @@ def render(data: dict, *, tournament_section: str = "", tournament_css: str = ""
 </header>
 {tldr_html}
 {signoff_html}
+{product_shape_html}
 {sections_html}
 {glossary_html}
 {tournament_section}

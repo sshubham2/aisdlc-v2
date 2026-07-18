@@ -98,6 +98,23 @@ Embed the **full JSON contents** into the narrator prompt (Step 2). Embedding (r
 a path to the external vault) avoids the out-of-cwd subagent access pitfall (R-1) — the narrator needs no
 filesystem access and the artifacts are small.
 
+### Step 1b — fetch the product-shape projection (slice-082 / [[ADR-093]])
+
+Fetch the capability-progress **projection** — how many product capabilities are built, whole-app + per area —
+so the story can show where this slice sits in the product. This is a SINGLE fetch+project invocation of
+`story_inputs.py project` (it runs `product_rollup.compute_rollup` then projects to slice-story's own
+jargon-stripped read model in one call — M2), exit-0-always; the `|| echo` guard emits the **projection shape**
+(`{"state":"error",...}`), never the raw envelope shape (M2):
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY "${CLAUDE_SKILL_DIR}/scripts/story_inputs.py" project --vault "$VAULT" --json 2>/dev/null \
+  || echo '{"state":"error","error":"story_inputs failed to launch"}'
+```
+Embed the printed projection JSON into the narrator prompt (Step 2, the `# product shape` block). It carries
+counts only — the narrator writes just an optional one-line framing; the numbers are rendered deterministically
+at Step 3b (they never pass through the narrator — M-add-1). A `{"state":"no_scope"}` result means the project
+has no product scope; the section is simply omitted downstream.
+
 ## Step 2 — spawn the narrator subagent
 
 Use the **Agent tool** with `subagent_type: "slice-story"`. The narrator persona (audience rules, the
@@ -128,6 +145,9 @@ Delivery (record verbatim as the `delivery` field): {"status": "<proactive|norma
 
 # critique-review.json (second-pass review)
 <full JSON, or "none">
+
+# product shape (grounded capability counts — do NOT restate these numbers; write only an optional one-line product_shape_framing)
+<the Step-1b story_inputs.py projection JSON, or "no product scope">
 
 # post-build artifacts (only if the slice has advanced)
 <full JSON of build-log / code-review / validation / reflection, each labelled, or "none yet">
@@ -168,6 +188,24 @@ print(json.dumps({'ok': True, 'slice': d.get('slice'), 'stage': d.get('stage'),
 
 Check the printed `slice`/`stage` against Step 0. Any assertion failure or mismatch → the Step-2 bounded retry
 (re-prompt the narrator once, then STOP). Do NOT repair the file by hand-writing story content yourself.
+
+## Step 3b — inject the authoritative product-shape counts (slice-082 / [[ADR-093]])
+
+**Deterministically** merge the product-shape counts into the story-sections.json the narrator just wrote —
+on the MAIN THREAD, so the numbers a stakeholder reads are code-rendered, never LLM-transcribed (M-add-1). This
+is a single `story_inputs.py inject` invocation (it fetches+projects then writes the `product_shape` block into
+the file); `render_story` (Step 4) renders that block deterministically. Fail-visible on an io failure — never a
+silent wrong count:
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY "${CLAUDE_SKILL_DIR}/scripts/story_inputs.py" inject \
+    --sections-file "<target-slice>/story-sections.json" --vault "$VAULT" \
+  || echo "WARN: product-shape injection failed — story renders WITHOUT the product-shape section (fail-visible)." >&2
+```
+The projection is exit-0-always for a compute error (it injects a fail-visible `{"state":"error",...}` the
+renderer surfaces honestly); a non-zero exit is only an io failure (unreadable/unwritable story-sections.json),
+which the `|| echo` surfaces. A `no_scope` result injects `{"state":"no_scope"}` and the section is omitted at
+render — that is correct, not a drop.
 
 ## Step 4 — render the ONE combined story.html
 
