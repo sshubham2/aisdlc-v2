@@ -1198,6 +1198,7 @@ def cmd_persist(vault: Path, args) -> dict:
                 "title": str(it["title"]).strip(),
                 "description": it.get("description") or it["title"],
                 "user_visible_outcome": it.get("user_visible_outcome"),
+                "component": it.get("component"),  # slice-080/ADR-091: additive OPTIONAL component lens key
                 "depends_on": [],                  # rewritten below, once every label has an id
                 "assumptions": _normalize_assumptions(it),
                 "verification_plan": it.get("verification_plan"),
@@ -1336,6 +1337,9 @@ def cmd_revise(vault: Path, args) -> dict:
                 "title": str(it["title"]).strip(),
                 "description": it.get("description") or prev.get("description") or it["title"],
                 "user_visible_outcome": it.get("user_visible_outcome") or prev.get("user_visible_outcome"),
+                # slice-080/ADR-091 (critique m1): the established out_items idiom — a revise can SET/UPDATE
+                # the component AND preserve a prior one; a prev-only round-trip never silently drops it.
+                "component": it.get("component") or prev.get("component"),
                 "depends_on": [key_to_ps[d] for d in (it.get("depends_on") or []) if d in key_to_ps],
                 "assumptions": _normalize_assumptions(it),
                 "verification_plan": it.get("verification_plan") or prev.get("verification_plan"),
