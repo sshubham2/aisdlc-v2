@@ -380,31 +380,45 @@ ROW_REQUIRED_NONEMPTY: dict[tuple[str, str], str] = {
 
 # slice-072 (ADR-077): presence-triggered SYMMETRIC per-row check — distinct from the
 # value-triggered CO_CONSTRAINTS above. For each row at the list path, if EITHER field
-# carries a NON-EMPTY VALUE the OTHER must too (residue provenance is all-or-nothing).
+# carries a NON-EMPTY VALUE the OTHER must too (all-or-nothing sibling provenance).
 # Keyed on VALUE truthiness, NEVER key-presence: a NORMAL candidate that OMITS both keys
-# passes (both falsy), and a stray `ejected_from: null` / `""` is treated as absent (m1).
-# (artifact_key, list path) -> (field_a, field_b).
-PRESENCE_SYMMETRIC: dict[tuple[str, str], tuple[str, str]] = {
-    ("slice-candidates", "candidates[]"): ("ejected_from", "ejection_reason"),
+# passes (both falsy), and a stray `field: null` / `""` is treated as absent (m1).
+# slice-077 (M3): a (artifact_key, list path) maps to a LIST of field-pairs, so MULTIPLE
+# co-constraints coexist under ONE key without clobbering each other (a single-tuple dict
+# would let a second entry silently last-write-win over the first). candidates[] carries
+# BOTH the residue pair (slice-072) AND the demote pair (slice-077 / ADR-088).
+PRESENCE_SYMMETRIC: dict[tuple[str, str], list[tuple[str, str]]] = {
+    ("slice-candidates", "candidates[]"): [
+        ("ejected_from", "ejection_reason"),   # slice-072 residue provenance (MUST keep firing)
+        ("demoted_at", "demote_reason"),       # slice-077 demote provenance
+    ],
+}
+
+# The kind of provenance a sibling-pair records, for a precise violation message.
+_PRESENCE_KIND: dict[tuple[str, str], str] = {
+    ("ejected_from", "ejection_reason"): "residue",
+    ("demoted_at", "demote_reason"): "demote",
 }
 
 
 def _presence_symmetric_violations(data: dict, key: str, label: str) -> list[str]:
     v: list[str] = []
-    for (ak, parent), (fa, fb) in PRESENCE_SYMMETRIC.items():
+    for (ak, parent), pairs in PRESENCE_SYMMETRIC.items():
         if ak != key:
             continue
         loc = parent or "<top-level>"
-        for row in _walk_elements(data, parent):
-            a = str(row.get(fa) or "").strip()
-            b = str(row.get(fb) or "").strip()
-            if bool(a) == bool(b):
-                continue  # both present (ok) or both absent (normal row, ok)
-            present, missing = (fa, fb) if a else (fb, fa)
-            rid = row.get("id") or "?"
-            v.append(f"{label}: {loc} row {rid!r} has `{present}` set but `{missing}` "
-                     f"empty/absent — residue provenance is presence-symmetric "
-                     f"(`{fa}` truthy <=> `{fb}` non-empty)")
+        for (fa, fb) in pairs:
+            kind = _PRESENCE_KIND.get((fa, fb), "sibling")
+            for row in _walk_elements(data, parent):
+                a = str(row.get(fa) or "").strip()
+                b = str(row.get(fb) or "").strip()
+                if bool(a) == bool(b):
+                    continue  # both present (ok) or both absent (normal row, ok)
+                present, missing = (fa, fb) if a else (fb, fa)
+                rid = row.get("id") or "?"
+                v.append(f"{label}: {loc} row {rid!r} has `{present}` set but `{missing}` "
+                         f"empty/absent — {kind} provenance is presence-symmetric "
+                         f"(`{fa}` truthy <=> `{fb}` non-empty)")
     return v
 
 

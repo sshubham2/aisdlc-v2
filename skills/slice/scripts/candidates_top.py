@@ -48,7 +48,7 @@ _REPO = pathlib.Path(__file__).resolve().parents[3]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from scripts.lib import _stdout
+from scripts.lib import _stdout, product_priority
 from scripts.lib._vault_paths import VAULT_ROOT
 
 _PICKABLE = {"candidate", "deferred"}
@@ -84,6 +84,30 @@ def _effort(cand: dict) -> str:
 
 def _effort_rank(cand: dict) -> int:
     return _EFFORT_RANK.get(_effort(cand).upper(), 9)
+
+
+# ── slice-077 (SC-138 / ADR-088): the product-priority path-class term at the pick surface ──
+
+def _effective_score(cand: dict) -> float:
+    """Base severity score + the product-priority path-class term (score space). REUSES `_priority`'s
+    isinstance guard so a non-dict priority (the live SC-152/SC-153 shape) fail-SAFEs to term 0 and
+    NEVER raises (M4). A demote CO-CONSTRAINT violation still raises DemoteCoConstraintError (caught in
+    main -> fail-visible + exit 1); a non-dict priority alone does not — the two are independent."""
+    base = _score(cand)
+    pc = product_priority.path_class(cand)          # raises ONLY on a half-written demote
+    if not isinstance(cand.get("priority"), dict):
+        return base                                 # non-dict priority -> term 0 (fail-safe)
+    return base + product_priority.product_term(pc)
+
+
+def _demote_reason(cand: dict) -> str:
+    return str(cand.get("demote_reason") or "").strip()
+
+
+def _is_off_path(cand: dict) -> bool:
+    """True iff this candidate is explicitly demoted. Safe AFTER a clean sort (no surviving
+    co-constraint violation), which is the only place the formatters run."""
+    return product_priority.path_class(cand) == product_priority.OFF_PATH
 
 
 def _blast(cand: dict) -> str:
@@ -187,7 +211,12 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
         for i, (cand, unmet) in enumerate(shown, 1):
             cid = cand.get("id", "?")
             title = cand.get("title", "")
-            meta = f"score {_score(cand):g}  effort {_effort(cand) or '?'}"
+            if _is_off_path(cand):
+                # M5: surface the override so the ordering is explicable + auditable at pick time.
+                meta = (f"score {_score(cand):g} -> {_effective_score(cand):g} "
+                        f"[demoted: {_demote_reason(cand)}]  effort {_effort(cand) or '?'}")
+            else:
+                meta = f"score {_score(cand):g}  effort {_effort(cand) or '?'}"
             if _blast(cand):
                 meta += f"  blast: {_blast(cand)}"
             if unmet:
@@ -261,6 +290,9 @@ def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
                 "id": c.get("id"),
                 "title": c.get("title"),
                 "score": _score(c),
+                "effective_score": _effective_score(c),   # M5: the sort key's actual value
+                "path_class": product_priority.path_class(c),
+                "demote_reason": _demote_reason(c) or None,
                 "effort": _effort(c) or None,
                 "blast_radius": _blast(c) or None,
                 "deps_unmet": unmet,
@@ -371,15 +403,24 @@ def main(argv: list[str] | None = None) -> int:
         elif bucket == "in_flight":
             in_flight.append(c)
 
-    # Rank pickable: highest score first, then smaller effort, then id (stable).
-    pickable.sort(key=lambda c: (-_score(c), _effort_rank(c), str(c.get("id"))))
-    ranked = [(c, _unmet_deps(c, live_ids)) for c in pickable]
-    blocked.sort(key=lambda c: str(c.get("id")))
-    in_flight.sort(key=lambda c: str(c.get("id")))
-
-    all_live = pickable + blocked + in_flight  # coupling spans every live candidate
-    fmt = _fmt_json if args.json else _fmt_text
-    sys.stdout.write(fmt(project, ranked, blocked, in_flight, args.top, all_live))
+    # Rank pickable: highest EFFECTIVE score (severity + product-priority term, slice-077) first,
+    # then smaller effort, then id (stable). A demote co-constraint violation raises here and is
+    # CAUGHT below -> fail-visible message naming the id + exit 1 (M4), never a raw traceback that
+    # blinds the /slice injection (a non-dict priority stays injection-safe: it fail-safes to term 0).
+    try:
+        pickable.sort(key=lambda c: (-_effective_score(c), _effort_rank(c), str(c.get("id"))))
+        ranked = [(c, _unmet_deps(c, live_ids)) for c in pickable]
+        blocked.sort(key=lambda c: str(c.get("id")))
+        in_flight.sort(key=lambda c: str(c.get("id")))
+        all_live = pickable + blocked + in_flight  # coupling spans every live candidate
+        fmt = _fmt_json if args.json else _fmt_text
+        out = fmt(project, ranked, blocked, in_flight, args.top, all_live)
+    except product_priority.DemoteCoConstraintError as exc:
+        sys.stderr.write(
+            f"candidates_top: candidate {exc.candidate_id!r} has a half-written demote ({exc}) — "
+            f"fix the candidate's demoted_at/demote_reason pair; refusing to emit a mis-ranked backlog.\n")
+        return 1
+    sys.stdout.write(out)
     return 0
 
 
