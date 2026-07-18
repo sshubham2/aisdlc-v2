@@ -557,7 +557,49 @@ test passes at slice end".
 
 ## 8. Vault admin
 
-The vault is plain JSON outside your repo. Key commands for vault lifecycle:
+The vault is plain JSON stored **outside** your repo, so the design record survives clones, branches, and
+worktrees without polluting git history.
+
+### Where the vault lives (and how to set a custom location)
+
+The vault path resolves in three tiers, highest precedence first:
+
+1. **`AI_SDLC_VAULT_ROOT` environment variable** — an absolute path that overrides everything. The pipeline
+   does not export it, so set it in your shell **before launching Claude Code**. Session-scoped and
+   ephemeral — best for tests, CI, or a one-off redirect.
+2. **Per-project pin** at `<git-common-dir>/aisdlc/vault-root` — a single line holding the absolute vault
+   path. Shared across every worktree of the repo (the git common-dir is shared) and never git-tracked.
+   This is the durable, recommended way to set a custom location for one project, and it survives a repo
+   rename.
+3. **Computed default** — `<base>/<project-slug>-<hash>`, where `<base>` is the contents of
+   `~/.claude/ai-sdlc-vault-base` if present, otherwise `~/.aisdlc`. The slug is the repo-root basename and
+   the hash is keyed on the git common-dir, so all worktrees of one repo share a single vault.
+
+**Set a custom location for this project (recommended — the tier-2 pin):**
+
+```bash
+$PY scripts/lib/vault_admin.py write-pin --vault "/absolute/path/to/my-vault"
+```
+
+This writes and read-back-verifies the pin (and creates the directory). Omit `--vault` to pin the
+*currently resolved* vault (useful to freeze it before a repo rename so it isn't orphaned); pass `--vault`
+to point at a new location.
+
+**Override for a single session (the env var):**
+
+```bash
+export AI_SDLC_VAULT_ROOT="/absolute/path/to/my-vault"   # before launching Claude Code
+```
+
+**Change the base directory for _every_ project on this machine:** put a base path in
+`~/.claude/ai-sdlc-vault-base`; each project's vault then lands at `<that-base>/<slug>-<hash>`.
+
+> **Note:** Changing the resolved path does **not** move existing content. If a vault already exists at the
+> old location its files stay there — copy them across first (or use `export` / `import` below), or the
+> pipeline starts against an empty vault. To confirm which path and tier are active at any time, run
+> `python3 /path/to/aisdlc-v2/scripts/lib/_vault_paths.py`.
+
+### Vault lifecycle commands
 
 ```bash
 # Identify which vault is active and which resolution tier won
@@ -572,7 +614,7 @@ $PY scripts/lib/vault_admin.py export
 # Import a vault on another machine
 $PY scripts/lib/vault_admin.py import <archive>.tgz
 
-# Pin the vault to this repo (tier-2 git config pin)
+# Pin the vault to this repo (tier-2 git config pin; add --vault <path> for a custom location — see above)
 $PY scripts/lib/vault_admin.py write-pin
 
 # Delete an orphaned vault
