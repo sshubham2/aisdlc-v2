@@ -338,6 +338,27 @@ The same protection covers the sibling write paths: `vault_edit remove` / `set -
 `product-scope.json`/`items` all REFUSE ([[ADR-080]]) — scope items are written only by `persist`/`revise`, which
 enforce the decomposition contract.
 
+### product-5 — `set-component`: annotate a capability's component (makes the `/slice --component` lens non-degenerate)
+
+After `materialize`, every capability lands in the reserved **`unassigned`** stratum, so the capability-progress
+rollup reads `Whole app 0/N … N unassigned` — correct but **inert**. Run **`set-component`** to assign a real component
+to a capability, so the per-component progress view and the `/slice --component <NAME>` lens become non-degenerate
+(slice-081 / [[ADR-092]]):
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" set-component --item PS-NNN --component "<NAME>" --json
+```
+
+- `set-component` annotates ONE already-materialized capability **in place** (atomic `safe_mutate_text` write, bumps `revised_at`); it
+  mints nothing, re-materializes nothing, and appends no `revisions[]` entry — the read-side consumers
+  (`product_rollup`, `candidates_top --component`) join the component at READ time via `owner_refs`.
+- The `--component` name is validated at the write seam: an **empty/whitespace** name, or the reserved sentinel
+  **`unassigned`** (case-insensitive), is **REFUSED** (non-zero exit) and leaves `product-scope.json` byte-identical.
+- Re-annotating a capability to the **same** value is an idempotent no-op (`changed:false`, byte-identical, no
+  `revised_at` churn); a **reassignment** echoes the prior component in the command result.
+- Un-annotated capabilities stay in `unassigned` (backward-compatible; a zero-annotation rollup is byte-identical).
+  After annotating ≥1 capability, re-run `/slice --component <NAME>` (or `product_scope done`) to see the lens.
+
 ## --demote mode — 'good enough for now' (slice-077 / [[ADR-088]])
 
 Lower a genuinely-low-value **off-path** candidate's backlog rank by a bounded score-space term

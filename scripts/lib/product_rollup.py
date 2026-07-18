@@ -71,7 +71,11 @@ from scripts.lib import _stdout, product_scope
 from scripts.lib._vault_paths import VAULT_ROOT
 
 SCOPE_FILE = product_scope.SCOPE_FILE
-UNASSIGNED = "unassigned"
+# slice-081/ADR-092 (critique m1): single-source the reserved catch-all sentinel from product_scope, so
+# the write-seam validator (product_scope._valid_component, which REJECTS it) and this read-side catch-all
+# bucket cannot drift. Value-preserving (product_scope.UNASSIGNED == 'unassigned'), so slice-080's rollup
+# byte-identity holds. Import-safe: product_rollup already depends on product_scope, never the reverse.
+UNASSIGNED = product_scope.UNASSIGNED
 UNIT = "capabilities"
 DONE_DEFINITION = "materialized candidate archived"
 
