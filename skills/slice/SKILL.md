@@ -30,6 +30,19 @@ Product-scope presence (read-only backstop — slice-068):
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" census --json
 ```
 
+Product shape — component progress + OPTIONAL component lens (read-only, slice-080 / [[ADR-091]]):
+```!
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_rollup.py" --json 2>/dev/null || echo '{"scope_present":false}'
+```
+
+The rollup envelope carries a `components` array ranked **least-complete-first** (`{name, done, total, rank}`)
+plus the mandatory `unassigned / cross-cutting` bucket — a **priority-ranked component list** for orienting the
+pick. If the user wants to view the pick surface through ONE component, re-run the candidate digest filtered:
+`$PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5 --component <NAME>` (use `unassigned` for the
+cross-cutting bucket). This is a **LENS, not a lock** — it filters the PICKABLE list only (blocked/in-flight stay
+global), takes no lock, mints no id, writes no status/ownership. Default-OFF (no `--component`) is byte-identical
+to the digest above. Omit the component surface entirely when `scope_present` is false (an un-decomposed product).
+
 Stranded-slice consult (R-26 — never define a slice on top of genuinely-stranded prior work):
 ```!
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/stranded_slice_audit.py" --repo-root . --json

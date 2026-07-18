@@ -196,13 +196,23 @@ def _unmet_deps(cand: dict, live_ids: set[str]) -> list[str]:
 
 def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
               blocked: list[dict], in_flight: list[dict], top: int,
-              all_live: list[dict]) -> str:
+              all_live: list[dict], component_lens: dict | None = None) -> str:
     lines: list[str] = []
     lines.append(
         f"CANDIDATES (live backlog: {project}) — "
         f"{len(ranked)} pickable, {len(blocked)} blocked-on-spike, "
         f"{len(in_flight)} in-flight"
     )
+    if component_lens is not None:
+        # slice-080/ADR-091: the lens filters ONLY pickable (m2); blocked/in-flight stay global.
+        name = component_lens["component"]
+        if component_lens["known"]:
+            lines.append(f"  [component lens: {name} — pickable filtered to this component; "
+                         f"blocked/in-flight shown globally]")
+        else:
+            known = ", ".join(component_lens.get("components") or []) or "none"
+            lines.append(f"  [component lens: {name} — UNKNOWN component, 0 pickable. "
+                         f"Known: {known}]")
 
     lines.append("")
     if ranked:
@@ -275,7 +285,7 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
 
 def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
               blocked: list[dict], in_flight: list[dict], top: int,
-              all_live: list[dict]) -> str:
+              all_live: list[dict], component_lens: dict | None = None) -> str:
     shown = ranked[:top] if top > 0 else ranked
     payload = {
         "action": "candidates-top",
@@ -311,6 +321,10 @@ def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
         ],
         "in_flight": [_in_flight_entry(c) for c in in_flight],
     }
+    if component_lens is not None:
+        # slice-080/ADR-091: added ONLY when the lens is active, so the default-OFF payload is
+        # byte-identical to today (critique m5).
+        payload["component_lens"] = component_lens
     return json.dumps(payload, ensure_ascii=False) + "\n"
 
 
@@ -341,6 +355,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                    help="how many ranked picks to show (<=0 = all; default 5)")
     p.add_argument("--json", action="store_true",
                    help="emit JSON (default: human-readable text for prompt injection)")
+    p.add_argument("--component", default=None, metavar="NAME",
+                   help="OPTIONAL component lens (slice-080/ADR-091): filter the PICKABLE list to "
+                        "capabilities bound to this component (use 'unassigned' for the cross-cutting "
+                        "bucket). Blocked/in-flight stay global context. Read-only — takes no lock, "
+                        "mints no id, writes no status; default-OFF is byte-identical.")
     return p
 
 
@@ -403,6 +422,24 @@ def main(argv: list[str] | None = None) -> int:
         elif bucket == "in_flight":
             in_flight.append(c)
 
+    # coupling spans EVERY live candidate — snapshot it BEFORE the lens filter so the conflict signal
+    # stays global even when the pickable list is narrowed to one component (slice-080 m2).
+    all_live = pickable + blocked + in_flight
+
+    # slice-080/ADR-091: the OPTIONAL --component lens filters ONLY pickable (blocked/in-flight stay
+    # global). Read-only: it reads product-scope.json for the {PS-id: component} map and joins each
+    # candidate via owner_refs (ambiguous multi-parent -> 'unassigned' — M-add-1). Default-OFF (arg
+    # None) leaves everything untouched: no import, no filter, no payload key.
+    component_lens = None
+    if args.component is not None:
+        from scripts.lib import product_rollup
+        comp_map = product_rollup.read_component_map(_root(args.vault))
+        known = set(comp_map.values()) | {product_rollup.UNASSIGNED}
+        pickable = [c for c in pickable
+                    if product_rollup.candidate_component(c, comp_map) == args.component]
+        component_lens = {"component": args.component, "known": args.component in known,
+                          "components": sorted(known)}
+
     # Rank pickable: highest EFFECTIVE score (severity + product-priority term, slice-077) first,
     # then smaller effort, then id (stable). A demote co-constraint violation raises here and is
     # CAUGHT below -> fail-visible message naming the id + exit 1 (M4), never a raw traceback that
@@ -412,9 +449,8 @@ def main(argv: list[str] | None = None) -> int:
         ranked = [(c, _unmet_deps(c, live_ids)) for c in pickable]
         blocked.sort(key=lambda c: str(c.get("id")))
         in_flight.sort(key=lambda c: str(c.get("id")))
-        all_live = pickable + blocked + in_flight  # coupling spans every live candidate
         fmt = _fmt_json if args.json else _fmt_text
-        out = fmt(project, ranked, blocked, in_flight, args.top, all_live)
+        out = fmt(project, ranked, blocked, in_flight, args.top, all_live, component_lens)
     except product_priority.DemoteCoConstraintError as exc:
         sys.stderr.write(
             f"candidates_top: candidate {exc.candidate_id!r} has a half-written demote ({exc}) — "
