@@ -338,6 +338,37 @@ The same protection covers the sibling write paths: `vault_edit remove` / `set -
 `product-scope.json`/`items` all REFUSE ([[ADR-080]]) — scope items are written only by `persist`/`revise`, which
 enforce the decomposition contract.
 
+## --demote mode — 'good enough for now' (slice-077 / [[ADR-088]])
+
+Lower a genuinely-low-value **off-path** candidate's backlog rank by a bounded score-space term
+(−4 at the `candidates_top` pick surface) WITHOUT deleting anything — the append-only risk-register
+entry is never opened for write. The demote is recorded as two presence-symmetric sibling fields
+(`demoted_at` + `demote_reason`) plus an append-only `demoted` history event; **off-path is derived
+from their presence** — there is no stored path-class enum.
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/scripts/demote_candidate.py" --candidate SC-NNN --reason "<why it can wait>"
+```
+
+- The `--reason` is **required and non-empty** (a reason-less demote is refused — the record is
+  append-only and auditable).
+- **ELIGIBILITY GUARD** — the demote is REFUSED (fail-visible, non-zero) when the target is
+  **product-scope-sourced** (on-path: a core product capability is not a "good enough for now" risk)
+  OR in the **critical band** (severity `critical` or score `>=9`). A critical bug is therefore
+  structurally non-demotable, so a **non-demoted critical always tops the board**. A genuinely
+  critical **security** bug materializes at score 9, so the critical band protects it too; a
+  *sub-critical* security item carries no structured signal on a materialized candidate (the finding
+  category lives in `rationale` free text, not a field), so it is demotable by deliberate, reversible,
+  audited user judgment — the guard reads structured severity/score only, never free text.
+- Only a **pickable** target (`candidate`/`deferred`) may be demoted; an active/spiking/blocked target
+  is refused. A re-demote with the **same** reason is an idempotent no-op; a **different** reason is
+  refused (the existing record is never silently overwritten). An unknown id fails visible.
+- The write routes through the SVW-1 locked seam; `risk-register.json` is intentionally NOT a write
+  target (AC5 preserved by construction).
+
+To undo a demote, remove BOTH `demoted_at` and `demote_reason` (they are presence-symmetric — the
+`artifact_lint` co-constraint fails a half-cleared pair).
+
 ## Candidate shape (reference)
 
 Each appended candidate matches `examples/slice-candidates.json`:
