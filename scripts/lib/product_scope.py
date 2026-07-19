@@ -28,7 +28,11 @@ sludge, which the must-not-defer calls strictly WORSE than the absence it fixes)
     lock closes. Then it materializes, in the same act (ADR-067 §1).
   * `materialize` is a deterministic, idempotent, CREATE-ONLY pass keyed on candidate provenance
     (`source: [{type: "product-scope", ref: "PS-NNN"}]`) across live ∪ archive.
-  * `revise` is the deliberate, user-gated scope correction (preserves minted ids BY id, never re-mints).
+  * `revise` is the deliberate, user-gated scope correction (preserves minted ids BY id, never
+    re-mints). It replaces the WHOLE item list, so it REFUSES a payload that silently omits a live
+    item — that omission used to DELETE it at exit 0 with no trace, on the product's scope of record
+    (slice-073 / SC-160). Removing an item is an explicit act: `--cut PS-NNN --reason '<why>'`,
+    recorded in the append-only `revisions[]` ledger.
   * `census` re-runs the classification that DETECTED this defect, so it can never become invisible again.
 
 AUTHORITATIVE DESIGN RECORD: **ADR-067** (SUPERSEDES ADR-066 — where they disagree, ADR-067 wins).
@@ -38,12 +42,16 @@ Load-bearing decisions it changed, all of which live in this file:
      the first tick, so a level-triggered reconciler had exactly one non-trivial run in its life. It was
      VESTIGIAL, and it made AC3 unfalsifiable. Removing the /slice mutation DISSOLVES the whole
      read-your-own-writes / injection-ordering hazard rather than managing it.
-  2. The identity guard lives HERE, in `persist`'s own in-lock `reject_supplied_id` — NOT in
-     vault_edit._MANAGED_KIND. persist must REWRITE the model's depends_on labels into minted ids inside
-     ONE lock, and `vault_edit append` mints internally and returns nothing to the caller, so persist
-     bypasses vault_edit entirely; a _MANAGED_KIND entry would have guarded a path no writer takes. (This
-     also follows the repo's own documented convention for cross-referencing appenders —
-     vault_edit.py:137-140, the risk-register risks[] precedent.)
+  2. The identity guard lives HERE, in `persist`'s own in-lock `reject_supplied_id`. persist must
+     REWRITE the model's depends_on labels into minted ids inside ONE lock, and `vault_edit append`
+     mints internally and returns nothing to the caller, so persist bypasses vault_edit entirely.
+     STILL TRUE. But ADR-067 went on to conclude that `product-scope.json`/`items` therefore needed
+     NO `vault_edit._MANAGED_KIND` entry at all, and [[ADR-080]] (slice-073) SUPERSEDES that half:
+     one _MANAGED_KIND entry drives FOUR legs, and the argument was only ever made about `append`.
+     `remove` and `set --path` were each deleting a scope item at rc=0, with no record — around
+     every guard in this module. The kind IS registered now; its `append` leg REFUSES outright
+     (a raw append would mint a real id onto an item with no assumptions, which SKIPS /risk-spike
+     step-0); persist's own guard is unchanged and is still the one that runs.
   3. `product-scope` SUPERSEDES the never-emitted `concept-scope` (schemas/slice-candidates.example.json).
      The census PRODUCT set accepts BOTH so a legacy value is never miscounted.
   4. Product candidates carry BLOCKING assumptions. `/risk-spike` step-0 SKIPS a candidate with zero
@@ -71,15 +79,38 @@ a sibling `status` field, so a consumer branches on structured state and never o
     product_scope.py [--vault ROOT] persist --items-file PATH [--json]
     product_scope.py [--vault ROOT] materialize [--dry-run] [--scope-file PATH]
                                                 [--acknowledge PS-NNN ...] [--json]
-    product_scope.py [--vault ROOT] revise --items-file PATH [--json]
+    product_scope.py [--vault ROOT] revise --items-file PATH [--cut PS-NNN ...]
+                                           [--reason TEXT] [--json]
     product_scope.py [--vault ROOT] census [--json]
+    product_scope.py [--vault ROOT] done [--item PS-NNN] [--json]
+    product_scope.py [--vault ROOT] set-area --item PS-NNN --area NAME [--json]
+                                    (set-component --component NAME is a back-compat alias — slice-084)
 
-    0  ran (minted N >= 0; a 0-mint states its reason)
+    0  ran (minted N >= 0; a 0-mint states its reason; a set-area no-op reports changed:false)
     1  runtime error (fail-visible)
-    2  usage error (incl. a model-supplied id, an invented PS id, --scope-file without --dry-run)
+    2  usage error (incl. a model-supplied id, an invented PS id, --scope-file without --dry-run,
+       a `done`/`set-area --item` naming an id this scope does not carry, an empty/whitespace or
+       reserved-'unassigned' set-area --area)
     3  concept.json ABSENT           -> actionable message naming /discover            [decompose-context, persist]
-    4  product-scope.json ABSENT     -> actionable message naming /slice-candidates --product   [materialize, revise]
+    4  product-scope.json ABSENT     -> actionable message naming /slice-candidates --product   [materialize, revise, done, set-area]
        product-scope.json ALREADY EXISTS -> create-only refusal naming `revise`        [persist]
+
+A CAPABILITY HAS MANY CANDIDATES (slice-075 / [[ADR-086]], which SUPERSEDES ADR-085). "How many slices
+did this capability take" used to be inexpressible: `_plan`'s derived `ps_to_sc` map was `{ref: id}`, so
+a second child silently overwrote the first and whichever won became the answer to every question about
+that capability -- including a dependent's `dependencies[]`, frozen into an append-only record with no
+un-mint. The map is now a MULTIMAP (`ps_to_scs: dict[str, list[str]]`) whose KEY SET is unchanged by
+construction, so the create-only/dedupe contract is untouched; a dependent depends on ALL children of
+each `depends_on` item; and `done` answers the resulting question, 4-valued and never cached.
+
+NOT SPECULATIVE -- N>1 IS REACHABLE TODAY, on a shipping path, and this fixes a LIVE arbitrary-winner
+bug. `sc` is a registered `vault_edit._MANAGED_KIND` and `_APPEND_REFUSED_KINDS` is `{"ps"}`
+(vault_edit.py:197), so ONE `vault_edit append --file candidates.json --array candidates` carrying
+`source: [{type: "product-scope", ref: "PS-001"}]` returns rc=0 and grows a capability's child set -- no
+splitter required. Every artifact in this slice's design record (all three blind designers, both step-0
+spikes, the design spike, ADR-085, and the first Critic) asserted the opposite; it was the one claim
+nobody executed. Who is ALLOWED to create children is a separate question, filed as SC-177: this module
+MODELS N>1 correctly, it does not police the producer.
 """
 from __future__ import annotations
 
@@ -102,6 +133,13 @@ from scripts.lib._vault_write import safe_mutate_text
 SCOPE_FILE = "product-scope.json"
 SCOPE_SCHEMA = "aisdlc/product-scope@1"
 CANDIDATES_SCHEMA = "aisdlc/slice-candidates@1"
+
+# The reserved catch-all area stratum (slice-080/ADR-091; slice-084 renamed `component` -> `area`).
+# Single-sourced HERE (slice-081/ADR-092): product_rollup.py re-points its own `UNASSIGNED` to this exact
+# byte string, so the WRITE-seam validator (`_valid_area`, which rejects it) and the read-side catch-all
+# bucket share ONE definition and can never drift. The exact lowercase string is load-bearing (rollup
+# byte-identity + the --area lens known-set); compare against `UNASSIGNED.casefold()`, never a re-hardcoded literal.
+UNASSIGNED = "unassigned"
 
 # ── the candidate source taxonomy (C10: an OPEN SET, so the classifier must be EXPLICIT) ─────────
 #
@@ -136,12 +174,22 @@ EXHAUST_SOURCES = frozenset({
     "spun-off", "adr", "dogfood-incident", "exploratory-charter", "external-review",
     "code-review", "code-review-finding", "critique-finding", "design-review-finding",
     "critic-calibrate-finding", "verified-finding", "finding", "diagnose-finding", "bug-hunt-finding",
+    # `discover` (a DISTINCT sibling of `discovered`): a bespoke concept-decomposition value carried by
+    # exactly ONE archived row (SC-141, ref `concept.json first_slice_candidate`) — NOT a source type any
+    # live skill emits (skills/discover/SKILL.md mints `risk`). It is /discover-run pipeline residue, so
+    # EXHAUST. Count-inert: SC-141 is already EXHAUST via its `risk` sources, so this literal only clears
+    # the census `occurrences` tripwire line — the sole census-level signal it landed is `unclassified==[]`.
+    # slice-079 / ADR-090 / m2.
+    "discover",
 })
 
 #: Per-slice EXHAUST variants the vault genuinely produces (e.g. the real aivlc row
-#: `"source": "slice-007-discovered"`). A named pattern, not a literal, because the slice number varies
-#: — but still explicit, and anything outside it still lands in `unclassified`.
-_EXHAUST_PATTERNS = (re.compile(r"^slice-\d+-(discovered|deferred|descope)$"),)
+#: `"source": "slice-007-discovered"`, or a `slice-NNN-abandoned` disposition written when a slice is torn
+#: down mid-flight — the live SC-152/SC-153 rows). A named pattern, not a literal, because the slice number
+#: varies — but each disposition is an EXPLICIT NAMED alternation member, NEVER a `^slice-\d+-.*$` wildcard
+#: (a wildcard would silently absorb any future/typo'd disposition into EXHAUST and disarm the fail-visible
+#: tripwire). Anything outside it still lands in `unclassified`.
+_EXHAUST_PATTERNS = (re.compile(r"^slice-\d+-(discovered|deferred|descope|abandoned)$"),)
 
 # ── the mint-time priority block (C1, blocker) ────────────────────────────────────────────────────
 #
@@ -224,11 +272,103 @@ def owner_ref(cand) -> str | None:
     Deliberately keyed on PRODUCT_SOURCE_TYPE alone, not on PRODUCT_SOURCES: a legacy `concept-scope`
     row's ref is a prose anchor (`concept#payments`), not an allocator-minted PS id, so it can never be
     a materialization witness. The census counts it; the reconciler does not trust it.
+
+    CARDINALITY (slice-075 / [[ADR-086]]): this is child -> parent, inherently N:1, and the step-0 spike
+    proved it already correct at N>1 — it is UNCHANGED. It returns the FIRST ref, which is exactly right
+    for a well-formed child (one parent) and is why `owner_refs` exists: a child claiming TWO parents is
+    an AMBIGUOUS identity, and picking its first ref would be the silent winner-pick this module refuses
+    everywhere else. The mint path reads `owner_refs` and REFUSES; this singular form stays the map's
+    key-builder, over a set the refusal has already vetted.
     """
     for s in iter_sources(cand):
         if s.get("type") == PRODUCT_SOURCE_TYPE and s.get("ref"):
             return str(s["ref"])
     return None
+
+
+def owner_refs(cand) -> list[str]:
+    """EVERY distinct PS id this candidate claims, in source order (usually 0 or 1) — slice-075.
+
+    The plural sibling of `owner_ref`, added so that a child claiming TWO parents is EXPRESSIBLE and can
+    therefore be REFUSED (mission-brief must-not-defer #1: widening the relation must not widen the
+    silence). `owner_ref` alone cannot see it — it returns the first ref and walks on.
+
+    Reachable, not hypothetical: `sc` is a registered `vault_edit` managed kind and _APPEND_REFUSED_KINDS
+    is `{"ps"}` (vault_edit.py:197), so ONE `vault_edit append` writes a model-supplied `source[]` of any
+    shape at rc=0. Verified zero such rows exist today — this is a forward guard, not a retrofit.
+    """
+    out: list[str] = []
+    for s in iter_sources(cand):
+        if s.get("type") == PRODUCT_SOURCE_TYPE and s.get("ref"):
+            ref = str(s["ref"])
+            if ref not in out:
+                out.append(ref)
+    return out
+
+
+def children_by_parent(observed: list[dict]) -> tuple[dict[str, list[str]], dict[str, list[dict]]]:
+    """Derive (children, ambiguous) from the candidates' OWN provenance — the SSOT for the whole relation.
+
+    Returns TWO maps, both PS-ref-keyed:
+      children:  ref -> ALL its candidate ids, deduped by candidate id, in canonical numeric order.
+      ambiguous: ref -> [{candidate, claims}] for every child that claims MORE THAN ONE parent.
+
+    THE ONE place the capability -> candidates relation is derived, shared by the mint path (`_plan`) and
+    the read path (`cmd_done`) so the two can never disagree about who a capability's children are, NOR
+    about which are ambiguous (slice-051's producer/gate SSOT lesson). The mint path used to compute
+    ambiguity itself while the read path did not compute it at ALL -- code-review CR1/CR2: `cmd_done`
+    then filed a two-parent child under its FIRST parent only and reported the SECOND parent `done` with
+    a live child still claiming it, and `_plan`'s withhold loop minted a dependent of an ambiguous parent
+    with the ambiguous child frozen into its append-only `dependencies[]`. Both were the SAME hole: an
+    ambiguity guard on one path is not a guard on the other. Deriving BOTH maps HERE closes it once.
+
+    FILED UNDER EVERY CLAIMED PARENT (`owner_refs`, not `owner_ref`). A child claiming PS-001 AND PS-002
+    is a child of both as far as the reverse lookup is concerned; filing it under the FIRST only is the
+    silent winner-pick this module refuses everywhere else. For a well-formed child (exactly one parent)
+    `owner_refs == [owner_ref]`, so this is byte-identical to the singular form for the entire real
+    corpus -- the widening changes behaviour ONLY where an ambiguous child exists, which is exactly where
+    the old form was silently wrong. Consumers must treat an `ambiguous` ref as unresolved (refuse / report
+    `unknown`), never conclude over it.
+
+    THE DEDUPE IS LOAD-BEARING (the half the design's own frame missed). The join is specified as a G-Set
+    union -- idempotent by construction -- but `_observed` is a LIST CONCAT, and list concat is not
+    idempotent: /commit-slice's live->archive move is two writes with no cross-file transaction, so a
+    child caught mid-move is in BOTH files and would be counted TWICE. The pre-slice-075 scalar map was
+    accidentally immune (a dict overwrite collapses the duplicate); the widening exposes it, so the
+    dedupe (`cid not in kids`) ships WITH the widening. A doubled child fans out into a dependent's
+    `dependencies[]`, frozen into an append-only record with no un-mint -- caught by executing the
+    torn-read fixture (AC4), not by reasoning. Live-first order is preserved from `_observed` before
+    sorting, so the dedupe keeps the LIVE row's identity when a child is mid-move.
+    """
+    children: dict[str, list[str]] = {}
+    ambiguous: dict[str, list[dict]] = {}
+    for c in observed:
+        refs = owner_refs(c)
+        cid = str(c.get("id"))
+        for ref in refs:
+            kids = children.setdefault(ref, [])
+            if cid not in kids:                  # SET union, not list concat -- see the docstring
+                kids.append(cid)
+        if len(refs) > 1:                        # a child of two parents: ambiguous to BOTH
+            for ref in refs:
+                ambiguous.setdefault(ref, []).append({"candidate": cid, "claims": refs})
+    for ref in children:
+        children[ref].sort(key=_sc_sort_key)
+    return children, ambiguous
+
+
+def _sc_sort_key(sc_id) -> tuple[int, str]:
+    """Canonical child order: NUMERIC SC suffix, then the raw id as a total-order tie-break.
+
+    Numeric, not lexicographic: lexicographic puts SC-10 before SC-9, and
+    `migrate-legacy-unpadded-ids-to-canonical-zero-pad` is a LIVE pending candidate, so the mixed-pad
+    corpus is real. Reuses id_allocator.parse_num (the module that OWNS id shape) rather than a local
+    regex — one place to change when the pad changes. An unparseable id sorts last but is never dropped:
+    a malformed child that VANISHES from its parent's child set is exactly the silent loss `done` refuses
+    to make, so it stays visible and merely orders last.
+    """
+    n = id_allocator.parse_num("sc", sc_id)
+    return (n if n is not None else 10**9, str(sc_id))
 
 
 def classify_source_type(t: str) -> str:
@@ -320,7 +460,13 @@ def _observed(vault: Path, live: list[dict]) -> list[dict]:
     AC2 (run twice, nothing shipped between) cannot catch that; only AC3 can.
     """
     arch = _load_json(vault / "archive" / "candidates.json").get("candidates") or []
-    return list(live) + [c for c in arch if isinstance(c, dict)]
+    # SC-181 / ADR-096 (DR-1 M-add-1): filter the LIVE half symmetric with the archive half. The
+    # arch/live asymmetry (only arch was filtered) WAS the SC-181 root cause -- a non-dict live row
+    # reached _plan -> children_by_parent -> owner_refs -> iter_sources -> .get on a str. One boundary
+    # fix covers every _observed caller (dry-run :1072, mint :1088, and the sibling reads); byte-identical
+    # on an all-dict backlog. Only the OBSERVED/planning view is filtered -- the written file keeps every
+    # row (the mint appends the original cands at :1149).
+    return [c for c in live if isinstance(c, dict)] + [c for c in arch if isinstance(c, dict)]
 
 
 def _now() -> str:
@@ -333,17 +479,40 @@ def _label(item: dict) -> str:
     return str(item.get("decomposition_label") or item.get("label") or item.get("title") or "").strip()
 
 
-def _load_items(path: str) -> list[dict]:
+def _load_items(path: str, *, allow_empty: bool = False) -> list[dict]:
+    """The payload reader. `allow_empty` is REVISE-only (slice-073 / critique m2).
+
+    An empty `items` array means two different things to the two verbs, and conflating them named
+    the wrong cause: to `persist` it is a MALFORMED payload (there is nothing to decompose), but to
+    `revise` it is a deliberate SHRINK-TO-ZERO attempt. Refusing the latter with "must carry a
+    non-empty `items` array" describes the payload's shape rather than the act, which is AC4's own
+    complaint one function over. So revise loads it and refuses it BY NAME (cmd_revise).
+    """
     p = Path(path)
     if not p.is_file():
         raise _Refuse(2, "usage", f"--items-file not found: {p}")
     data = _load_json(p)
     items = data.get("items") if isinstance(data, dict) else None
-    if not isinstance(items, list) or not items:
+    if not isinstance(items, list) or (not items and not allow_empty):
         raise _Refuse(2, "usage", f"{p} must carry a non-empty `items` array (the decomposition).")
     for it in items:
         if not isinstance(it, dict):
             raise _Refuse(2, "usage", f"{p}: every item must be a JSON object; got {type(it).__name__}")
+        # SC-182 / ADR-096 (slice-084: `component` renamed to `area`): recognize the one untrusted
+        # write-seam field at the shared boundary. This loop is _load_items' single choke point for all
+        # THREE callers -- persist, revise, and the read-only --scope-file replay -- so routing a SUPPLIED
+        # grouping label through the single-sourced _valid_area here closes every write seam at once (the
+        # set-area parity SC-182 is about). `area` is canonical; `component` is accepted as a back-compat
+        # alias and normalized into `area`. RAW truthiness (isinstance-str + value, NOT .strip()) mirrors
+        # the persist/revise `... or ...` short-circuit exactly, so this check == the persisted value with
+        # no differential (m2/M2); _valid_area then strips + rejects the reserved sentinel. Blank / absent /
+        # non-string is LEFT UNTOUCHED (a description-only revise grandfathers a legacy value; no new
+        # .strip() crash path). Sits AFTER the non-dict guard above so it.get() only runs on a dict (m2).
+        grp = it.get("area")
+        if not (isinstance(grp, str) and grp):
+            grp = it.get("component")
+        if isinstance(grp, str) and grp:
+            it["area"] = _valid_area(grp)
     _check_identities(items, p)
     return items
 
@@ -354,9 +523,15 @@ def _check_identities(items: list[dict], where) -> None:
     persist is protected by reject_supplied_id (no item may carry an id at all), but `revise` MUST
     accept ids -- that is how an already-minted item is preserved across a revision -- and it only
     rejected an INVENTED id. A REPEATED one passed trivially: two items both carrying PS-001 collapsed
-    onto ONE minted SC id in materialize's pass 1 (`ps_to_sc[it['id']] = next_id(...)` -- the second
+    onto ONE minted SC id in materialize's pass 1 (`minted_ids[it['id']] = next_id(...)` -- the second
     write wins), and pass 2 then stamped BOTH candidate records with that same id. Reproduced: scope
     ['PS-001','PS-001'] -> candidates ['SC-003','SC-003'], exit 0, "minted 2".
+
+    CITATION NOTE (slice-075): the accumulator that line names was called `ps_to_sc` when this guard was
+    written; the expression is re-cited above to match the code. This guard's SUBSTANCE is NOT touched by
+    slice-075 and must not be "fixed": it is about two SCOPE ITEMS sharing one id (N:1 -- two capabilities
+    claiming one identity), which is the OPPOSITE direction from the 1:N relation that slice made legal.
+    One capability may now have many candidates; one identity may still never name two capabilities.
 
     This is the trust boundary's SECOND crossing, and BC-PROJ-6 is exactly about that: a guard on one
     write path is bypassable through another. Minting is irreversible here, so an ambiguous identity
@@ -381,6 +556,87 @@ def _check_identities(items: list[dict], where) -> None:
                     f"edge). Give each item a distinct {human}.",
                 )
             seen[val] = i
+
+
+def _check_membership(items: list[dict], cur: dict, cut, where) -> None:
+    """The revise membership gate — BIDIRECTIONAL, and evaluated IN-LOCK against `cur` (slice-073).
+
+    THE DEFECT THIS CLOSES (SC-160). `cmd_revise` was a whole-list REPLACE, not a delta: a payload
+    that omitted an already-materialized PS id deleted that scope item and exited 0 GREEN. The
+    computed `dropped` was thrown to stdout and nowhere else, so the deletion left ZERO durable
+    trace on the PRODUCT'S SCOPE OF RECORD. A model handed "revise the scope" emits a delta, because
+    that is what the word means.
+
+    WHY IN-LOCK, AND WHY BOTH DIRECTIONS (critique-review M-add-1). The sibling invented-id guard
+    tested the PRE-LOCK snapshot (`existing`), which was safe only while nothing could remove an
+    item -- `existing` was then necessarily a SUBSET of `cur`. `--cut` FALSIFIES that premise: post-
+    cut, `existing` is neither a subset nor a superset of `cur`. So a payload composed before a
+    parallel writer's cut could RESURRECT the cut id -- and the spike-exemption, keyed on
+    MATERIALIZED, would then wave the revived item through as already-spiked and re-adopt its
+    shipped candidate. Both directions are therefore re-checked HERE, against the authoritative
+    in-lock read. The pre-lock check survives only as a cheap early refusal, never as the only one
+    (the in-file precedent is persist: create-only checked at :712, RE-CHECKED under the lock).
+
+    Four properties, each fail-VISIBLE and each naming the offending id(s):
+      1. every `--cut` id EXISTS in `cur`      -- a typo must STOP, not degrade into the very
+                                                  omission it authorizes (BC-PROJ-6)
+      2. every payload id EXISTS in `cur`      -- no invented id, no resurrected one
+      3. no id is BOTH cut and kept            -- contradictory intent must STOP, never be resolved
+      4. every id in `cur` is kept or cut      -- THE omission gate (SC-160)
+
+    A raise propagates out of the caller's mutate closure and `safe_mutate_text` leaves the target
+    UNTOUCHED -- no temp written, no replace (_vault_write.py:319-322). That is what makes the
+    refusal byte-identical STRUCTURALLY, rather than by re-writing identical bytes.
+    """
+    cur_ids = {str(k) for k in cur}
+    payload_ids = [str(it["id"]) for it in items if isinstance(it, dict) and it.get("id") is not None]
+    cut_ids = [str(c).strip() for c in (cut or []) if str(c).strip()]
+
+    unknown_cut = sorted({c for c in cut_ids if c not in cur_ids})
+    if unknown_cut:
+        raise _Refuse(
+            2, "usage",
+            f"{where}: --cut names {', '.join(unknown_cut)}, which this scope does not carry "
+            f"(live ids: {', '.join(sorted(cur_ids)) or 'none'}). A cut must name a REAL item -- a "
+            f"typo'd id would otherwise be accepted as authorization to drop whatever it was meant "
+            f"to name, which is the very omission this gate exists to refuse. Check the id and "
+            f"re-run.",
+        )
+
+    invented = sorted({i for i in payload_ids if i not in cur_ids})
+    if invented:
+        raise _Refuse(
+            2, "usage",
+            f"{where}: scope item(s) carry id(s) {', '.join(invented)}, which this scope does not "
+            f"currently carry. `revise` may REUSE an allocator-minted PS id that is STILL IN THE "
+            f"SCOPE (that is how an item is preserved across a revision) but may never INVENT one, "
+            f"and may never RESURRECT one that was cut -- a cut id's candidate may already be "
+            f"shipped, so re-adopting it would silently alias two capabilities onto one record. "
+            f"Omit `id` to add a NEW item (identity is minted by the receiver).",
+        )
+
+    both = sorted({c for c in cut_ids if c in payload_ids})
+    if both:
+        raise _Refuse(
+            2, "usage",
+            f"{where}: {', '.join(both)} is both --cut AND re-stated as kept in the payload. That "
+            f"is contradictory intent; refusing rather than silently picking a winner (an ambiguous "
+            f"identity must STOP -- minting/retiring is not reversible here). Either drop the "
+            f"--cut or remove the item from the payload.",
+        )
+
+    accounted = set(payload_ids) | set(cut_ids)
+    missing = sorted(i for i in cur_ids if i not in accounted)
+    if missing:
+        raise _Refuse(
+            2, "usage",
+            f"{where}: this revision does not account for {', '.join(missing)}, which the product's "
+            f"scope currently carries. `revise` replaces the WHOLE item list, so an omitted item "
+            f"would be DELETED from the scope of record -- silently, and with no trace. Re-state "
+            f"every item you mean to KEEP (carrying its minted `id` verbatim), or, to remove one "
+            f"deliberately, re-run with `--cut {missing[0]} --reason '<why>'` (repeatable). Nothing "
+            f"was written.",
+        )
 
 
 def _check_deps(items: list[dict], where) -> None:
@@ -408,30 +664,134 @@ def _check_deps(items: list[dict], where) -> None:
                 )
 
 
-def _check_contract(items: list[dict]) -> None:
-    """Every scope item must carry a title, a label, and >=1 BLOCKING unproven assumption (ADR-067 §5).
+_CONTRACT_FIELD_MEANING = {
+    "verification_plan": "how the capability will be CHECKED against reality",
+    "user_visible_outcome": "what the user VISIBLY gets when it works",
+}
 
-    The assumption requirement is enforced HERE, at the crossing — not downstream — because /risk-spike
-    step-0 SKIPS a candidate with zero unproven blocking assumptions. Without this, aivlc's
-    orchestrator/state-machine (the largest, least-understood, never-before-attempted item in that
-    product, and the very thing this module exists to surface) would enter the loop with NOTHING TO
-    PROVE and walk straight into the design tournament on an unspiked premise.
+
+def _nonempty_contract_str(value: object) -> bool:
+    """Shape-level membership for a contract field: a non-empty string after `.strip()`.
+
+    The `isinstance(str)` guard is deliberate (slice-076 / critique m2). A bare `str(value or '')`
+    coercion would let a NON-string pass -- `str(['a','b'])` is a truthy ``"['a', 'b']"`` -- and the
+    value would then persist as a list a downstream string op misreads. That is the parser
+    differential the LangSec frame (ADR-087) exists to eliminate, so a non-string REFUSES here rather
+    than coercing. `.strip()` refuses whitespace-only ('   '), the 'no real way to check itself' the
+    slice rejects."""
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _check_contract(
+    items: list[dict],
+    *,
+    exempt_spiked: frozenset[str] = frozenset(),
+    prev_by_id: dict[str, dict] | None = None,
+) -> None:
+    """The model->vault decomposition contract. TWO-PHASE (slice-073 / ADR-079 §1).
+
+    Every scope item must carry a title, a label, and >=1 BLOCKING assumption (ADR-067 §5). The
+    requirement is enforced HERE, at the crossing — not downstream — because /risk-spike step-0 SKIPS
+    a candidate with zero unproven blocking assumptions. Without it, aivlc's orchestrator/state-machine
+    (the largest, least-understood item in that product, and the very thing this module exists to
+    surface) would enter the loop with NOTHING TO PROVE.
+
+    THE DEFECT THIS FIXES (SC-161): the `unproven` demand was made of EVERY item on EVERY crossing,
+    and `revise` re-runs the contract over the FULL list — so a list containing even ONE item whose
+    spike had already run was rejected WHOLESALE. The scope froze the moment any item was proven,
+    which is precisely when a revision becomes most necessary. The requirement was correct at persist
+    time and was simply never re-thought for revise, where the population NECESSARILY includes spiked
+    items.
+
+    So the demand splits:
+
+      Phase 1 — >=1 BLOCKING assumption, ANY spike_status. Demanded of EVERY item on BOTH verbs,
+                ALWAYS. This is what stops a revise from ERASING assumptions[] to slip an item past
+                step-0: it cannot be waived by having been spiked, because the assumption itself must
+                still be there.
+      Phase 2 — that a blocking assumption is still `unproven`. Demanded of NEW items; WAIVED only
+                for ids in `exempt_spiked`.
+
+    `exempt_spiked` is supplied BY THE CALLER and this function performs NO lookup — persist (:721)
+    passes nothing and therefore keeps the strict pre-slice-073 behaviour EXACTLY, which is the
+    must-not-defer: relaxing revise must not relax persist. That is belt-and-braces even if the
+    parameter were ever mispassed, because persist's own `reject_supplied_id` bans ids outright, so
+    every persist item is new by construction and could never match an exempt id anyway.
+
+    AC4 — THE REFUSAL NAMES THE ACTUAL CAUSE. The old message claimed ``assumptions: []`` against a
+    NON-empty list, which is maximally misleading at exactly the boundary the message exists to
+    explain. Three distinct causes, named distinctly: genuinely absent / present-but-none-blocking /
+    present-but-all-proven-and-not-exempt.
+
+    slice-076 / ADR-087 — TWO CONTRACT-COMPLETENESS FIELDS. `verification_plan` and
+    `user_visible_outcome` are the fields that give a capability MEANING; both are demanded here in
+    the Phase-1 band (never waived by `exempt_spiked` -- a meaning-giving field is orthogonal to
+    spike status). The check is SHAPE-LEVEL only: a non-empty string, NOT a runnable/testable plan
+    (a placeholder like 'TODO' still passes) -- the message says so and disclaims a testability
+    guarantee (AC4 / A2). On REVISE the value validated is the EFFECTIVE one the persist merge
+    (:1328/:1331) will actually WRITE -- `it.get(field) or prev.get(field)`, via the caller-supplied
+    `prev_by_id` map (mirroring `exempt_spiked`: persist passes none -> strict, effective == item;
+    revise passes the in-lock `cur`). So the check and the write agree on the same value, and neither
+    a whitespace-only nor a non-string field can slip past the check to be persisted.
     """
     for it in items:
         if not str(it.get("title") or "").strip():
             raise _Refuse(2, "usage", f"scope item {_label(it) or '<unnamed>'} has no `title`.")
         if not _label(it):
             raise _Refuse(2, "usage", f"scope item {it.get('title')!r} has no `label` to key depends_on on.")
-        blocking = [a for a in it.get("assumptions") or []
-                    if isinstance(a, dict) and a.get("blocking")
-                    and (a.get("spike_status") or "unproven") == "unproven"]
+
+        iid = str(it.get("id") or "").strip()
+        named = f"{_label(it)!r}" + (f" ({iid})" if iid else "")
+        assumptions = [a for a in it.get("assumptions") or [] if isinstance(a, dict)]
+        blocking = [a for a in assumptions if a.get("blocking")]
+
+        # Phase 1 — a BLOCKING assumption must EXIST. Never waived, on either verb.
         if not blocking:
+            if not assumptions:
+                cause = ("carries `assumptions: []`")            # the genuinely-empty case
+            else:
+                cause = (f"carries {len(assumptions)} assumption(s), but NONE is marked "
+                         f"`blocking: true`")
             raise _Refuse(
                 2, "usage",
-                f"scope item {_label(it)!r} carries no BLOCKING unproven assumption. A product "
-                f"capability is UNPROVEN by definition -- with `assumptions: []` this candidate would "
-                f"SKIP /risk-spike step-0, the pipeline's reality gate, on exactly the least-understood "
-                f"work in the product (ADR-067 section 5). Add assumptions[] and re-run.",
+                f"scope item {named} {cause}, so it has no BLOCKING assumption. A product capability "
+                f"is UNPROVEN by definition -- a candidate with nothing blocking SKIPS /risk-spike "
+                f"step-0, the pipeline's reality gate, on exactly the least-understood work in the "
+                f"product (ADR-067 section 5). Add a blocking assumption and re-run.",
+            )
+
+        # Phase 1 (slice-076 / ADR-087) — the two contract-completeness fields must be PRESENT and
+        # non-empty, ALWAYS, on both verbs. Validated on the EFFECTIVE value (item OR prev) so the
+        # check agrees with the persist merge at :1328/:1331; on persist `prev_by_id` is None, so
+        # `prev` is {} and the effective value is the item's own field (strict).
+        prev = (prev_by_id or {}).get(iid) or {}
+        for field, meaning in _CONTRACT_FIELD_MEANING.items():
+            effective = it.get(field) or prev.get(field)   # mirrors the bare `or` of :1328/:1331
+            if not _nonempty_contract_str(effective):
+                raise _Refuse(
+                    2, "usage",
+                    f"scope item {named} has no non-empty `{field}` -- the field that states "
+                    f"{meaning}. A capability that declares neither how it is checked nor what the "
+                    f"user gets is untestable prose, so the crossing refuses it. NOTE: this is a "
+                    f"SHAPE-LEVEL check -- it requires a non-empty string, NOT a runnable or testable "
+                    f"plan; presence is necessary, not sufficient (a placeholder like 'TODO' still "
+                    f"passes). Supply a non-empty `{field}` and re-run.",
+                )
+
+        # Phase 2 — it must still be UNPROVEN, unless this item has already been through step-0.
+        if iid and iid in exempt_spiked:
+            continue
+        if not any((a.get("spike_status") or "unproven") == "unproven" for a in blocking):
+            raise _Refuse(
+                2, "usage",
+                f"scope item {named} carries {len(blocking)} blocking assumption(s), but every one "
+                f"is already `spike_status: proven` -- and this item is not an already-materialized "
+                f"one whose spike could have run (it has no candidate). A NEW product capability is "
+                f"UNPROVEN by definition; declaring it proven at the crossing would walk it past "
+                f"/risk-spike step-0 with nothing to prove (ADR-067 section 5). If the work really "
+                f"is understood, say so with a blocking assumption step-0 can CHECK; if this item "
+                f"was already spiked, revise it (its exemption keys on being materialized, not on "
+                f"carrying an id).",
             )
 
 
@@ -476,6 +836,23 @@ def _topo(items: list[dict], dep_key) -> list[dict]:
 
 # ── materialize — the deterministic, idempotent, create-only mint ────────────────────────────────
 
+def _require_contract_field(item: dict, field: str) -> str:
+    """Read a contract field the single recognizer (`_check_contract`) has already guaranteed
+    non-empty. Fail-VISIBLE belt-and-braces (slice-076 / ADR-087): NOT a second recognizer -- it
+    converts a would-be SILENT bug (a `None` `user_visible_outcome`, or the `KeyError`/placeholder
+    the deleted repair used to mask an empty `verification_plan`) into a labelled `_Refuse` naming
+    the item, should an unrecognized item ever reach materialize."""
+    value = item.get(field)
+    if not _nonempty_contract_str(value):
+        raise _Refuse(
+            2, "usage",
+            f"materialize reached scope item {(item.get('id') or _label(item))!r} with an empty or "
+            f"non-string `{field}` -- the contract recognizer (_check_contract) should have refused "
+            f"it upstream. Refusing to mint a candidate from an unrecognized item.",
+        )
+    return value
+
+
 def _candidate_from(item: dict, sc_id: str, dep_sc: list[str], ts: str) -> dict:
     """The FULL candidate record (M-add-4), mirroring build_backlog._candidate_from field-for-field."""
     blocking = [a for a in item.get("assumptions") or [] if a.get("blocking")]
@@ -494,7 +871,7 @@ def _candidate_from(item: dict, sc_id: str, dep_sc: list[str], ts: str) -> dict:
             f"materialized so /slice can pick it at all. {len(blocking)} blocking assumption(s) "
             f"unproven -- /risk-spike step-0 gates this candidate."
         ),
-        "user_visible_outcome": item.get("user_visible_outcome"),
+        "user_visible_outcome": _require_contract_field(item, "user_visible_outcome"),
         "dependencies": dep_sc,
         "priority": {
             "score": PRODUCT_PRIORITY["score"],
@@ -506,9 +883,10 @@ def _candidate_from(item: dict, sc_id: str, dep_sc: list[str], ts: str) -> dict:
             "blast_radius": f"product-scope: {_label(item)}",
         },
         "assumptions": _normalize_assumptions(item),
-        "verification_plan": item.get("verification_plan")
-            or f"Prove the blocking assumption(s) at /risk-spike step-0, then verify "
-               f"{item.get('user_visible_outcome') or 'the stated outcome'} against reality.",
+        # slice-076 / ADR-087: the placeholder-substitution repair is DELETED. An empty plan is
+        # refused at the recognizer (`_check_contract`), never masked here into a synthesised string
+        # while scope.json stays empty (the parser differential the LangSec frame exists to close).
+        "verification_plan": _require_contract_field(item, "verification_plan"),
         "history": [{"event": "created", "by": "slice-candidates", "at": ts, "ref": item["id"]}],
     }
 
@@ -518,8 +896,27 @@ def _plan(items: list[dict], observed: list[dict], acknowledge: set[str]) -> dic
 
     Bias EVERY ambiguity toward NOT minting: a mint burns a monotonic SC id and there is no un-mint, so
     the self-correcting safety net a level-triggered reconciler normally relies on is ABSENT here.
+
+    Returns `ps_to_scs: dict[str, list[str]]` -- the capability -> ALL-its-children multimap, derived
+    from the children's own `source[].ref` over live u archive (slice-075 / [[ADR-086]]). It is
+    READ-ONLY to the caller: pass 1's newly-minted ids accumulate in a SEPARATE scalar-valued `minted`
+    map, and keeping those two apart BY TYPE is what makes both a list-valued candidate id and a
+    type-heterogeneous map unrepresentable rather than merely guarded. Do not merge them back.
     """
-    ps_to_sc = {ref: c.get("id") for c in observed if (ref := owner_ref(c))}
+    # THE DERIVED MULTIMAP (slice-075 / [[ADR-086]] §2). `dict[ref] = id` became
+    # `setdefault(ref, []).append(id)` over the SAME iteration under the SAME `owner_ref` guard, so key
+    # insertion happens on exactly the same iterations -- the KEY SET is identical to the old scalar
+    # map's BY CONSTRUCTION, which is what preserves the create-only test at :684 (KEY membership) and
+    # with it spike constraint A1.1: no re-mint, against a substrate with no un-mint.
+    #
+    # It is READ-ONLY once returned. Pass 1's minted ids accumulate in a SEPARATE `minted: dict[str,str]`
+    # ([[ADR-086]] §3) -- conflating the two is what hid :819/:824 through an entire design + review.
+    # The capability -> candidates relation AND its ambiguities come from ONE shared derivation, so the
+    # mint path and the read path (`cmd_done`) can never disagree (code-review CR1/CR2/CR3). N children
+    # per capability is LEGAL; a child claiming N parents is an ambiguous identity that STOPS -- widening
+    # the relation must not widen the silence (must-not-defer #1).
+    ps_to_scs, ambiguous = children_by_parent(observed)
+
     # candidates carrying a title but NO product-scope provenance -- the D2 collision surface
     unowned_titles: dict[str, str] = {}
     for c in observed:
@@ -531,14 +928,52 @@ def _plan(items: list[dict], observed: list[dict], acknowledge: set[str]) -> dic
     already, refused, to_mint = [], [], []
     for it in items:
         iid = it.get("id") or _label(it)
-        if it.get("id") and it["id"] in ps_to_sc:
-            already.append({"item": it["id"], "candidate": ps_to_sc[it["id"]]})
+        # BEFORE the create-only test, deliberately: an ambiguously-parented item's own map entry is the
+        # thing in doubt, so reporting it `already` would launder the ambiguity as a clean no-op. Refuse
+        # the ITEM, not the VERB (the module's D2 pattern, :688-703) -- an offending row in the
+        # append-only archive would otherwise block EVERY capability's materialize forever.
+        if it.get("id") and it["id"] in ambiguous:
+            rows = ambiguous[it["id"]]
+            refused.append({
+                "item": it["id"],
+                "title": str(it.get("title") or "").strip(),
+                "colliding_candidate": rows[0]["candidate"],
+                "ambiguous_children": rows,
+                "reason": (
+                    f"candidate(s) {', '.join(r['candidate'] for r in rows)} each claim MORE THAN ONE "
+                    f"product-scope parent ({'; '.join(', '.join(r['claims']) for r in rows)}). A "
+                    f"capability may have many candidates, but a candidate belongs to exactly ONE "
+                    f"capability -- with two parents there is no fact of the matter about whose child "
+                    f"it is, so this item's child set, its dependents' dependencies[], and its `done` "
+                    f"are all undefined. Refusing to mint (a mint is not reversible). REMEDY: correct "
+                    f"the child's provenance to a single parent -- `vault_edit.py update --file "
+                    f"candidates.json --array candidates --id {rows[0]['candidate']} --set "
+                    f"'source=[{{\"type\": \"product-scope\", \"ref\": \"<the ONE real parent>\"}}]'` "
+                    f"(use --file archive/candidates.json if the row has shipped) -- then re-run. There "
+                    f"is deliberately no --acknowledge for this: acknowledging would mint UNDER the "
+                    f"ambiguity, and every ambiguity here biases toward NOT minting."
+                ),
+            })
+            continue
+        if it.get("id") and it["id"] in ps_to_scs:
+            kids = ps_to_scs[it["id"]]
+            # AC5: at N==1 this entry is BYTE-IDENTICAL to the pre-slice-075 shape. At N>1 the scalar
+            # `candidate` is OMITTED rather than filled with a winner -- at N>1 "the candidate" has no
+            # referent, and emitting one would be the arbitrary pick this slice exists to kill. A
+            # consumer reading ['candidate'] then KeyErrors LOUDLY instead of silently believing a
+            # coin-flip. (Verified: `already_materialized` has ONE producer (_finish) and ZERO consumers
+            # repo-wide -- no test, script, or SKILL.md reads it.)
+            already.append({"item": it["id"], "candidate": kids[0]} if len(kids) == 1
+                           else {"item": it["id"], "candidates": list(kids)})
             continue
         title = str(it.get("title") or "").strip()
         if title in unowned_titles and iid not in acknowledge:
             # D2's fail-LOUD guard. Provenance empirically SURVIVES the model-mediated ship->archive
-            # move (79/79 archived candidates retained source[]), but 79/79 is a SNAPSHOT, not an
-            # invariant (slice-050's lesson), and that archive copy stays model-mediated and unenforced.
+            # move -- retained on EVERY archived candidate measured to date (76/76 as of slice-075) --
+            # but that is a SNAPSHOT, not an invariant (slice-050's lesson), and the archive copy stays
+            # model-mediated and unenforced. The claim is stated as its SHAPE ("every one measured so
+            # far") rather than as a bare figure precisely so it cannot rot: the number moves with the
+            # corpus, the point does not. (The figure read "79/79" until slice-075 counted: it was 76.)
             # A LOST provenance fails SILENTLY -- it resurrects a shipped item forever. So convert the
             # silent resurrection into a loud stop. Keying on the TITLE is safe here precisely because
             # the title now comes from the PERSISTED scope list, not from the model (which B1 proved
@@ -565,8 +1000,13 @@ def _plan(items: list[dict], observed: list[dict], acknowledge: set[str]) -> dic
             key = _label(it)
             iid = it.get("id") or key
             for d in it.get("depends_on") or []:
-                # a dep is satisfiable iff it is already materialized OR is being minted in this batch
-                if d in ps_to_sc:
+                # a dep is satisfiable iff it is already materialized OR is being minted in this batch --
+                # UNLESS the parent is AMBIGUOUS (code-review CR2). An ambiguous parent is REFUSED and its
+                # child set is undefined (the refusal reason literally says so), so a materialized-but-
+                # ambiguous `d` must NOT count as satisfied: fan-out would otherwise freeze the ambiguous
+                # child into this dependent's append-only `dependencies[]`. Fall through to withhold it,
+                # rooted at the ambiguous parent -- exactly the C14 transitive-withhold this loop exists for.
+                if d in ps_to_scs and d not in ambiguous:   # KEY membership -- semantics unchanged at N>1
                     continue
                 if any((m.get("id") or _label(m)) == d or _label(m) == d for m in to_mint):
                     continue
@@ -582,7 +1022,7 @@ def _plan(items: list[dict], observed: list[dict], acknowledge: set[str]) -> dic
                 if (ref := owner_ref(c)) and ref not in scope_ids]
 
     return {"to_mint": to_mint, "already": already, "refused": refused,
-            "withheld": withheld, "orphaned": orphaned, "ps_to_sc": ps_to_sc}
+            "withheld": withheld, "orphaned": orphaned, "ps_to_scs": ps_to_scs}
 
 
 def _reason(plan: dict, minted: int) -> str:
@@ -658,20 +1098,57 @@ def _materialize(vault: Path, items: list[dict], *, dry_run: bool, acknowledge: 
             if text.strip():
                 return text
 
-        ps_to_sc = dict(plan["ps_to_sc"])
+        # TWO STRUCTURES, SPLIT BY TYPE ([[ADR-086]] §3 -- the type split IS the control here; the
+        # rename is only a readability aid, since a global find/replace would rewrite both sites and
+        # compile clean). `ps_to_scs` is the OBSERVED children, list-valued, READ-ONLY from here on.
+        # `minted` is pass 1's accumulator: PS id -> the ONE new SC id, scalar BY TYPE.
+        #
+        # Conflating them (as the pre-slice-075 code did, and as this slice's own design did until
+        # review) is not a style problem, it is the defect's cause. A single map must then hold BOTH a
+        # list (observed) and a str (just-minted) -- and the fan-out at pass 2 would iterate a minted
+        # id's CHARACTERS, yielding dependencies == ['-','0','2','C','S'] on the FIRST full-DAG mint
+        # (every product bootstrap with a depends_on edge; the real vault's PS-004 is exactly this
+        # shape). That is slice-068's per-character pseudo-source trap, in this file, which
+        # iter_sources' own docstring documents at length. With the split, both that and a list-valued
+        # candidate id are UNREPRESENTABLE rather than merely guarded against.
+        ps_to_scs: dict[str, list[str]] = plan["ps_to_scs"]
+        minted_ids: dict[str, str] = {}
         seed = id_allocator.seed_max_for(vault, "sc", data)
         for it in plan["to_mint"]:                       # pass 1: mint ids, in topological order
             iid = it["id"]
-            if iid in ps_to_sc:                          # CR1 belt: identity ambiguity NEVER mints
+            # CR1 belt: identity ambiguity NEVER mints. LITERAL key membership (`in`), matching :684 --
+            # never `.get()`, which is value TRUTHINESS and would silently stop refusing the moment any
+            # future refactor pre-seeds keys with empty lists (`{it["id"]: [] for it in items}` is the
+            # single most natural thing a reader does to a multimap). Two guards on one map with two
+            # membership semantics is the CC-001 twin pattern; this one sits on the module's
+            # most-defended invariant, so it stays byte-identical in meaning to what it replaced.
+            if iid in ps_to_scs or iid in minted_ids:
                 raise _Refuse(1, "malformed",
                               f"scope item id {iid!r} appears twice in the batch -- refusing to mint, "
                               f"since both records would collapse onto one candidate id.")
-            ps_to_sc[iid] = id_allocator.next_id(data, "sc", seed_max=seed)
+            minted_ids[iid] = id_allocator.next_id(data, "sc", seed_max=seed)
 
         minted = []
         for it in plan["to_mint"]:                       # pass 2: build records; deps now all resolvable
-            deps = [ps_to_sc[d] for d in (it.get("depends_on") or []) if d in ps_to_sc]
-            rec = _candidate_from(it, ps_to_sc[it["id"]], deps, ts)
+            # FAN-OUT ([[ADR-086]] §4): a dependent depends on ALL children of each depends_on item --
+            # DERIVED from the existing consumer, not chosen. candidates_top._unmet_deps (:166-168) is
+            # `[d for d in dependencies if d in live_ids]`: live == unmet, archived == met. So "depends
+            # on every child of PS-X" IS "blocked until PS-X is done" -- one predicate at two call sites.
+            #
+            # depends_on ORDER is preserved OUTER and only each parent's children are sorted WITHIN.
+            # NOT a sorted union: today's line is a comprehension in depends_on order, so a sorted union
+            # REORDERS dependencies[] at N==1 for any item with >=2 edges (PS-003 -> ['SC-002','SC-001']
+            # becomes ['SC-001','SC-002']) -- an AC5 break, into an append-only backlog with no un-mint,
+            # invisible on today's corpus only because PS-004 is the sole item with a depends_on and it
+            # has exactly one edge. This shape is byte-identical at N==1 BY CONSTRUCTION.
+            # No dedupe: the two-parent refusal makes a shared child unrepresentable.
+            deps: list[str] = []
+            for d in it.get("depends_on") or []:
+                if d in minted_ids:
+                    deps.append(minted_ids[d])
+                else:
+                    deps.extend(sorted(ps_to_scs.get(d, []), key=_sc_sort_key))
+            rec = _candidate_from(it, minted_ids[it["id"]], deps, ts)
             cands.append(rec)
             minted.append(rec)
 
@@ -752,6 +1229,14 @@ def cmd_persist(vault: Path, args) -> dict:
                 "title": str(it["title"]).strip(),
                 "description": it.get("description") or it["title"],
                 "user_visible_outcome": it.get("user_visible_outcome"),
+                # slice-084: the product-AREA grouping label (renamed from `component`; the old key is
+                # still accepted on the incoming item as a back-compat alias). Origin: slice-080/ADR-091.
+                "area": it.get("area") or it.get("component"),
+                # slice-084 (C1b): OPTIONAL link into the code-component inventory (components/*.json,
+                # concept #2) — ids of the code components that implement this area. Empty is legal
+                # (pre-code / Minimal). Deliberately named `code_components`, never `component`, so the
+                # product-area axis and the code-component axis never collide again.
+                "code_components": [c for c in (it.get("code_components") or []) if isinstance(c, str) and c.strip()],
                 "depends_on": [],                  # rewritten below, once every label has an id
                 "assumptions": _normalize_assumptions(it),
                 "verification_plan": it.get("verification_plan"),
@@ -793,20 +1278,54 @@ def cmd_revise(vault: Path, args) -> dict:
     """
     scope = _scope(vault, required=True)
     existing = {str(i.get("id")): i for i in scope.get("items") or [] if isinstance(i, dict)}
-    items_in = _load_items(args.items_file)
+    items_in = _load_items(args.items_file, allow_empty=True)
+    cut_ids = [str(c).strip() for c in (getattr(args, "cut", None) or []) if str(c).strip()]
+    reason = getattr(args, "reason", None)
+    reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
 
+    # --reason is required IFF --cut (critique M3, ratified at TRI-1 for crossdomain+expert over
+    # practice's uniform requirement). An ADD is self-describing: the item's own title/description
+    # IS its reason, so demanding one taxes the benign extend path. A CUT destroys the only record
+    # of what was there, so its reason IS the record -- the ledger entry is worthless without it.
+    if cut_ids and not reason:
+        raise _Refuse(
+            2, "usage",
+            f"--cut {' '.join(cut_ids)} requires --reason '<why>'. A cut removes a capability from "
+            f"the product's scope of record; the reason is the only thing that survives it, and the "
+            f"revisions[] entry exists to carry exactly that. (An ADD needs no --reason -- the "
+            f"item's own title and description are self-describing.)",
+        )
+    if not items_in:
+        # m2: NAME the act, not the payload's shape. `_load_items` would otherwise refuse this with
+        # "must carry a non-empty `items` array" -- a message about a MALFORMED payload, when what
+        # was actually attempted is a deliberate shrink-to-zero. That is AC4's own complaint (a
+        # refusal naming the wrong cause) one function over, which is why it is worth the branch.
+        raise _Refuse(
+            2, "usage",
+            f"this revision would leave the product's scope with ZERO items (it carries no `items` "
+            f"and cuts {', '.join(cut_ids) if cut_ids else 'nothing'}). A product with no scope is "
+            f"not a revision of it -- refusing. If the product really has been descoped entirely, "
+            f"that is a deliberate RE-DECOMPOSITION, not a revise: remove {SCOPE_FILE} and re-run "
+            f"/slice-candidates --product against the revised concept.json. Nothing was written.",
+        )
+
+    # A CHEAP EARLY REFUSAL ONLY -- never the only one (critique-review M-add-1). `existing` is a
+    # PRE-LOCK snapshot; once `--cut` can retire an id it is neither a subset nor a superset of the
+    # in-lock `cur`, so the authoritative re-check lives inside the mutate closure below. Keeping
+    # this one costs nothing and refuses the common typo before taking the lock. The in-file
+    # precedent is persist: create-only is checked at :712 and RE-CHECKED under the lock at :734.
     for it in items_in:
         iid = it.get("id")
         if iid is not None and str(iid) not in existing:
             raise _Refuse(
                 2, "usage",
-                f"scope item carries id {iid!r}, which this vault never minted. `revise` may REUSE an "
-                f"allocator-minted PS id (that is how an item is preserved across a revision) but may "
-                f"never INVENT one -- identity is minted by the receiver. Omit `id` for a new item.",
+                f"scope item carries id {iid!r}, which this vault's scope does not carry. `revise` "
+                f"may REUSE an allocator-minted PS id that is still in the scope (that is how an "
+                f"item is preserved across a revision) but may never INVENT one, and may never "
+                f"RESURRECT a cut one -- identity is minted by the receiver. Omit `id` for a new item.",
             )
     # CR1: rejecting an INVENTED id is not enough -- a REPEATED one aliases two items onto one minted
     # candidate. _load_items already ran _check_identities; this is the boundary that made it necessary.
-    _check_contract(items_in)
     _check_deps(items_in, args.items_file)      # CR3: a dep dropped from the revision STOPS, never drops
     ts = _now()
     holder: dict = {}
@@ -814,8 +1333,30 @@ def cmd_revise(vault: Path, args) -> dict:
     def mutate(text: str) -> str:
         data = json.loads(text) if text.strip() else {}
         cur = {str(i.get("id")): i for i in data.get("items") or [] if isinstance(i, dict)}
-        ordered = _topo(items_in, lambda it: str(it.get("id") or _label(it)))
 
+        # THE AUTHORITATIVE GATES, against the IN-LOCK read (slice-073). Both were previously
+        # evaluated against the STALE pre-lock snapshot, or not at all:
+        #   _check_membership -- SC-160's omission gate + M-add-1's resurrection guard, bidirectional
+        #   _check_contract   -- relaxed (Phase 2 only) for items whose spike has ALREADY run
+        #                        (SC-161), keyed on the population this gate just verified
+        _check_membership(items_in, cur, cut_ids, args.items_file)
+
+        # THE EXEMPT SET keys on MATERIALIZED, not on minted-`id` presence (ADR-079 section 1). The
+        # design spike REJECTED the id-keyed rule by executing its exploit: an item can carry a
+        # minted id while never having been materialized (materialize REFUSES a provenance
+        # collision, and WITHHOLDS its dependents transitively), so id-presence would exempt an item
+        # /risk-spike step-0 could never have run on -- reopening the ADR-067 section 5 bypass.
+        # Exempt iff a candidate exists THROUGH WHICH step-0 could actually have run. The CALLER
+        # does the lookup; _check_contract performs none.
+        live = _load_json(vault / "candidates.json").get("candidates") or []
+        exempt = {ref for c in _observed(vault, [c for c in live if isinstance(c, dict)])
+                  if (ref := owner_ref(c))} & set(cur)
+        # slice-076 / ADR-087 + M-add-1: pass the in-lock `cur` as `prev_by_id` so the two
+        # contract-completeness fields are validated on the EFFECTIVE value (item OR prev) the persist
+        # merge at :1328/:1331 will write -- the check and the write agree on the same value.
+        _check_contract(items_in, exempt_spiked=frozenset(exempt), prev_by_id=cur)
+
+        ordered = _topo(items_in, lambda it: str(it.get("id") or _label(it)))
         key_to_ps: dict[str, str] = {}
         seed = id_allocator.seed_max_for(vault, "ps", data)
         for it in ordered:
@@ -834,6 +1375,16 @@ def cmd_revise(vault: Path, args) -> dict:
                 "title": str(it["title"]).strip(),
                 "description": it.get("description") or prev.get("description") or it["title"],
                 "user_visible_outcome": it.get("user_visible_outcome") or prev.get("user_visible_outcome"),
+                # slice-084 (was slice-080/ADR-091): a revise can SET/UPDATE the product-AREA AND preserve a
+                # prior one; a prev-only round-trip never silently drops it. `component` accepted as a
+                # back-compat alias on BOTH the incoming item and any legacy prev.
+                "area": (it.get("area") or it.get("component")
+                         or prev.get("area") or prev.get("component")),
+                # slice-084 (C1b): set/update the code-component link, preserving a prior one on a
+                # link-less revise. Only a genuine list replaces; anything else falls back to prev.
+                "code_components": ([c for c in it["code_components"] if isinstance(c, str) and c.strip()]
+                                    if isinstance(it.get("code_components"), list)
+                                    else prev.get("code_components") or []),
                 "depends_on": [key_to_ps[d] for d in (it.get("depends_on") or []) if d in key_to_ps],
                 "assumptions": _normalize_assumptions(it),
                 "verification_plan": it.get("verification_plan") or prev.get("verification_plan"),
@@ -843,8 +1394,42 @@ def cmd_revise(vault: Path, args) -> dict:
         data.setdefault("project", vault.name)
         data["revised_at"] = ts
         data["items"] = out_items
+
+        # ── the revisions[] ledger (slice-073 / ADR-078) ──────────────────────────────────────
+        # THE DEFECT, verbatim: `dropped` was computed here and thrown to STDOUT, so a deletion from
+        # the PRODUCT'S SCOPE OF RECORD left zero durable trace. A membership change is now written
+        # IN THE FILE, inside this same lock. Append-only: prior entries are never rewritten or
+        # truncated -- that is the defect's own lesson (create-only `persist` was mistaken for
+        # append-only HISTORY).
+        #
+        # `data["revisions"] = (data.get("revisions") or []) + [rec]`, never `setdefault`, and ONLY
+        # when the item set actually changed -- so a no-op / description-only revise never grows the
+        # key and the LIVE revisions-less file stays byte-identical apart from revised_at (AC5).
+        # An absent key is a legal, PERMANENT state meaning "empty history"; there is no migration.
+        #
+        # B1 (blocker) makes this ledger LOAD-BEARING beyond its audit value: `cut` retires a PS id,
+        # which falsifies id_allocator.seed_max_for('ps')'s previous premise that the live items[] IS
+        # the full history. revisions[].cut IS the retirement history the allocator's floor now scans
+        # (id_allocator.py:180-190) -- so this record is not documentation, it is the thing that
+        # stops a retired id being re-issued onto a shipped candidate.
+        kept_ids = {o["id"] for o in out_items}
+        dropped = [i for i in cur if i not in kept_ids]
+        added = [o["id"] for o in out_items if o["id"] not in cur]
+        if dropped or added:
+            data["revisions"] = (data.get("revisions") or []) + [{
+                "at": ts,
+                "cut": dropped,
+                "added": added,
+                # required iff `cut` (M3's taste call, ratified at TRI-1): an ADD is self-describing
+                # -- the item's own title/description IS the reason -- while a CUT destroys the only
+                # record of what was there. Null on an add-only revise.
+                "reason": reason,
+                "items_before": len(cur),
+                "items_after": len(out_items),
+            }]
+
         holder["items"] = out_items
-        holder["dropped"] = [i for i in cur if i not in {o["id"] for o in out_items}]
+        holder["dropped"] = dropped
         return _dump(data)
 
     safe_mutate_text(vault / SCOPE_FILE, mutate)
@@ -854,10 +1439,16 @@ def cmd_revise(vault: Path, args) -> dict:
         "action": "revise", "status": "ok",
         "items": len(items),
         "preserved": [i["id"] for i in items if str(i["id"]) in existing],
-        # A scope item DROPPED from a revised concept leaves its candidate UNTOUCHED (the backlog is
-        # append-only and the candidate may already be shipped). materialize reports it as `orphaned`
-        # and takes NO action -- the owner-deletion cascade the k8s frame wanted is not even expressible.
-        "dropped": holder["dropped"],
+        # A CUT scope item leaves its candidate UNTOUCHED (the backlog is append-only and the
+        # candidate may already be shipped). materialize reports it as `orphaned` and takes NO action
+        # -- the owner-deletion cascade the k8s frame wanted is not even expressible. Unchanged by
+        # slice-073, and deliberately so (out_of_scope).
+        #
+        # This field is now a REPORT of a durable fact, not the only record of it: every id here also
+        # appears in product-scope.json's revisions[].cut. Reporting a deletion ONLY here was the
+        # defect (:847/:860).
+        "cut": holder["dropped"],
+        "dropped": holder["dropped"],   # retained: the pre-slice-073 key, for any existing consumer
         "materialize": mat,
     }
 
@@ -876,10 +1467,289 @@ def cmd_materialize(vault: Path, args) -> dict:
         )
     if args.scope_file:
         items = _load_items(args.scope_file)
+        # slice-076 / ADR-087 (m3 + M-add-2): the dry-run --scope-file replay reaches _candidate_from
+        # WITHOUT the write-path recognizer (_load_items runs only _check_identities). Recognize the
+        # replayed items here -- strict/no-prev, exactly like persist -- so an empty verification_plan
+        # or user_visible_outcome refuses BY NAME instead of leaking a silent None / bare index onto
+        # the read surface. (The WRITE path via --scope-file is already refused above, C7.)
+        _check_contract(items)
     else:
         items = [i for i in _scope(vault, required=True).get("items") or [] if isinstance(i, dict)]
     return _materialize(vault, items, dry_run=bool(args.dry_run),
                         acknowledge=set(args.acknowledge or []), ts=_now())
+
+
+def _torn_provenance(observed: list[dict], scope_ids: set[str]) -> dict[str, list[str]]:
+    """PS ref -> the candidate ids whose provenance is TORN. The tombstone (slice-075 / [[ADR-086]] §6).
+
+    THE FAILURE IT DETECTS. `done` quantifies over "every linked candidate is archived", and a child is
+    linked by its own `source[].ref`. If a child LOSES that ref it does not fail loudly -- it VANISHES
+    from its parent's child set, and the parent then reports `done` with an unaccounted-for child still
+    in flight. That is the G-Set absence/deletion ambiguity: "removed" and "never existed" are the same
+    observation. So keep a second, independent witness and let disagreement force `unknown`.
+
+    THE WITNESS IS FREE. `_candidate_from` already writes the PS id into `history[0].ref` as well as
+    `source[].ref` -- no new field, no new producer, no migration. The substrate already carries it.
+
+    THE DISCRIMINATOR IS NARROW ON PURPOSE (critique M4). It keys on the PRODUCER's own shape --
+    `event == "created" AND by == "slice-candidates" AND ref in the LIVE scope's ids` -- never on the
+    ref's TEXT. Measured on the real backlog: `history[].ref` is free-form prose carrying 149 DISTINCT
+    values across 98/168 candidates, including 'slice-058', 'slice-023 ADR-015 deferred', and one
+    396-character narrative paragraph. A `^PS-\\d+$` regex over ALL of history[] would fire on any actor
+    that ever appends PS-shaped prose -- and the damage is STICKY: history[] is append-only with no
+    un-write, so a false `unknown` could never be cleared. Scanning the created-event ONLY matches what
+    the producer writes and makes a later free-text append harmless; requiring LIVE-scope membership
+    means a cut or legacy PS id cannot resurrect an `unknown`. (slice-051's producer/gate SSOT lesson:
+    the detector reuses the producer's own key shape.)
+
+    IT IS A HEURISTIC, NOT A GUARANTEE -- said plainly, because this slice turns on not overselling a
+    proof. `history[]` rides the same model-mediated /commit-slice Step-6 copy as `source[]` and is
+    writable through the same unrefused `vault_edit append` path, so it is forgeable and BOTH witnesses
+    can be lost together -- correlated loss is not closed and is not pretended covered. It is strictly
+    ADDITIVE: worst case it equals the status quo; best case it converts a SILENT loss into a loud
+    `unknown`. Measured today: 4/4 real PRODUCT children carry BOTH witnesses, and source-loss has
+    occurred in 0 of 76 real archive moves -- so this defends a failure never yet OBSERVED. Insurance
+    against a reachable hypothetical, not a fix for a live defect.
+    """
+    torn: dict[str, list[str]] = {}
+    for c in observed:
+        claimed = set(owner_refs(c))
+        for h in c.get("history") or []:
+            if not isinstance(h, dict):
+                continue
+            if h.get("event") != "created" or h.get("by") != "slice-candidates":
+                continue
+            ref = str(h.get("ref") or "").strip()
+            if ref and ref in scope_ids and ref not in claimed:
+                torn.setdefault(ref, []).append(str(c.get("id")))
+    return torn
+
+
+def cmd_done(vault: Path, args) -> dict:
+    """Is this capability finished? A PURE, UNCACHED, 4-valued read (slice-075 / [[ADR-086]] §5).
+
+    FORM 2 ONLY -- "every linked candidate is archived" -- per spike A2. FORM 1 (a reality-witness link
+    from a validation back to the capability's verification_plan) has ZERO producers today:
+    validation.json keys on slice + AC ids and never on a PS id. Claiming it would mean inventing a
+    witness that does not exist, so `done` scopes to what the artifacts can actually decide.
+
+    FOUR-VALUED, NEVER A BOOL. `done | in-progress | no-children | unknown` are distinct STATES, so "I
+    cannot tell" and "there is nothing to tell" can never be read as a falsy `done` by a caller writing
+    `if result:`. The empty case is guarded BY TYPE rather than by remembering that `all([])` is
+    vacuously true (spike A2.4).
+
+    NO CACHE, NO LATCH -- load-bearing; do not optimise away. `done` is NOT monotone: the child set can
+    GROW, so a `true` can legitimately become `false`. Not theoretical -- `sc` is a registered vault_edit
+    managed kind and _APPEND_REFUSED_KINDS is `{"ps"}` (vault_edit.py:197), so ONE `vault_edit append`
+    carrying a product-scope source grows a child set at rc=0 TODAY, no splitter involved (proven by
+    execution). A latched `done: true` would be wrong by construction, now -- not after some future
+    slice. Recomputing every call is what makes the lock-free two-file read correct, not merely cheap.
+
+    THE JOIN IS CONSERVATIVE AND ORDER-BIASED, because the two-file read is NOT atomic (two files, two
+    SVW-1 locks, no cross-file transaction, and this verb deliberately takes no lock). Read LIVE first,
+    then archive: a child interleaved by /commit-slice's move appears in BOTH and counts LIVE =>
+    done=false -- a false NEGATIVE, the safe direction. Archive-first would make it appear in NEITHER --
+    it would VANISH, and the parent would report `done` with a child in flight.
+    """
+    scope = _scope(vault, required=True)
+    items = [i for i in scope.get("items") or [] if isinstance(i, dict)]
+    scope_ids = {str(it.get("id")) for it in items if it.get("id")}
+
+    if args.item and str(args.item) not in scope_ids:
+        # Mirrors _check_membership's posture: an id this scope does not carry is a USAGE error, never
+        # an empty result -- a typo must not read as "that capability has no children".
+        raise _Refuse(
+            2, "usage",
+            f"--item {args.item} names a scope item this product does not carry (live ids: "
+            f"{', '.join(sorted(scope_ids)) or 'none'}). Read {SCOPE_FILE} for the real ids.",
+        )
+
+    live = [c for c in (_load_json(vault / "candidates.json").get("candidates") or [])
+            if isinstance(c, dict)]
+    arch = [c for c in (_load_json(vault / "archive" / "candidates.json").get("candidates") or [])
+            if isinstance(c, dict)]
+    live_ids = {str(c.get("id")) for c in live}
+    arch_by_id = {str(c.get("id")): c for c in arch}
+
+    observed = _observed(vault, live)          # live-first, deliberately (see the join note above)
+    torn = _torn_provenance(observed, scope_ids)
+
+    # ONE shared derivation with the mint path -- and it now also carries AMBIGUITY (code-review CR1).
+    # Without it, a child claiming two parents was filed under its FIRST parent only, and the SECOND
+    # parent reported `done` with a live child still claiming it: a false `done`, the one thing the
+    # error_model forbids. An ambiguous parent joins the torn case -- `unknown`, never `done`.
+    children, ambiguous = children_by_parent(observed)
+
+    out_items = []
+    for it in items:
+        iid = str(it.get("id"))
+        if args.item and iid != str(args.item):
+            continue
+        kids = children.get(iid, [])
+        archived = [k for k in kids if k in arch_by_id and k not in live_ids]
+        pending = [k for k in kids if k not in archived]
+        composition = {"shipped": 0, "rejected": 0}
+        for k in archived:
+            st = str(arch_by_id[k].get("status") or "").strip()
+            if st in composition:
+                composition[st] += 1
+
+        amb_kids = sorted({r["candidate"] for r in ambiguous.get(iid, [])}, key=_sc_sort_key)
+        if amb_kids or iid in torn:
+            # every ambiguity resolves to the SAFE side -- never a false `done`
+            state = "unknown"
+        elif not kids:
+            state = "no-children"
+        elif not pending:
+            state = "done"
+        else:
+            state = "in-progress"
+
+        entry = {
+            "item": iid,
+            "title": it.get("title"),
+            "state": state,                # done | in-progress | no-children | unknown -- NEVER a bool
+            "children": kids,
+            "archived": archived,
+            "pending": pending,
+            # FORM 2 counts a REJECTED child as archived, so a rejected-only capability reports `done`.
+            # Bound by spike constraint A2.1 (FORM 2 is the only decidable form), so it is SURFACED
+            # rather than laundered: the real archive carries 73 `shipped` + 3 `rejected`.
+            "archived_composition": composition,
+        }
+        if state == "unknown":
+            reasons = []
+            if amb_kids:
+                entry["ambiguous_children"] = amb_kids
+                reasons.append(
+                    f"candidate(s) {', '.join(amb_kids)} claim MORE THAN ONE product-scope parent, so "
+                    f"whether they belong to {iid} has no fact of the matter -- this capability's "
+                    f"child set is undefined and it cannot be called done. REMEDY: correct each child's "
+                    f"`source[]` to a single parent (`vault_edit.py update --file candidates.json "
+                    f"--array candidates --id <SC-NNN> --set 'source=[...one product-scope ref...]'`; "
+                    f"use --file archive/candidates.json if it has shipped), then re-run."
+                )
+            if iid in torn:
+                entry["torn_provenance"] = torn[iid]
+                reasons.append(
+                    f"candidate(s) {', '.join(torn[iid])} were CREATED as this capability's children "
+                    f"(history[].ref == {iid}) but no longer carry its product-scope source[]. Their "
+                    f"state cannot be accounted for. REMEDY: restore the child's "
+                    f"`source: [{{\"type\": \"product-scope\", \"ref\": \"{iid}\"}}]`, or -- if it was "
+                    f"deliberately re-parented -- correct its history so the two witnesses agree."
+                )
+            entry["reason"] = " ".join(reasons)
+        out_items.append(entry)
+
+    return {
+        "action": "done",
+        "status": "ok",
+        "vault": str(vault),
+        "items": out_items,
+        "counts": {s: sum(1 for e in out_items if e["state"] == s)
+                   for s in ("done", "in-progress", "no-children", "unknown")},
+    }
+
+
+def _valid_area(name: str) -> str:
+    """The single-sourced product-AREA validator (slice-081 / AC4; slice-083 / ADR-096 wires _load_items;
+    slice-084 renamed `component` -> `area`). Returns the stripped value that will PERSIST; raises
+    _Refuse(2,'usage') on the two rejectable shapes. check == persisted-value (slice-076): the single
+    normalized string is both validated here and written by the caller, so no check/write differential.
+    Called by set-area (and its set-component alias) AND (via _load_items) by persist / revise / the
+    --scope-file replay, so the _Refuse message stays verb-neutral.
+
+    Two rejects, and only two (the field stays OPTIONAL — absent/None is a legal un-annotated item, set
+    only by persist/revise, never by this verb):
+      * empty / whitespace-only  -> an area name must be a real label
+      * the reserved sentinel     -> casefold-match of UNASSIGNED. 'unassigned' is a RESIDUAL the rollup
+        buckets un-annotated capabilities into (a suspense account you never post INTO); writing it would
+        merge a genuinely-annotated capability with the truly-unassigned. Compared against
+        UNASSIGNED.casefold() (m1), never a re-hardcoded literal, so the sentinel stays single-sourced.
+    """
+    s = (name or "").strip()
+    if not s:
+        raise _Refuse(2, "usage",
+                      "area must be a non-empty name (an empty/whitespace value is not an area). "
+                      "To leave a capability un-annotated, simply do not annotate it.")
+    if s.casefold() == UNASSIGNED.casefold():
+        raise _Refuse(2, "usage",
+                      f"area {name!r} is the reserved sentinel {UNASSIGNED!r} -- the catch-all "
+                      f"bucket un-annotated capabilities fall into, never a destination you post into. "
+                      f"Choose a real area name, or leave the capability un-annotated.")
+    return s
+
+
+def cmd_set_area(vault: Path, args) -> dict:
+    """Assign ONE product-AREA to ONE already-materialized PS capability (slice-081 / SC-183 / [[ADR-092]];
+    slice-084 renamed the verb set-component -> set-area, keeping set-component / --component as a
+    back-compat alias that dispatches here with dest=area).
+
+    The producer slice-080's area lens + capability-progress rollup were missing: on the real vault
+    every capability lands in 'unassigned', so the rollup reads 'Whole app 0/N ... N unassigned' -- correct
+    but inert. This verb is the annotation channel that de-inerts it.
+
+    FOCUSED + REUSED, not a flag on `revise` (ADR-092): a genuine in-place read-modify-write of ONLY
+    items[<id>].area via the existing atomic safe_mutate_text path -- it does NOT route through
+    revise's out_items whitelist (which would reshape assumptions + drop non-whitelist fields on untouched
+    items, m4), does NOT re-materialize (product_rollup/candidates_top join area at READ time via
+    owner_refs, so nothing flows into candidates.json), and does NOT extend the revisions[] ledger (an
+    area SET is self-describing + idempotent, exactly the module's ADD-principle; and revisions[].cut
+    is load-bearing for id_allocator.seed_max_for -- keeping the ledger membership-only avoids premise-drift).
+    'recorded' == the atomic write + a revised_at bump.
+
+    Every reject leaves product-scope.json BYTE-IDENTICAL: the _valid_area reject is PRE-LOCK (never
+    opens the file); an absent-`--item` reject raises INSIDE mutate() before the atomic replace, so the
+    target is untouched (per _vault_write). A same-value no-op returns the text verbatim (changed:false,
+    no revised_at churn -- m2).
+    """
+    area = _valid_area(args.area)                        # PRE-LOCK reject (AC4); a rejected call never opens the file
+    item_id = str(getattr(args, "item", "") or "").strip()
+    if not item_id:
+        raise _Refuse(2, "usage", "set-area --item PS-NNN is required (the capability to annotate).")
+    _scope(vault, required=True)                          # exit 4 on scope-absent (M1), pre-lock; mirrors revise
+    ts = _now()
+    holder: dict = {}
+
+    def mutate(text: str) -> str:
+        data = json.loads(text) if text.strip() else {}
+        items = [i for i in data.get("items") or [] if isinstance(i, dict)]
+        target = next((i for i in items if str(i.get("id")) == item_id), None)
+        if target is None:
+            # In-lock re-check: a parallel --cut could have retired the id after the pre-lock _scope read.
+            # Mirrors done/revise -- a typo is a USAGE error, never a silent no-op. Raising here leaves the
+            # file byte-identical (safe_mutate_text writes nothing on a raising mutate).
+            live = ', '.join(sorted(str(i.get("id")) for i in items if i.get("id"))) or 'none'
+            raise _Refuse(
+                2, "usage",
+                f"set-area --item {item_id} names a scope item this product does not carry "
+                f"(live ids: {live}). Read {SCOPE_FILE} for the real ids.")
+        # slice-084: read `area`, tolerating a legacy `component` alias key so a pre-rename vault no-ops
+        # correctly on re-annotation to the same value.
+        prev = target.get("area") if "area" in target else target.get("component")
+        if prev == area:
+            # No-op re-annotation to the SAME value: byte-identical, no revised_at churn (m2). Return the
+            # text verbatim so the atomic replace writes back exactly what was there.
+            holder.update(changed=False, previous=prev)
+            return text
+        target["area"] = area                            # genuine in-place set: every OTHER item is untouched (m4)
+        target.pop("component", None)                    # slice-084: migrate off the legacy alias key so the two never coexist
+        data["revised_at"] = ts
+        holder.update(changed=True, previous=prev)
+        return _dump(data)
+
+    safe_mutate_text(vault / SCOPE_FILE, mutate)
+    return {
+        "action": "set-area",
+        "status": "ok",
+        "vault": str(vault),
+        "item": item_id,
+        "area": area,
+        "changed": holder["changed"],
+        # m5: echo the prior value so a REASSIGNMENT (A->B) is visible in the command result (an area
+        # change writes no durable audit trail by design; the echo is the visibility). null on a first set.
+        "previous": holder.get("previous"),
+    }
 
 
 def cmd_census(vault: Path, args) -> dict:
@@ -955,9 +1825,42 @@ def _build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("revise", parents=[common],
                        help="explicit scope correction (preserves minted PS ids by id)")
     r.add_argument("--items-file", required=True)
+    # slice-073 / ADR-078. The cut escape is on the CLI, not in the payload -- the design spike
+    # FORCED that (spike-cut-escape): a payload-carried cut is a claim made by the same untrusted,
+    # stochastic producer whose omissions are the defect, so it could not be told apart from the
+    # accident it exists to distinguish. The flag is a SECOND, deliberate, human act. Shape mirrors
+    # `materialize --acknowledge PS-NNN` field-for-field -- the in-module precedent for a repeatable,
+    # CLI-side, per-id override of a refusal.
+    r.add_argument("--cut", action="append", default=[], metavar="PS-NNN",
+                   help="deliberately REMOVE this already-minted scope item (repeatable). "
+                        "Requires --reason. Recorded in product-scope.json's append-only revisions[].")
+    r.add_argument("--reason", default=None,
+                   help="why the --cut item(s) are being removed. REQUIRED with --cut (an added "
+                        "item is self-describing; a cut destroys the only record of what was there).")
 
     sub.add_parser("census", parents=[common],
                    help="classify live u archive into PRODUCT / EXHAUST / HUMAN / unclassified")
+
+    dn = sub.add_parser("done", parents=[common],
+                        help="is a capability finished? 4-valued, read-only (done | in-progress | "
+                             "no-children | unknown)")
+    dn.add_argument("--item", default=None, metavar="PS-NNN",
+                    help="report only this scope item (default: every item)")
+
+    # slice-081 / ADR-092; slice-084 renamed set-component -> set-area. Assign ONE product-area to ONE
+    # already-materialized capability. --item mirrors done's shape field-for-field; --area is validated at
+    # the write seam (empty/reserved rejected). set-component / --component stay as a back-compat alias
+    # subparser whose value flag writes dest=area, so cmd_set_area reads args.area uniformly.
+    for verb, flag, note in (("set-area", "--area", ""),
+                             ("set-component", "--component", " [deprecated alias of set-area]")):
+        sc = sub.add_parser(verb, parents=[common],
+                            help=f"assign a product-area to ONE materialized scope item{note} "
+                                 f"(de-inerts the slice-080 area lens / rollup)")
+        sc.add_argument("--item", required=True, metavar="PS-NNN",
+                        help="the already-materialized scope item to annotate")
+        sc.add_argument(flag, dest="area", required=True, metavar="NAME",
+                        help="the area name to assign (rejected if empty/whitespace or the reserved "
+                             "'unassigned' sentinel)")
     return p
 
 
@@ -967,11 +1870,35 @@ _DISPATCH = {
     "materialize": cmd_materialize,
     "revise": cmd_revise,
     "census": cmd_census,
+    "done": cmd_done,
+    "set-area": cmd_set_area,
+    "set-component": cmd_set_area,   # slice-084: back-compat alias -> same handler (dest=area)
 }
 
 
 def _text(out: dict) -> str:
     a = out.get("action")
+    if a == "done":
+        lines = [f"CAPABILITY STATE ({out['vault']}) -- live u archive, computed fresh (never cached)"]
+        for e in out["items"]:
+            lines.append(f"  {e['item']} [{e['state'].upper()}] {e['title'] or ''}".rstrip())
+            if e["children"]:
+                comp = e["archived_composition"]
+                lines.append(f"      children: {len(e['children'])}  "
+                             f"archived: {len(e['archived'])} ({comp['shipped']} shipped, "
+                             f"{comp['rejected']} rejected)  pending: {len(e['pending'])}")
+                if e["pending"]:
+                    lines.append(f"      still in flight: {', '.join(e['pending'])}")
+            if e["state"] == "unknown":
+                lines.append(f"      {e['reason']}")
+            elif e["state"] == "no-children":
+                lines.append("      no candidates link to this capability -- nothing has been "
+                             "materialized for it, so it is NOT done (an empty set is not a finished "
+                             "one).")
+        c = out["counts"]
+        lines.append(f"  => done {c['done']} | in-progress {c['in-progress']} | "
+                     f"no-children {c['no-children']} | unknown {c['unknown']}")
+        return "\n".join(lines)
     if a == "census":
         c = out["counts"]
         lines = [f"CENSUS ({out['vault']}) -- {out['total']} candidates, live u archive",
@@ -986,6 +1913,13 @@ def _text(out: dict) -> str:
             lines.append("  => the product's own scope is ABSENT from this backlog. Run /discover, "
                          "then /slice-candidates --product.")
         return "\n".join(lines)
+    if a == "set-area":
+        if not out["changed"]:
+            return (f"set-area: {out['item']} already area {out['area']!r} -- no change "
+                    f"(byte-identical).")
+        prev = out.get("previous")
+        was = f" (was {prev!r})" if prev else " (was unassigned)"
+        return f"set-area: {out['item']} -> area {out['area']!r}{was}."
     if a in ("persist", "revise"):
         m = out["materialize"]
         return (f"{a}: {out.get('persisted', out.get('items'))} scope item(s) persisted "

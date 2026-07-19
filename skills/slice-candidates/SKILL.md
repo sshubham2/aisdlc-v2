@@ -244,6 +244,7 @@ contains apostrophes, which a heredoc mangles):
     "title": "<verb-led candidate title, e.g. build-payments-core>",
     "description": "<what this capability IS, in one or two sentences>",
     "user_visible_outcome": "<what a real user can DO once it exists>",
+    "area": "<OPTIONAL product-area grouping, e.g. payments — omit to leave the capability unassigned>",
     "depends_on": ["<label of another item in THIS list>"],
     "assumptions": [ { "id": "A1", "statement": "<the blocking feasibility premise>",
                        "blocking": true, "spike_status": "unproven" } ],
@@ -263,6 +264,13 @@ Rules, each of which is load-bearing — `persist` REFUSES the file (exit 2) if 
   by definition and has everything to spike.
 - **Emit the `depends_on` DAG.** It yields the critical path: items are minted in topological order, so the roots —
   the things everything else waits on — surface first at the pick gate.
+- **OPTIONAL — group each item into a product `area`.** Assigning `area` HERE, at decompose time, is the day-0
+  product-structure step for Minimal/Standard projects (slice-084 A2/C2): it feeds the per-area capability rollup
+  and the `/slice --area <NAME>` lens with no separate annotation pass. Use a **small, stable** set of coarse area
+  names — the product's natural subsystems (`payments`, `auth`, `search`), NOT one area per capability. `area` is
+  the PRODUCT grouping axis; it is distinct from Heavy-mode `components/*.json` (the AST-derived code inventory),
+  which the optional `code_components` link bridges later. Omit `area` to leave a capability `unassigned` and
+  annotate it afterward with `set-area`.
 - Decompose the product as it IS scoped, not as you would scope it. Respect `non_goals`.
 
 ### product-3 — Cross it into the vault (the ONCE-ACT)
@@ -293,8 +301,12 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" materialize --json 
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" census --json        # PRODUCT / EXHAUST / HUMAN split
 ```
 
-To **extend or correct** the scope, repeat product-2 (`Write` the full revised item list to the same `$ITEMS` path,
-carrying each kept item's minted `id` verbatim), then:
+To **extend or correct** the scope, repeat product-2 (`Write` the **full** revised item list to the same `$ITEMS`
+path, carrying **every** kept item's minted `id` verbatim), then:
+
+> **`revise` is a WHOLE-LIST replace, not a delta — and it REFUSES a payload that leaves a live item out.**
+> Re-state every item you mean to KEEP. An omitted item is not "unchanged": until slice-073 it was silently DELETED
+> from the product's scope of record at exit 0, with no trace. To remove one, say so explicitly with `--cut` (below).
 
 ```bash
 TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
@@ -306,8 +318,88 @@ rc=$?; rm -f "$ITEMS"; exit $rc
 
 `revise` preserves already-minted `PS` ids **by id** and never re-mints; new items omit `id` as usual. An `id` this
 vault never minted is REFUSED (the model may reuse an identity the receiver gave it, never invent one), and so is a
-REPEATED one. A scope item dropped from a revision leaves its candidate untouched — the backlog is append-only and
-it may already be shipped — and `materialize` reports it as `orphaned`, taking no action.
+REPEATED one, and so is one that was previously `--cut` (a cut id's candidate may already be shipped, so reviving it
+would alias two capabilities onto one record).
+
+**To REMOVE a scope item, cut it explicitly** — repeatable, and `--reason` is required (an added item is
+self-describing; a cut destroys the only record of what was there):
+
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+ITEMS="$TMPD/aisdlc-product-scope-items.json"
+[ -s "$ITEMS" ] || { echo "STOP: $ITEMS is missing or empty -- Write the revised decomposition first." >&2; exit 1; }
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" revise --items-file "$ITEMS" \
+    --cut PS-003 --reason "descoped -- the concept revision dropped in-app refunds" --json
+rc=$?; rm -f "$ITEMS"; exit $rc
+```
+
+Every accepted membership change appends a record to `product-scope.json`'s **append-only `revisions[]`**
+(`{at, cut[], added[], reason, items_before, items_after}`) — prior entries are never rewritten. A membership-preserving
+revise (e.g. a description edit) appends nothing. That ledger is load-bearing, not documentation: its `cut` ids are the
+`PS` retirement history the id allocator scans, so a retired id is never re-issued onto a shipped candidate.
+
+A **cut** scope item leaves its candidate untouched — the backlog is append-only and it may already be shipped — and
+`materialize` reports it as `orphaned`, taking no action.
+
+Every refusal names the offending id(s) on stderr with a non-zero exit and leaves `product-scope.json` byte-identical.
+The same protection covers the sibling write paths: `vault_edit remove` / `set --path items` / `append` on
+`product-scope.json`/`items` all REFUSE ([[ADR-080]]) — scope items are written only by `persist`/`revise`, which
+enforce the decomposition contract.
+
+### product-5 — `set-area`: annotate a capability's product-area (makes the `/slice --area` lens non-degenerate)
+
+Assigning `area` at decompose time (product-2) is the primary path; use `set-area` to annotate a capability that was
+left un-grouped, or to re-group one. After `materialize`, any capability with no `area` lands in the reserved
+**`unassigned`** stratum, so the capability-progress rollup reads `Whole app 0/N … N unassigned` — correct but
+**inert** for grouping. Run **`set-area`** to assign a real product-area to a capability, so the per-area progress
+view and the `/slice --area <NAME>` lens become non-degenerate (slice-081 / [[ADR-092]]; slice-084 renamed
+set-component→set-area):
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" set-area --item PS-NNN --area "<NAME>" --json
+```
+
+- `set-area` annotates ONE already-materialized capability **in place** (atomic `safe_mutate_text` write, bumps `revised_at`); it
+  mints nothing, re-materializes nothing, and appends no `revisions[]` entry — the read-side consumers
+  (`product_rollup`, `candidates_top --area`) join the area at READ time via `owner_refs`.
+- The `--area` name is validated at the write seam: an **empty/whitespace** name, or the reserved sentinel
+  **`unassigned`** (case-insensitive), is **REFUSED** (non-zero exit) and leaves `product-scope.json` byte-identical.
+- Re-annotating a capability to the **same** value is an idempotent no-op (`changed:false`, byte-identical, no
+  `revised_at` churn); a **reassignment** echoes the prior area in the command result.
+- `set-component --component <NAME>` remains as a back-compat alias of `set-area --area <NAME>` (slice-084).
+- Un-annotated capabilities stay in `unassigned` (backward-compatible; a zero-annotation rollup is byte-identical).
+  After annotating ≥1 capability, re-run `/slice --area <NAME>` (or `product_scope done`) to see the lens.
+
+## --demote mode — 'good enough for now' (slice-077 / [[ADR-088]])
+
+Lower a genuinely-low-value **off-path** candidate's backlog rank by a bounded score-space term
+(−4 at the `candidates_top` pick surface) WITHOUT deleting anything — the append-only risk-register
+entry is never opened for write. The demote is recorded as two presence-symmetric sibling fields
+(`demoted_at` + `demote_reason`) plus an append-only `demoted` history event; **off-path is derived
+from their presence** — there is no stored path-class enum.
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/scripts/demote_candidate.py" --candidate SC-NNN --reason "<why it can wait>"
+```
+
+- The `--reason` is **required and non-empty** (a reason-less demote is refused — the record is
+  append-only and auditable).
+- **ELIGIBILITY GUARD** — the demote is REFUSED (fail-visible, non-zero) when the target is
+  **product-scope-sourced** (on-path: a core product capability is not a "good enough for now" risk)
+  OR in the **critical band** (severity `critical` or score `>=9`). A critical bug is therefore
+  structurally non-demotable, so a **non-demoted critical always tops the board**. A genuinely
+  critical **security** bug materializes at score 9, so the critical band protects it too; a
+  *sub-critical* security item carries no structured signal on a materialized candidate (the finding
+  category lives in `rationale` free text, not a field), so it is demotable by deliberate, reversible,
+  audited user judgment — the guard reads structured severity/score only, never free text.
+- Only a **pickable** target (`candidate`/`deferred`) may be demoted; an active/spiking/blocked target
+  is refused. A re-demote with the **same** reason is an idempotent no-op; a **different** reason is
+  refused (the existing record is never silently overwritten). An unknown id fails visible.
+- The write routes through the SVW-1 locked seam; `risk-register.json` is intentionally NOT a write
+  target (AC5 preserved by construction).
+
+To undo a demote, remove BOTH `demoted_at` and `demote_reason` (they are presence-symmetric — the
+`artifact_lint` co-constraint fails a half-cleared pair).
 
 ## Candidate shape (reference)
 

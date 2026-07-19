@@ -16,7 +16,8 @@ is then a deterministic, idempotent, create-only pass keyed on candidate provena
 
 Covers AC1 (source type + census flip), AC2 (idempotency), AC3 (survives the ship cycle), AC4 (absent
 concept fails VISIBLY), plus the ratified critique constraints: C5 (the source[] normalizer's three
-shapes), C6 (the identity guard lives in `persist`, not _MANAGED_KIND), C7 (--scope-file implies
+shapes), C6 (the identity guard lives in `persist` — and, since slice-073 / [[ADR-080]], the
+_MANAGED_KIND entry ALSO guards the remove/set legs while its append leg refuses), C7 (--scope-file implies
 --dry-run), C10 (the census classifier is explicit, with an `unclassified` tripwire), C12 (materialize
 does NOT require concept.json), C13 (the `ps` kind is not half-audited), C14 (a refused item withholds
 its dependents transitively).
@@ -26,12 +27,28 @@ AC5 (the aivlc reality replay) lives in test_product_scope_aivlc_replay.py.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
+from scripts.lib import _vault_paths  # noqa: E402  (repo-root bootstrap above)
+
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "aivlc-vault"
 SCRIPT = "scripts/lib/product_scope.py"
+
+# THIS repo's real vault, resolved DYNAMICALLY the same way the code does (AI_SDLC_VAULT_ROOT env ->
+# git-common-dir config pin -> computed <slug>-<shorthash> default) — never a hardcoded clone hash, which
+# would silently never-run on a differently-located clone or an env/config-overridden vault. VAULT_ROOT
+# never raises (an unresolvable path simply isn't a dir), but the access is guarded belt-and-braces.
+try:
+    _REAL_VAULT = _vault_paths.VAULT_ROOT
+except Exception:  # pragma: no cover - best-effort; a resolution failure just skips the env-gated test
+    _REAL_VAULT = None
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────────
@@ -266,17 +283,21 @@ def test_ac4_absent_concept_fails_visibly(run_script, tmp_path):
 
 
 @pytest.mark.skipif(
-    not (Path.home() / ".aisdlc" / "aisdlc-v2-a5c48e41").is_dir(),
-    reason="this project's real vault is not on this host (CI); the tmp-vault case above carries the AC",
+    _REAL_VAULT is None or not Path(_REAL_VAULT).is_dir()
+    or (Path(_REAL_VAULT) / "concept.json").exists(),
+    reason="runs ONLY on the dev host where THIS repo's resolved vault (_vault_paths.VAULT_ROOT) exists "
+           "AND its concept.json is still genuinely absent. Skipped on CI (no vault) and once /discover "
+           "has written a concept (the premise no longer holds — the portable tmp-vault case "
+           "test_ac4_absent_concept_fails_visibly is the unconditional durable evidence).",
 )
 def test_ac4_against_this_projects_real_vault(run_script):
-    """AC4's stated target verbatim: THIS vault, 68 slices deep, where concept.json is GENUINELY
-    absent (skills/discover/SKILL.md:111 declares it an all-modes output — it was never written).
-    Backfilling it is out_of_scope; the code must fail visibly instead. Skips off this laptop by
-    design — the portable tmp-vault case above is the durable evidence (C9)."""
-    real = Path.home() / ".aisdlc" / "aisdlc-v2-a5c48e41"
-    assert not (real / "concept.json").exists(), "premise changed: this vault now HAS a concept.json"
-    r = _run(run_script, real, "decompose-context", "--json")
+    """AC4's stated target verbatim: THIS project's real vault — resolved DYNAMICALLY via
+    _vault_paths.VAULT_ROOT (never a hardcoded clone hash) — where concept.json is GENUINELY absent must
+    fail VISIBLY (exit 3, naming /discover) rather than silently no-mint. Environment-gated BY DESIGN: the
+    skipif above guarantees the premise (vault present, concept.json still absent), so a vault that has
+    since gained a concept SKIPS (premise gone) instead of failing on a stale assertion; the portable
+    tmp-vault case above is the durable, unconditional evidence (C9)."""
+    r = _run(run_script, _REAL_VAULT, "decompose-context", "--json")
     assert r.returncode == 3
     assert "/discover" in (r.stdout + r.stderr)
 
@@ -367,6 +388,96 @@ def test_c10_census_unclassified_is_empty_against_the_real_aivlc_taxonomy(run_sc
     assert out["total"] == 14
 
 
+# ── slice-079 / ADR-090 — the two taxonomy extensions (`discover`, `slice-NNN-abandoned`) ──
+
+@pytest.mark.parametrize("slice_ref", ["slice-070-abandoned", "slice-123-abandoned", "slice-9-abandoned"])
+def test_slice079_abandoned_disposition_classifies_exhaust(slice_ref):
+    """AC1 (mechanism evidence, m1): a `slice-NNN-abandoned` teardown ref classifies as EXHAUST — a
+    per-slice disposition structurally identical to the existing discovered/deferred/descope residue.
+    Parametrized over >=2 slice numbers to pin the PATTERN (number varies), not a single literal.
+    Genuinely WRITTEN-FAILING pre-impl: before ADR-090 these returned UNCLASSIFIED (the 2 live SC-152/
+    SC-153 rows are the real defect)."""
+    from scripts.lib.product_scope import classify_source_type
+
+    assert classify_source_type(slice_ref) == "EXHAUST"
+
+
+def test_slice079_discover_literal_classifies_exhaust():
+    """AC2 (mechanism evidence, m1): the bare `discover` source type classifies as EXHAUST — a distinct
+    sibling of the already-present `discovered`. WRITTEN-FAILING pre-impl (returned UNCLASSIFIED)."""
+    from scripts.lib.product_scope import EXHAUST_SOURCES, classify_source_type
+
+    assert "discover" in EXHAUST_SOURCES
+    assert "discovered" in EXHAUST_SOURCES, "the distinct sibling must remain — this is an ADDITION"
+    assert classify_source_type("discover") == "EXHAUST"
+
+
+def test_slice079_extension_is_named_only_no_wildcard_absorption():
+    """must_not_defer #1 / ADR-090: the suspense account is never auto-cleared. The extension adds exactly
+    one named alternation member and one literal — NO `^slice-\\d+-.*$` wildcard — so a novel disposition
+    or a novel bare type still fails every bucket and lands in `unclassified`, keeping the tripwire armed.
+    The over-reach negative the convergent tournament's expert designer prescribed."""
+    from scripts.lib.product_scope import classify_source_type
+
+    assert classify_source_type("slice-070-teleported") == "UNCLASSIFIED", "a novel disposition must NOT be absorbed"
+    assert classify_source_type("slice-070-abandonedX") == "UNCLASSIFIED", "the anchored regex must not over-match"
+    assert classify_source_type("disco") == "UNCLASSIFIED", "a substring of `discover` must not match"
+    assert classify_source_type("imported") == "UNCLASSIFIED", "a novel bare type stays UNCLASSIFIED"
+
+
+def test_slice079_no_crash_on_missing_or_malformed_source_type():
+    """must_not_defer #2: no crash on a malformed/missing source ref. None and '' return UNCLASSIFIED via
+    the existing `(t or '').strip()` guard, never raise."""
+    from scripts.lib.product_scope import classify_source_type
+
+    assert classify_source_type(None) == "UNCLASSIFIED"
+    assert classify_source_type("") == "UNCLASSIFIED"
+    assert classify_source_type("   ") == "UNCLASSIFIED"
+
+
+def test_slice079_census_clears_both_new_types_including_the_discover_occurrence(run_script, tmp_path):
+    """AC3 + M-add-1 (the DR-1 payoff, census-level pin): reproduces the REAL vault's two distinct shapes
+    and asserts BOTH reconciliation clauses, because `counts.UNCLASSIFIED==0` alone is BLIND to the
+    `discover` half.
+
+      * live SC-152/SC-153 shape: source is ONLY `slice-070-abandoned` -> UNCLASSIFIED at the candidate
+        level pre-impl, so it moves `counts.UNCLASSIFIED`.
+      * archived SC-141 shape: source carries `risk` AND `discover` -> already EXHAUST via `risk`, so the
+        `discover` literal moves NO candidate-level count; its ONLY census signal is the `unclassified`
+        OCCURRENCES list emptying.
+
+    So `census['unclassified']==[]` is the sole census-level proof the discover fix landed. Genuinely
+    WRITTEN-FAILING pre-impl: before ADR-090 counts.UNCLASSIFIED==2 and unclassified lists both types."""
+    v = tmp_path / "taxonomy"
+    (v / "archive").mkdir(parents=True)
+    _write(v / "candidates.json", {"candidates": [
+        {"id": "SC-901", "title": "abandoned-a", "source": [{"type": "slice-070-abandoned", "ref": None}]},
+        {"id": "SC-902", "title": "abandoned-b", "source": [{"type": "slice-070-abandoned", "ref": None}]},
+        {"id": "SC-903", "title": "a-real-product-item", "source": [{"type": "product-scope", "ref": "PS-001"}]},
+    ]})
+    _write(v / "archive" / "candidates.json", {"candidates": [
+        {"id": "SC-141", "title": "sc141-shape",
+         "source": [{"type": "risk", "ref": "R-4"}, {"type": "discover", "ref": "concept.json first_slice_candidate"}]},
+    ]})
+
+    r = _run(run_script, v, "census", "--json")
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+
+    # BOTH clauses (M-add-1): the abandoned fix drives counts to 0, the discover fix empties occurrences.
+    assert out["counts"]["UNCLASSIFIED"] == 0, "the abandoned rows must reclassify out of UNCLASSIFIED"
+    assert out["unclassified"] == [], (
+        "the discover OCCURRENCE must be cleared — the only census-level signal the discover half landed; "
+        f"got {out['unclassified']}"
+    )
+    # The abandoned rows are EXHAUST; the SC-141 shape stays EXHAUST via risk; the product row is PRODUCT.
+    assert out["counts"] == {"PRODUCT": 1, "HUMAN": 0, "EXHAUST": 3, "UNCLASSIFIED": 0}
+    # SMOKE ONLY (m1): sum==total is TAUTOLOGICAL — classify_candidate always returns one of four buckets
+    # and cmd_census increments one per candidate, so it holds for ANY input (incl. the pre-impl U==2
+    # state). It is NOT evidence for AC3/no-drop; the assertions above are.
+    assert sum(out["counts"].values()) == out["total"] == 4
+
+
 # ── C6 — the identity guard is on the path that actually RUNS ────────────────────
 
 def test_c6_persist_rejects_a_model_supplied_id(run_script, pvault, tmp_path):
@@ -383,13 +494,32 @@ def test_c6_persist_rejects_a_model_supplied_id(run_script, pvault, tmp_path):
     assert not (pvault / "product-scope.json").exists(), "the write must not have landed"
 
 
-def test_c6_product_scope_is_not_registered_in_managed_kind():
-    """ADR-067 §3 + the repo's OWN documented convention (vault_edit.py:137-140): a cross-referencing
-    appender PRE-mints via `alloc` and carries the id in the payload, which mint-on-append would
-    reject. risk-register's risks[] is the precedent."""
-    from scripts.lib.vault_edit import _MANAGED_KIND
+def test_c6_product_scope_is_registered_in_managed_kind_with_a_refusing_append_leg():
+    """INVERTED by slice-073 / [[ADR-080]], which supersedes ADR-067 §3 on exactly this line.
 
-    assert ("product-scope.json", "items") not in _MANAGED_KIND
+    This test used to assert the entry's ABSENCE, pinning ADR-067 §3. A pinning test must move with
+    the decision it pins, or the decision is not really made — so it now pins ADR-080's two halves
+    together, because either one alone is a defect:
+
+      * REGISTERED — without it, `vault_edit remove` and `set --path items` each delete a scope item
+        at rc=0 with no record, walking around cmd_revise's omission gate entirely (the more
+        DISCOVERABLE door: a model told "remove PS-002" finds the generic documented verb first).
+      * APPEND REFUSES — registration alone would make mint-on-append hand a real PS id to an item
+        with no assumptions, whose candidate then SKIPS /risk-spike step-0 (ADR-067 §5's bypass,
+        reopened by one supported command). Today-unregistered that append crashes loudly; a silent,
+        legitimate-looking, contract-free item would be strictly worse.
+
+    ADR-067 §3's FIRST half is untouched and still tested by
+    test_c6_persist_rejects_a_model_supplied_id: persist keeps its own in-lock reject_supplied_id and
+    never routes through vault_edit.
+    """
+    from scripts.lib.vault_edit import _APPEND_REFUSED_KINDS, _MANAGED_KIND
+
+    assert _MANAGED_KIND.get(("product-scope.json", "items")) == "ps"
+    assert "ps" in _APPEND_REFUSED_KINDS, (
+        "registering the kind without refusing its append leg turns a loud crash into a silent "
+        "contract-free mint -- the two halves of ADR-080 ship together or not at all"
+    )
 
 
 def test_c6_vault_edit_alloc_mints_a_ps_id(run_script, pvault):
@@ -417,9 +547,16 @@ def test_c7_scope_file_implies_dry_run(run_script, pvault, tmp_path):
 
 
 def test_c7_dry_run_writes_nothing(run_script, pvault, tmp_path):
+    # slice-076 / ADR-087: the dry-run --scope-file replay now runs _check_contract (m3/M-add-2), so
+    # the item must be contract-COMPLETE (blocking-unproven assumption + both completeness fields) --
+    # this test's subject is "a dry run writes NOTHING", not "an incomplete item is tolerated".
     scope = tmp_path / "scope.json"
-    _write(scope, {"items": [{"id": "PS-001", "title": "would-be-minted", "description": "x",
-                              "depends_on": [], "assumptions": [], "verification_plan": "x"}]})
+    _write(scope, {"items": [{"id": "PS-001", "decomposition_label": "would-be",
+                              "title": "would-be-minted", "description": "x",
+                              "user_visible_outcome": "It runs.", "depends_on": [],
+                              "assumptions": [{"id": "A1", "statement": "s", "blocking": True,
+                                               "spike_status": "unproven"}],
+                              "verification_plan": "Drive one real run."}]})
     before = (pvault / "candidates.json").read_bytes()
 
     r = _run(run_script, pvault, "materialize", "--scope-file", str(scope), "--dry-run", "--json")
@@ -501,8 +638,15 @@ def test_c8_revise_preserves_minted_ids_and_never_re_mints(run_script, pvault, t
     scope = _read(pvault / "product-scope.json")
     core = next(i for i in scope["items"] if i["decomposition_label"] == "core-engine")
 
+    # slice-073: every KEPT item is re-stated. This test's subject is identity PRESERVATION, not
+    # membership -- it previously omitted the other two persisted items, and the (then absent)
+    # omission gate silently honoured that as a DELETION. Re-stating them keeps the subject and both
+    # assertions below unchanged; the omission path is now pinned deliberately, by
+    # tests/bugs/test_product_scope_revise_contract.py (SC-160).
+    others = [dict(i) for i in scope["items"] if i["id"] != core["id"]]
     revised = {"items": [
         dict(core, description="The deterministic core (sharpened after a concept revision)."),
+        *others,
         {"label": "telemetry", "title": "add-telemetry", "description": "See what each stage did.",
          "user_visible_outcome": "Operator sees per-stage activity.", "depends_on": [core["id"]],
          "assumptions": [{"id": "A1", "statement": "Per-stage activity is observable.",
@@ -530,9 +674,14 @@ def test_c8_revise_preserves_minted_ids_and_never_re_mints(run_script, pvault, t
 def test_cr1_revise_rejects_a_REPEATED_minted_id(run_script, pvault, tmp_path):
     """code-review CR1 (blocker), reproduced by execution before the fix: `revise` rejected an INVENTED
     PS id but accepted a REPEATED one. Two items both carrying PS-001 collapsed onto ONE minted SC id --
-    materialize's pass 1 does `ps_to_sc[it["id"]] = next_id(...)`, so the second write won, and pass 2
+    materialize's pass 1 does `minted_ids[it["id"]] = next_id(...)`, so the second write won, and pass 2
     then stamped BOTH candidate records with it. Observed: scope ['PS-001','PS-001'] -> candidates.json
     ids ['SC-003','SC-003'], exit 0, "minted 2 product candidate(s)".
+
+    CITATION NOTE (slice-075): that accumulator was named `ps_to_sc` when this test was written and is
+    now `minted_ids` -- an expression re-cite, not a semantics change. This guard is about two SCOPE
+    ITEMS sharing one id (N:1); slice-075 made the OPPOSITE direction (one capability, many candidates)
+    legal and left this refusal exactly as strict.
 
     This is the trust boundary's SECOND crossing (persist is guarded by in-lock reject_supplied_id;
     revise was not) — BC-PROJ-6 verbatim: 'a guard on ONE write path is bypassable through another'.
@@ -632,16 +781,18 @@ def test_bc_proj_6_the_detective_backstop_catches_a_hand_authored_duplicate_ps_i
                                                                                   tmp_path):
     """BC-PROJ-6: 'a guard on ONE write path is bypassable through another.'
 
-    persist's in-lock reject_supplied_id covers the PRODUCTION write path. It does NOT cover a
-    hand-authored `vault_edit append --file product-scope.json --array items --json '{"id": "PS-001"}'`
-    — because product-scope.json/items is deliberately NOT a _MANAGED_KIND (ADR-067 section 3), so
-    `append` does not mint and does not reject. That exclusion is DELIBERATE and follows the repo's own
-    documented precedent (vault_edit.py:137-140: risk-register's risks[] behaves identically, because a
-    cross-referencing appender must PRE-mint via `alloc` and carry the id — which mint-on-append would
-    reject).
+    slice-073 / [[ADR-080]] CORRECTED THIS TEST'S STATED PREMISE — the test itself is unchanged and
+    still passes, which is exactly why the stale premise was worth hunting down (FBCD-1: count the
+    anchor at EVERY site, not the first two). It used to say the append path was unguarded 'because
+    product-scope.json/items is deliberately NOT a _MANAGED_KIND (ADR-067 section 3)'. That is no
+    longer true: the kind IS registered and `vault_edit append`/`remove`/`set --path items` now all
+    REFUSE.
 
-    The exclusion is only defensible if a DETECTIVE control covers what the preventive one cannot. This
-    is that control, and it is why C13's fix mattered: id_allocation_audit must actually SEE `ps`.
+    What remains true — and is what this test actually exercises — is that a RAW FILE WRITE goes
+    through no guard at all. The body below writes product-scope.json directly (the `vault_edit
+    rewrite` CAS verb, deliberately out of scope per ADR-080 #6, is the same class). No preventive
+    control can cover that, on ANY vault file, so the DETECTIVE control has to. This is that control,
+    and it is why C13's fix mattered: id_allocation_audit must actually SEE `ps`.
     """
     assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
 
@@ -670,3 +821,721 @@ def test_bc_proj_7_the_naive_source_pattern_is_gone_from_build_backlog():
     assert not naive, f"the naive source[] iteration is back in build_backlog.py: {naive}"
     assert "_iter_sources(c)" in src, "both loops must route through the shared selector"
     assert src.count("_iter_sources(c)") == 2, "BOTH arms (cmd_build live + _archive_scan) must route"
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# slice-075 / SC-159 — a capability has MANY candidates ([[ADR-086]], supersedes ADR-085)
+#
+# THE DEFECT: `_plan`'s derived map was `{ref: id}`, so a capability's SECOND child silently overwrote
+# the first, and the collapse winner became the answer to every question about that capability —
+# including a dependent's `dependencies[]`, frozen into an append-only record with no un-mint.
+#
+# NOT SPECULATIVE. Every artifact in this slice's design record (3 blind designers, both step-0 spikes,
+# the design spike, ADR-085, the first Critic) asserted N>1 was unreachable until an out-of-scope
+# splitter landed. FALSE — `sc` is a registered vault_edit managed kind and _APPEND_REFUSED_KINDS is
+# {"ps"}, so ONE `vault_edit append` grows a child set at rc=0. These fixtures therefore grow it THROUGH
+# THAT REAL PATH (BC-PROJ-10: drive the AC with the PRODUCTION invocation shape, never hand-built JSON)
+# — the one claim nobody executed is the one these tests execute.
+# ══════════════════════════════════════════════════════════════════════════════════
+
+VAULT_EDIT = "scripts/lib/vault_edit.py"
+
+
+def _lib():
+    """The module under test, imported for its pure helpers."""
+    import sys as _sys
+    root = str(Path(__file__).resolve().parents[1])
+    if root not in _sys.path:
+        _sys.path.insert(0, root)
+    from scripts.lib import product_scope
+    return product_scope
+
+
+def _append_child(run_script, vault: Path, tmp_path: Path, ps_ref: str, title: str, name: str):
+    """Grow a capability's child set through the REAL production write path (M-add-1 / BC-PROJ-10).
+
+    This is `vault_edit append` — the same in-lock, id-minting, managed-kind path /repro and /discover
+    use. It mints the SC id itself (the payload carries NO id), which is precisely why N>1 is reachable
+    today with no splitter. Hand-writing candidates.json would prove nothing about the real hazard.
+    """
+    f = tmp_path / name
+    _write(f, {
+        "title": title,
+        "status": "candidate",
+        "progress": "not-started",
+        "source": [{"type": "product-scope", "ref": ps_ref}],
+        "description": f"a second slice of {ps_ref}",
+        "priority": {"score": 3, "severity": "medium", "effort": "M"},
+    })
+    r = run_script(VAULT_EDIT, ["append", "--vault", str(vault), "--file", "candidates.json",
+                               "--array", "candidates", "--content-file", str(f)])
+    assert r.returncode == 0, f"the real append path refused (rc={r.returncode}): {r.stderr}"
+    return r
+
+
+def _done(run_script, vault: Path, *extra):
+    r = _run(run_script, vault, "done", "--json", *extra)
+    return r, (json.loads(r.stdout) if r.stdout.strip() else None)
+
+
+def _ps_id(vault: Path, label: str = "core-engine") -> str:
+    scope = _read(vault / "product-scope.json")
+    return next(i for i in scope["items"] if i["decomposition_label"] == label)["id"]
+
+
+# ── AC1 — a capability carries N>1 children, and the relation resolves BOTH ways ──
+
+def test_ac1_a_capability_carries_many_candidates_and_resolves_both_ways(run_script, pvault, tmp_path):
+    """AC1: N>1 linked candidates, every one resolving back to its parent, and the reverse lookup
+    returning ALL of them — not merely the collapse winner."""
+    assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
+    ps = _ps_id(pvault)
+
+    first = [c for c in _read(pvault / "candidates.json")["candidates"]
+             if any(s.get("ref") == ps for s in c["source"])]
+    assert len(first) == 1, "precondition: the once-act mints exactly one child"
+
+    _append_child(run_script, pvault, tmp_path, ps, "build-core-engine-part-2", "child2.json")
+    _append_child(run_script, pvault, tmp_path, ps, "build-core-engine-part-3", "child3.json")
+
+    kids = [c for c in _read(pvault / "candidates.json")["candidates"]
+            if any(s.get("ref") == ps for s in c["source"])]
+    assert len(kids) == 3, "N>1 children per capability must be REPRESENTABLE"
+
+    m = _lib()
+    # child -> parent is TOTAL: every one of the N resolves to the SAME parent
+    assert {m.owner_ref(c) for c in kids} == {ps}, "every child must resolve back to its parent PS id"
+    assert all(m.owner_refs(c) == [ps] for c in kids), "a well-formed child claims exactly ONE parent"
+
+    # parent -> children is COMPLETE: the reverse lookup returns all N, not the first
+    _r, out = _done(run_script, pvault, "--item", ps)
+    got = out["items"][0]["children"]
+    assert len(got) == 3, (
+        "the reverse lookup must return ALL children — a scalar map here IS the bug this slice fixes")
+    assert got == sorted(got, key=m._sc_sort_key), "children come back in canonical numeric order"
+
+
+def test_ac1_children_are_sorted_numerically_not_lexicographically():
+    """SC-9 must precede SC-10. Lexicographic ordering inverts them, and
+    migrate-legacy-unpadded-ids-to-canonical-zero-pad is a LIVE candidate, so the mixed-pad corpus is
+    real, not hypothetical."""
+    m = _lib()
+    assert sorted(["SC-10", "SC-9", "SC-002"], key=m._sc_sort_key) == ["SC-002", "SC-9", "SC-10"]
+    # a malformed id ORDERS LAST but is never DROPPED — a child that VANISHES from its parent's set is
+    # exactly the silent loss `done` exists to refuse
+    assert sorted(["SC-10", "junk", "SC-9"], key=m._sc_sort_key) == ["SC-9", "SC-10", "junk"]
+
+
+# ── AC2 — idempotence at N>1 holds BY CONSTRUCTION, not via the collapse ─────────
+
+def test_ac2_materialize_mints_nothing_when_a_capability_has_many_children(run_script, pvault,
+                                                                           tmp_path):
+    """AC2, the sharpest one. Idempotence must survive N>1 — and hold because the KEY SET is unchanged,
+    not because a dict collapse happens to hide the duplicates. The create-only test is KEY membership;
+    the collapse corrupted the VALUE. Asserted at N>1 AND at N==1."""
+    assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
+    ps = _ps_id(pvault)
+    _append_child(run_script, pvault, tmp_path, ps, "build-core-engine-part-2", "child2.json")
+
+    before = _read(pvault / "candidates.json")
+    ids_before = [c["id"] for c in before["candidates"]]
+    counter_before = before.get("counters", {}).get("sc")
+    bytes_before = (pvault / "candidates.json").read_bytes()
+
+    r = _run(run_script, pvault, "materialize", "--json")
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out["minted_count"] == 0, "a fully-materialized scope must mint NOTHING at N>1"
+    assert out["would_mint"] == []
+
+    after = _read(pvault / "candidates.json")
+    assert [c["id"] for c in after["candidates"]] == ids_before, "no new candidate id at N>1"
+    assert after.get("counters", {}).get("sc") == counter_before, "the sc counter must not move"
+    assert (pvault / "candidates.json").read_bytes() == bytes_before, (
+        "a no-op materialize writes NOTHING — byte-identical, not merely equivalent")
+
+    # the N>1 capability reports `already`, and is never re-minted, refused, or withheld
+    entry = next(a for a in out["already_materialized"] if a["item"] == ps)
+    assert "candidates" in entry and len(entry["candidates"]) == 2, (
+        "at N>1 the already-report lists ALL children")
+    assert "candidate" not in entry, (
+        "at N>1 the scalar `candidate` must be OMITTED — emitting one would be the arbitrary "
+        "winner-pick this slice exists to kill; a consumer must KeyError loudly instead")
+    assert not out["refused"] and not out["withheld"]
+
+    # ...and the N==1 siblings still report the byte-identical legacy scalar shape (AC5)
+    others = [a for a in out["already_materialized"] if a["item"] != ps]
+    assert others and all("candidate" in a and "candidates" not in a for a in others), (
+        "at N==1 the already-entry shape is UNCHANGED from pre-slice-075")
+
+
+def test_ac2_the_cr1_belt_is_key_membership_not_value_truthiness():
+    """M3 / CC-001. The CR1 belt is `iid in ps_to_scs or iid in minted_ids` — literal KEY membership,
+    matching the create-only test. A `.get()` form is value TRUTHINESS: the two agree only while no key
+    can map to an empty list, so the single most natural refactor a reader makes to a multimap
+    (pre-seeding `{it["id"]: [] for it in items}`) would silently DISABLE the belt while the create-only
+    test kept refusing — two guards on one map with two membership semantics, on the module's
+    most-defended invariant, against a substrate with no un-mint. This pins it against that refactor."""
+    m = _lib()
+    src = Path(m.__file__).read_text(encoding="utf-8")
+    code = [ln.split("#", 1)[0] for ln in src.splitlines()]
+    assert not [ln for ln in code if "ps_to_scs.get(iid)" in ln], (
+        "the CR1 belt must never be value-truthiness (.get()) — it is KEY membership")
+    assert any("if iid in ps_to_scs or iid in minted_ids:" in ln for ln in code), (
+        "the belt must test BOTH the observed map and the mint accumulator")
+
+    # the property itself: a key mapping to an EMPTY list is STILL membership -> still refuses.
+    # This is exactly the case `.get()` would wave through.
+    ps_to_scs, minted_ids = {"PS-001": []}, {}
+    assert ("PS-001" in ps_to_scs or "PS-001" in minted_ids) is True
+
+
+# ── AC3 — the census counts ALL N children as PRODUCT ────────────────────────────
+
+def test_ac3_census_counts_every_child_of_a_capability_as_product(run_script, pvault, tmp_path):
+    """AC3 needs NO production code: `classify_candidate` reads each candidate's OWN source type
+    independently, so cardinality never entered into it. That makes this a REGRESSION assertion —
+    proving the widening did not break a classifier that was already right. (Rewriting working code to
+    fix a defect it does not have is exactly what spike constraint A1.4 forbids.)"""
+    assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
+    ps = _ps_id(pvault)
+    before = json.loads(_run(run_script, pvault, "census", "--json").stdout)["counts"]["PRODUCT"]
+
+    _append_child(run_script, pvault, tmp_path, ps, "build-core-engine-part-2", "child2.json")
+    _append_child(run_script, pvault, tmp_path, ps, "build-core-engine-part-3", "child3.json")
+
+    out = json.loads(_run(run_script, pvault, "census", "--json").stdout)
+    assert out["counts"]["PRODUCT"] == before + 2, "every one of the N children counts as PRODUCT"
+    assert out["counts"]["UNCLASSIFIED"] == 0, "no child may land in UNCLASSIFIED"
+    assert out["unclassified"] == []
+
+
+# ── AC4 — `done` is decidable, 4-valued, and reads live UNION archive ────────────
+
+def _ship(vault: Path, sc_id: str, status: str = "shipped"):
+    """Move a candidate live -> archive, the way /commit-slice Step 6 does: it leaves the archive copy
+    byte-identical apart from `status`, and REMOVES the live row. A child that has shipped exists ONLY
+    in archive/candidates.json — which is why any predicate reading live alone is wrong by construction.
+    """
+    live_p, arch_p = vault / "candidates.json", vault / "archive" / "candidates.json"
+    live = _read(live_p)
+    row = next(c for c in live["candidates"] if c["id"] == sc_id)
+    live["candidates"] = [c for c in live["candidates"] if c["id"] != sc_id]
+    _write(live_p, live)
+    arch = _read(arch_p) if arch_p.exists() else {"_schema": "aisdlc/slice-candidates@1",
+                                                  "project": "fixture", "candidates": []}
+    arch["candidates"].append(dict(row, status=status))
+    _write(arch_p, arch)
+
+
+def test_ac4_done_is_false_until_every_child_is_archived(run_script, pvault, tmp_path):
+    """AC4: a capability with 3 children — 2 archived, 1 live — is NOT done; archive the third and it
+    is. The predicate must read live UNION archive, since a shipped child lives only in the archive."""
+    assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
+    ps = _ps_id(pvault)
+    first = next(c for c in _read(pvault / "candidates.json")["candidates"]
+                 if any(s.get("ref") == ps for s in c["source"]))
+    _append_child(run_script, pvault, tmp_path, ps, "build-core-engine-part-2", "child2.json")
+    _append_child(run_script, pvault, tmp_path, ps, "build-core-engine-part-3", "child3.json")
+
+    kids = [c["id"] for c in _read(pvault / "candidates.json")["candidates"]
+            if any(s.get("ref") == ps for s in c["source"])]
+    assert len(kids) == 3
+
+    _r, out = _done(run_script, pvault, "--item", ps)
+    assert out["items"][0]["state"] == "in-progress", "no child archived -> in-progress"
+
+    _ship(pvault, kids[0])
+    _ship(pvault, kids[1])
+    _r, out = _done(run_script, pvault, "--item", ps)
+    e = out["items"][0]
+    assert e["state"] == "in-progress", "SOME-but-not-all archived must NOT be done"
+    assert e["pending"] == [kids[2]] and sorted(e["archived"]) == sorted(kids[:2])
+    assert len(e["children"]) == 3, (
+        "the archived children must still be SEEN — a live-only read would lose them entirely")
+
+    _ship(pvault, kids[2])
+    _r, out = _done(run_script, pvault, "--item", ps)
+    e = out["items"][0]
+    assert e["state"] == "done", "every child archived -> done"
+    assert e["pending"] == [] and len(e["archived"]) == 3
+    assert e["archived_composition"] == {"shipped": 3, "rejected": 0}
+    assert first["id"] in e["children"]
+
+
+def test_ac4_done_is_never_a_bool_and_the_empty_set_is_not_done(run_script, pvault, tmp_path):
+    """spike A2.4: `all([])` is vacuously TRUE, so a capability with zero children must never report
+    done. Guarded BY TYPE — `no-children` is a distinct STATE, not a bool a caller can misread."""
+    assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
+    ps = _ps_id(pvault)
+    live = _read(pvault / "candidates.json")
+    live["candidates"] = [c for c in live["candidates"]
+                          if not any(s.get("ref") == ps for s in c["source"])]
+    _write(pvault / "candidates.json", live)
+
+    _r, out = _done(run_script, pvault, "--item", ps)
+    e = out["items"][0]
+    assert e["state"] == "no-children", "an empty child set is NOT a finished one"
+    assert e["state"] is not True and e["state"] is not False, "state is a 4-valued enum, never a bool"
+    assert e["children"] == []
+
+
+def test_ac4_a_child_in_BOTH_files_counts_live_the_safe_direction(run_script, pvault, tmp_path):
+    """The two-file read is NOT atomic (two files, two locks, no cross-file transaction, no lock taken
+    here). A child interleaved by /commit-slice's move appears in BOTH files; the conservative join
+    counts it LIVE -> done=false, a false NEGATIVE. Archive-first would make it appear in NEITHER — it
+    would VANISH and the parent would report `done` with a child still in flight."""
+    assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
+    ps = _ps_id(pvault)
+    kid = next(c for c in _read(pvault / "candidates.json")["candidates"]
+               if any(s.get("ref") == ps for s in c["source"]))
+
+    # the torn state: appended to archive, not yet removed from live
+    arch_p = pvault / "archive" / "candidates.json"
+    _write(arch_p, {"_schema": "aisdlc/slice-candidates@1", "project": "fixture",
+                    "candidates": [dict(kid, status="shipped")]})
+
+    _r, out = _done(run_script, pvault, "--item", ps)
+    e = out["items"][0]
+    assert e["state"] == "in-progress", "a torn row must count LIVE — never report a premature done"
+    assert e["archived"] == [] and e["pending"] == [kid["id"]]
+    assert e["children"] == [kid["id"]], (
+        "a torn child is ONE child, not two: _observed is a LIST CONCAT, so a row present in BOTH "
+        "files arrives twice. The join is specified as a G-Set union (idempotent) — list concat is "
+        "not. The pre-slice-075 scalar map was accidentally immune (dict overwrite); the widening is "
+        "what exposes it, so the dedupe ships with the widening.")
+
+
+def test_ac4_a_torn_child_is_not_double_counted_in_a_dependents_dependencies(run_script, pvault,
+                                                                            tmp_path):
+    """The torn-read duplicate's REAL blast radius, and why the dedupe is not cosmetic: an undeduped
+    child fans out into a dependent's `dependencies[]`, which is frozen at mint into an append-only
+    record with NO un-mint. A wrong count is recoverable; a poisoned backlog row is not."""
+    assert _persist(run_script, pvault, _items(2), tmp_path).returncode == 0
+    ps_core = _ps_id(pvault, "core-engine")
+    kid = next(c for c in _read(pvault / "candidates.json")["candidates"]
+               if any(s.get("ref") == ps_core for s in c["source"]))
+
+    # tear it: present in archive AND still live (the /commit-slice mid-move state)
+    _write(pvault / "archive" / "candidates.json",
+           {"_schema": "aisdlc/slice-candidates@1", "project": "fixture",
+            "candidates": [dict(kid, status="shipped")]})
+
+    items = _items(2)
+    items["items"] = [dict(i, id=_ps_id(pvault, i["label"])) for i in items["items"]]
+    items["items"].append({
+        "label": "torn-dependent", "title": "build-torn-dependent",
+        "description": "minted while its parent's child is mid-move.",
+        "user_visible_outcome": "It waits.", "depends_on": [ps_core],
+        "assumptions": [{"id": "A1", "statement": "It composes.", "blocking": True,
+                         "spike_status": "unproven"}],
+        "verification_plan": "Drive it.",
+    })
+    f = tmp_path / "torn.json"
+    _write(f, items)
+    assert _run(run_script, pvault, "revise", "--items-file", str(f), "--json").returncode == 0
+
+    dep = next(c for c in _read(pvault / "candidates.json")["candidates"]
+               if c["title"] == "build-torn-dependent")
+    assert dep["dependencies"] == [kid["id"]], (
+        f"a torn parent-child must appear ONCE in a dependent's dependencies[], got "
+        f"{dep['dependencies']} — a duplicate here is permanent (append-only, no un-mint)")
+
+
+def test_ac4_done_is_pure_and_writes_nothing(run_script, pvault, tmp_path):
+    """spike A2.5: running the predicate leaves the vault byte-identical. It takes no lock precisely
+    because it writes nothing."""
+    assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
+    snap = {p.name: p.read_bytes() for p in pvault.glob("*.json")}
+    r, _out = _done(run_script, pvault)
+    assert r.returncode == 0
+    assert {p.name: p.read_bytes() for p in pvault.glob("*.json")} == snap, (
+        "`done` must be a PURE function of the files it reads")
+
+
+def test_ac4_done_refuses_an_item_the_scope_does_not_carry(run_script, pvault, tmp_path):
+    """A typo'd id is a USAGE error, never an empty result — it must not read as `no-children`."""
+    assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
+    r = _run(run_script, pvault, "done", "--item", "PS-999", "--json")
+    assert r.returncode == 2
+    assert json.loads(r.stdout)["status"] == "usage"
+
+
+def test_ac4_done_without_a_scope_names_the_bootstrap_act(run_script, pvault):
+    """Reuses _scope(required=True): exit 4, naming the act that bootstraps it."""
+    r = _run(run_script, pvault, "done", "--json")
+    assert r.returncode == 4
+    assert json.loads(r.stdout)["status"] == "no-scope"
+    assert "/slice-candidates --product" in (r.stdout + r.stderr)
+
+
+# ── AC5 — the N==1 path is byte-identical ────────────────────────────────────────
+
+def test_ac5_a_single_candidate_capability_is_byte_identical(run_script, pvault, tmp_path):
+    """AC5: the minted RECORD and the plan JSON for a single-candidate PS item are unchanged.
+
+    Captured against the pre-change code and diffed here (the committed expectation below IS that
+    capture — the pre-change values were recorded before the edit landed)."""
+    assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
+    rec = next(c for c in _read(pvault / "candidates.json")["candidates"]
+               if c["title"] == "build-cli-frontend")
+
+    # the minted record's shape and its dependencies[] — the fields the widening could have moved
+    assert list(rec.keys()) == [
+        "id", "title", "status", "progress", "slice", "claimed_by", "started_at", "source",
+        "description", "rationale", "user_visible_outcome", "dependencies", "priority",
+        "assumptions", "verification_plan", "history",
+    ], "the minted record's field set/order must be unchanged"
+    assert isinstance(rec["id"], str), "the candidate id is a SCALAR — never a list (M2's nested-list)"
+    assert rec["dependencies"] == [_ps_id(pvault) and next(
+        c["id"] for c in _read(pvault / "candidates.json")["candidates"]
+        if c["title"] == "build-core-engine")]
+    assert rec["source"] == [{"type": "product-scope", "ref": _ps_id(pvault, "cli-frontend")}]
+
+    out = json.loads(_run(run_script, pvault, "materialize", "--dry-run", "--json").stdout)
+    assert all("candidate" in a and "candidates" not in a for a in out["already_materialized"]), (
+        "at N==1 every already-entry keeps the legacy scalar shape, byte-identically")
+
+
+def test_ac5_two_depends_on_edges_preserve_depends_on_ORDER(run_script, pvault, tmp_path):
+    """M-add-3, and the fixture WITHOUT which AC5 cannot see the break.
+
+    Today's line is a comprehension in DEPENDS_ON order. ADR-085 specified a 'sorted union', which
+    REORDERS dependencies[] at N==1 for any item with >=2 edges — an AC5 violation with zero multi-child
+    items involved, writing a reordered array into an append-only backlog with no un-mint. It passes on
+    the real vault only because PS-004 is the sole item with a depends_on and it has exactly ONE edge:
+    byte-identical BY LUCK OF THE CORPUS. So: build the shape the corpus lacks.
+
+    `dep-b` depends_on ['state-resume', 'core-engine'] — deliberately NOT in mint order, so a sorted
+    union would visibly reorder it."""
+    items = _items()
+    items["items"].append({
+        "label": "dep-b", "title": "build-dep-b", "description": "two edges, deliberately unsorted.",
+        "user_visible_outcome": "It composes both.",
+        "depends_on": ["state-resume", "core-engine"],
+        "assumptions": [{"id": "A1", "statement": "Both compose.", "blocking": True,
+                         "spike_status": "unproven"}],
+        "verification_plan": "Drive both.",
+    })
+    assert _persist(run_script, pvault, items, tmp_path).returncode == 0
+
+    by_title = {c["title"]: c for c in _read(pvault / "candidates.json")["candidates"]}
+    core, resume = by_title["build-core-engine"]["id"], by_title["add-state-resume"]["id"]
+    deps = by_title["build-dep-b"]["dependencies"]
+
+    assert deps == [resume, core], (
+        f"depends_on ORDER must be preserved: expected [{resume}, {core}] (state-resume first, as "
+        f"declared), got {deps}. A sorted union would emit {sorted([resume, core])} — an AC5 break at "
+        f"N==1, into an append-only record.")
+    assert deps != sorted(deps), "the fixture must actually DISCRIMINATE the two rules"
+
+
+def test_ac5_an_intra_batch_depends_on_edge_resolves_to_a_scalar_id(run_script, pvault, tmp_path):
+    """M-add-2: the PRIMARY path — the full-DAG first mint, where every item mints on the first tick and
+    a dependent's parent was minted in the SAME batch (the module carries a topological sort for exactly
+    this; the real vault's PS-004 is this shape).
+
+    Transcribing the design literally left the mint-write scalar in a list-valued map, so the fan-out
+    iterated a minted id's CHARACTERS -> dependencies == ['-','0','2','C','S'] (slice-068's per-character
+    pseudo-source trap, in this very file). The accumulator split makes it unrepresentable BY TYPE. This
+    test is the execution that proves it."""
+    assert _persist(run_script, pvault, _items(), tmp_path).returncode == 0
+    by_title = {c["title"]: c for c in _read(pvault / "candidates.json")["candidates"]}
+    core = by_title["build-core-engine"]["id"]
+
+    for title in ("build-cli-frontend", "add-state-resume"):
+        deps = by_title[title]["dependencies"]
+        assert deps == [core], f"{title}: intra-batch dep must be the parent's scalar id, got {deps}"
+        assert all(len(d) > 1 for d in deps), (
+            f"{title}: dependencies[] contains single CHARACTERS {deps} — the minted id was iterated "
+            f"as a string. This is the type-heterogeneous-map failure the accumulator split prevents.")
+
+
+def test_ac5_a_dependent_depends_on_ALL_children_of_its_parent(run_script, pvault, tmp_path):
+    """The fan-out rule itself ([[ADR-086]] §4), DERIVED from the existing consumer rather than chosen:
+    candidates_top._unmet_deps is `[d for d in dependencies if d in live_ids]` — live == unmet, archived
+    == met. So 'depends on every child of PS-X' IS 'blocked until PS-X is done'.
+
+    Pre-slice-075 this emitted ONE ARBITRARY child (the collapse winner — and, proven at triage, the
+    winner was the APPENDED row, not the minted one)."""
+    assert _persist(run_script, pvault, _items(2), tmp_path).returncode == 0   # core-engine + cli
+    ps_core = _ps_id(pvault, "core-engine")
+    _append_child(run_script, pvault, tmp_path, ps_core, "build-core-engine-part-2", "child2.json")
+
+    kids = sorted([c["id"] for c in _read(pvault / "candidates.json")["candidates"]
+                   if any(s.get("ref") == ps_core for s in c["source"])],
+                  key=_lib()._sc_sort_key)
+    assert len(kids) == 2
+
+    # a NEW dependent of core-engine, minted now that core-engine has TWO children
+    items = _items(2)
+    items["items"] = [dict(i, id=_ps_id(pvault, i["label"])) for i in items["items"]]
+    items["items"].append({
+        "label": "late-dependent", "title": "build-late-dependent",
+        "description": "minted after the parent grew a second child.",
+        "user_visible_outcome": "It waits for ALL of core-engine.",
+        "depends_on": [ps_core],
+        "assumptions": [{"id": "A1", "statement": "It composes.", "blocking": True,
+                         "spike_status": "unproven"}],
+        "verification_plan": "Drive it.",
+    })
+    f = tmp_path / "revised.json"
+    _write(f, items)
+    r = _run(run_script, pvault, "revise", "--items-file", str(f), "--json")
+    assert r.returncode == 0, r.stderr
+
+    dep = next(c for c in _read(pvault / "candidates.json")["candidates"]
+               if c["title"] == "build-late-dependent")
+    assert dep["dependencies"] == kids, (
+        f"a dependent must depend on ALL {len(kids)} children of its parent, numeric-sorted within — "
+        f"expected {kids}, got {dep['dependencies']}. One arbitrary child IS the bug.")
+
+
+# ── the tombstone — a HEURISTIC, and deliberately narrow (critique M4) ───────────
+
+def test_torn_provenance_forces_unknown_never_done(run_script, pvault, tmp_path):
+    """A child stripped of its source[] VANISHES from its parent's child set — the parent would then
+    report `done` with an unaccounted-for child in flight. history[].ref is the second witness (free:
+    _candidate_from already writes it); disagreement forces `unknown`, never `done`."""
+    assert _persist(run_script, pvault, _items(2), tmp_path).returncode == 0
+    ps = _ps_id(pvault)
+    live = _read(pvault / "candidates.json")
+    kid = next(c for c in live["candidates"] if any(s.get("ref") == ps for s in c["source"]))
+
+    # strip the source[] witness but leave history[] intact — the exact silent-loss shape
+    kid["source"] = [{"type": "reflection", "ref": None}]
+    _write(pvault / "candidates.json", live)
+
+    _r, out = _done(run_script, pvault, "--item", ps)
+    e = out["items"][0]
+    assert e["state"] == "unknown", (
+        "a stripped child must force `unknown` — WITHOUT the tombstone this reports `no-children`, "
+        "which is indistinguishable from 'never materialized'")
+    assert e["torn_provenance"] == [kid["id"]]
+    assert kid["id"] in e["reason"] and "REMEDY" in e["reason"]
+
+
+def test_torn_provenance_ignores_free_prose_history_refs(run_script, pvault, tmp_path):
+    """M4, the false-positive the narrow discriminator exists to avoid — and the reason it keys on the
+    PRODUCER's shape rather than the ref's TEXT.
+
+    MEASURED on the real backlog: history[].ref is free-form prose carrying 149 DISTINCT values across
+    98/168 candidates ('slice-058', 'slice-023 ADR-015 deferred', one 396-character paragraph). A
+    `^PS-\\d+$` regex over ALL of history[] would fire on any actor that ever appends PS-shaped prose —
+    and the damage is STICKY: history[] is append-only with no un-write, so a false `unknown` could
+    never be cleared. This is a non-product candidate whose history mentions PS-001 in prose."""
+    assert _persist(run_script, pvault, _items(2), tmp_path).returncode == 0
+    ps = _ps_id(pvault)
+    live = _read(pvault / "candidates.json")
+    live["candidates"].append({
+        "id": "SC-900", "title": "an unrelated exhaust candidate", "status": "candidate",
+        "progress": "not-started", "source": [{"type": "reflection", "ref": None}],
+        "description": "no product-scope provenance at all",
+        "history": [
+            {"event": "created", "by": "reflect", "at": "2026-01-01T00:00:00Z",
+             "ref": f"spun out of {ps} work — see {ps} for the background"},
+            {"event": "note", "by": "slice-candidates", "at": "2026-01-02T00:00:00Z", "ref": ps},
+        ],
+    })
+    _write(pvault / "candidates.json", live)
+
+    _r, out = _done(run_script, pvault, "--item", ps)
+    e = out["items"][0]
+    assert e["state"] != "unknown", (
+        "free prose mentioning a PS id must NOT poison a capability — the discriminator is "
+        "event=='created' AND by=='slice-candidates' AND ref in the LIVE scope ids, not a regex")
+    assert "SC-900" not in e["children"], "a candidate with no product-scope source is not a child"
+
+
+def test_torn_provenance_ignores_a_ref_outside_the_live_scope(run_script, pvault, tmp_path):
+    """LIVE-scope membership, not a regex: a CUT or legacy PS id must not resurrect a sticky `unknown`
+    on a capability that no longer exists."""
+    assert _persist(run_script, pvault, _items(2), tmp_path).returncode == 0
+    live = _read(pvault / "candidates.json")
+    live["candidates"].append({
+        "id": "SC-901", "title": "orphan of a cut capability", "status": "candidate",
+        "progress": "not-started", "source": [{"type": "reflection", "ref": None}],
+        "history": [{"event": "created", "by": "slice-candidates", "at": "2026-01-01T00:00:00Z",
+                     "ref": "PS-404"}],       # never in this scope
+    })
+    _write(pvault / "candidates.json", live)
+
+    r, out = _done(run_script, pvault)
+    assert r.returncode == 0
+    assert out["counts"]["unknown"] == 0, "a ref outside the live scope must not force `unknown`"
+
+
+# ── the two-parent refusal — an ambiguous identity STOPS (must-not-defer #1) ─────
+
+def test_two_parent_child_refuses_the_ITEM_and_mints_nothing_for_it(run_script, pvault, tmp_path):
+    """must-not-defer #1: N candidates per capability is now legal, but a candidate claiming TWO parents
+    is an AMBIGUOUS identity and must refuse LOUDLY, minting nothing — widening the relation must not
+    widen the silence. owner_ref alone cannot see it (it takes the first ref and walks on), which is
+    why owner_refs exists.
+
+    Shaped per M-add-4 to the module's own D2 pattern: refuse the affected ITEM, not the whole VERB —
+    a single offending row in the append-only archive would otherwise block EVERY capability's
+    materialize forever, with no un-write to fix it."""
+    assert _persist(run_script, pvault, _items(2), tmp_path).returncode == 0
+    ps_a, ps_b = _ps_id(pvault, "core-engine"), _ps_id(pvault, "cli-frontend")
+
+    live = _read(pvault / "candidates.json")
+    live["candidates"].append({
+        "id": "SC-902", "title": "a child claiming two parents", "status": "candidate",
+        "progress": "not-started",
+        "source": [{"type": "product-scope", "ref": ps_a},
+                   {"type": "product-scope", "ref": ps_b}],
+    })
+    _write(pvault / "candidates.json", live)
+
+    m = _lib()
+    assert m.owner_refs(live["candidates"][-1]) == [ps_a, ps_b], "the plural form SEES both claims"
+    assert m.owner_ref(live["candidates"][-1]) == ps_a, "the singular form would silently pick the first"
+
+    before = (pvault / "candidates.json").read_bytes()
+    r = _run(run_script, pvault, "materialize", "--json")
+    out = json.loads(r.stdout)
+
+    refused_items = {x["item"] for x in out["refused"]}
+    assert refused_items == {ps_a, ps_b}, "BOTH claimed parents are ambiguous and must refuse"
+    assert out["minted_count"] == 0
+    assert (pvault / "candidates.json").read_bytes() == before, "a refusal mints NOTHING"
+
+    reason = next(x for x in out["refused"] if x["item"] == ps_a)["reason"]
+    assert "SC-902" in reason, "the refusal names the offending CANDIDATE"
+    assert ps_a in reason and ps_b in reason, "...and BOTH claimed parents"
+    assert "REMEDY" in reason and "vault_edit" in reason, (
+        "...and a FILLABLE remedy naming the act — the module's own convention is that every refusal "
+        "names the ACT and the remedy, never just the payload shape")
+    # an ambiguous parent must NOT be laundered as a clean no-op
+    assert ps_a not in {a["item"] for a in out["already_materialized"]}
+
+
+def test_two_parent_refusal_does_not_block_unaffected_capabilities(run_script, pvault, tmp_path):
+    """The D2 pattern's whole point (M-add-4): per-ITEM, not per-VERB. An unaffected, not-yet-minted
+    capability still mints while an ambiguous sibling refuses.
+
+    The ambiguous parent is `cli-frontend`; the newly-added capability `state-resume` depends on
+    `core-engine` (NOT the ambiguous one), so it is genuinely unaffected. (A dependent OF the ambiguous
+    parent is correctly withheld — that is code-review CR2, covered by its own test; conflating the two
+    is exactly the bug CR2 fixed.)"""
+    assert _persist(run_script, pvault, _items(2), tmp_path).returncode == 0
+    ps_b = _ps_id(pvault, "cli-frontend")
+
+    live = _read(pvault / "candidates.json")
+    live["candidates"].append({
+        "id": "SC-903", "title": "ambiguous child", "status": "candidate", "progress": "not-started",
+        "source": [{"type": "product-scope", "ref": ps_b},
+                   {"type": "product-scope", "ref": "PS-404"}],
+    })
+    _write(pvault / "candidates.json", live)
+
+    # add a THIRD capability (state-resume) that depends on core-engine, NOT the ambiguous cli-frontend
+    items = _items(3)
+    items["items"] = [dict(i, id=_ps_id(pvault, i["label"])) if i["label"] in ("core-engine",
+                                                                              "cli-frontend") else i
+                      for i in items["items"]]
+    f = tmp_path / "grown.json"
+    _write(f, items)
+    r = _run(run_script, pvault, "revise", "--items-file", str(f), "--json")
+    assert r.returncode == 0, r.stderr
+    out = r.stdout and json.loads(r.stdout)["materialize"]
+
+    assert ps_b in {x["item"] for x in out["refused"]}, "the ambiguous capability refuses"
+    assert out["minted_count"] == 1, (
+        "...and the unaffected NEW capability still mints — a per-VERB refusal would strand the "
+        "whole product behind one bad row")
+    assert any(c["title"] == "add-state-resume"
+               for c in _read(pvault / "candidates.json")["candidates"])
+
+
+# ── code-review CR1/CR2 — the ambiguity guard reaches the READ path and the WITHHOLD loop ──
+#
+# The mint-path two-parent refusal alone was not enough: `cmd_done` (read path) and `_plan`'s
+# transitive-withhold loop each had their OWN view of who a capability's children are, and neither
+# consulted the ambiguity. Both are now derived from the shared children_by_parent, so an ambiguous
+# child is seen everywhere at once (CR3's SSOT point).
+
+def test_cr1_done_reports_unknown_not_done_for_an_ambiguous_child(run_script, pvault, tmp_path):
+    """code-review CR1 (blocker), execution-proven: a child claiming TWO parents was filed under its
+    FIRST parent only, so the SECOND parent reported `done` (or no-children) while a LIVE child still
+    claimed it — a false `done`, the one thing done's error_model forbids. Both claimed parents must
+    now report `unknown`."""
+    assert _persist(run_script, pvault, _items(2), tmp_path).returncode == 0
+    ps_a, ps_b = _ps_id(pvault, "core-engine"), _ps_id(pvault, "cli-frontend")
+
+    # ship PS-B's own legitimate child, so WITHOUT the fix PS-B would look `done`
+    kid_b = next(c for c in _read(pvault / "candidates.json")["candidates"]
+                 if any(s.get("ref") == ps_b for s in c["source"]))
+    _ship(pvault, kid_b["id"])
+
+    # now add a LIVE child claiming BOTH PS-A and PS-B
+    live = _read(pvault / "candidates.json")
+    live["candidates"].append({
+        "id": "SC-902", "title": "a child claiming two parents", "status": "candidate",
+        "progress": "not-started",
+        "source": [{"type": "product-scope", "ref": ps_a},
+                   {"type": "product-scope", "ref": ps_b}],
+    })
+    _write(pvault / "candidates.json", live)
+
+    _r, out = _done(run_script, pvault)
+    by_item = {e["item"]: e for e in out["items"]}
+    assert by_item[ps_b]["state"] == "unknown", (
+        "PS-B has a LIVE child (SC-902) claiming it — it must NOT report `done`; the ambiguity is the "
+        "safe-side `unknown`")
+    assert by_item[ps_a]["state"] == "unknown", "PS-A equally has an ambiguous child"
+    assert "SC-902" in by_item[ps_b]["ambiguous_children"]
+    assert "SC-902" in by_item[ps_b]["reason"] and "REMEDY" in by_item[ps_b]["reason"]
+    assert out["counts"]["done"] == 0, "no capability may be `done` while an ambiguous child is live"
+
+
+def test_cr2_dependent_of_an_ambiguous_materialized_parent_is_withheld(run_script, pvault, tmp_path):
+    """code-review CR2 (blocker), execution-proven: `_plan`'s withhold loop treated a materialized
+    parent as satisfied via `d in ps_to_scs` WITHOUT consulting `ambiguous`, so a dependent of an
+    ambiguous-but-already-materialized parent minted with the ambiguous child frozen into its
+    append-only `dependencies[]` (`['SC-001','SC-902']`) — the very deps the refusal reason calls
+    'undefined'. The dependent must instead be WITHHELD, rooted at the ambiguous parent."""
+    assert _persist(run_script, pvault, _items(2), tmp_path).returncode == 0
+    ps_a = _ps_id(pvault, "core-engine")
+
+    # make PS-A ambiguous: a second live child claiming PS-A and a non-scope parent
+    live = _read(pvault / "candidates.json")
+    live["candidates"].append({
+        "id": "SC-902", "title": "ambiguous child of core", "status": "candidate",
+        "progress": "not-started",
+        "source": [{"type": "product-scope", "ref": ps_a},
+                   {"type": "product-scope", "ref": "PS-404"}],
+    })
+    _write(pvault / "candidates.json", live)
+
+    # a NEW dependent of the (now ambiguous, already-materialized) PS-A
+    items = _items(2)
+    items["items"] = [dict(i, id=_ps_id(pvault, i["label"])) for i in items["items"]]
+    items["items"].append({
+        "label": "dependent-of-ambiguous", "title": "build-dependent-of-ambiguous",
+        "description": "depends on an ambiguous parent.", "user_visible_outcome": "It waits.",
+        "depends_on": [ps_a],
+        "assumptions": [{"id": "A1", "statement": "It composes.", "blocking": True,
+                         "spike_status": "unproven"}],
+        "verification_plan": "Drive it.",
+    })
+    f = tmp_path / "dep.json"
+    _write(f, items)
+    r = _run(run_script, pvault, "revise", "--items-file", str(f), "--json")
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)["materialize"]
+
+    assert ps_a in {x["item"] for x in out["refused"]}, "the ambiguous parent refuses"
+    withheld_items = {w["item"] for w in out["withheld"]}
+    assert any("dependent-of-ambiguous" in w or "build-dependent-of-ambiguous" == w
+               for w in withheld_items) or not any(
+        c["title"] == "build-dependent-of-ambiguous"
+        for c in _read(pvault / "candidates.json")["candidates"]), (
+        "the dependent of an ambiguous parent must be WITHHELD, never minted with a frozen ambiguous dep")
+    # the decisive assertion: the dependent must NOT exist with an ambiguous child in its deps
+    dep = next((c for c in _read(pvault / "candidates.json")["candidates"]
+                if c["title"] == "build-dependent-of-ambiguous"), None)
+    assert dep is None, (
+        "the dependent minted anyway — its dependencies[] would freeze the ambiguous SC-902, which the "
+        "refusal itself declares undefined, into an append-only record with no un-mint")

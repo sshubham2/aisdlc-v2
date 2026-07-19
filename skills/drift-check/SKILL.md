@@ -76,8 +76,23 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/supersede_audit.py" --root . --json
 Exit 1 → surface each violation (`one-way-link` / `missing-target` / `revert-malformed`) as a STALE CLAIM
 finding (Step 4) with `Resolve: /supersede-slice <archived-id>` (or fix the named file directly).
 
+**ACL-1 area↔code-link sweep (full mode only — skip in `--fast`; slice-084 C1c):** reconcile each
+product-scope item's OPTIONAL `code_components[]` link (the PRODUCT **area** axis) against the Heavy
+`components/*.json` inventory (the **code** axis, AST-derived by `/sync`):
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/area_code_link_audit.py" --vault "$VAULT" --json
+```
+Exit 1 → surface each `[STALE LINK]` as a **STALE CLAIM** finding (Step 4) with the helper's `resolve`
+hint (update the item's `code_components` via `product_scope revise`, or re-run `/sync`). It degrades to
+exit 0 with a `status` of `no-scope` / `no-links` / `no-code-inventory` — pre-code / Minimal / not-yet-
+synced is NOT drift (a link cannot be resolved without the inventory to resolve it against), so it is a
+no-op on non-Heavy projects. The REVERSE direction (a shipped capability's code that no area claims) is
+best-effort LLM — see the claim-type row below.
+
 | Claim type | Verification |
 |---|---|
+| Area↔code link (product-scope `code_components`) | `area_code_link_audit.py` (ACL-1) resolves each declared link against `components/*.json` names → a STALE LINK is a **STALE CLAIM**; a no-op with no inventory. Reverse (best-effort LLM): for a SHIPPED product capability, does a `components/*.json` implement it that no `area` claims? → **UNSPECIFIED CODE** |
 | ADR chose library `X` | CRG search for `X` in imports/pyproject.toml/package.json; fallback: `Grep "X" pyproject.toml` |
 | ADR chose framework `Y` | CRG search for framework imports; fallback: Grep top-level imports |
 | Slice design references `src/foo.py` | Check file exists (Glob); CRG impact-radius if available |

@@ -126,7 +126,20 @@ def counters_violations(vault: str | Path) -> list[str]:
     # through green. So the holder is an explicit per-kind map, not a ternary: adding a kind without
     # its counters holder is now a visible omission rather than a silent half-audit.
     scope = load("product-scope.json")
-    sources["ps"] = _scan([i.get("id") for i in scope.get("items", []) if isinstance(i, dict)], "ps")
+    # slice-073 / critique B1: union the revisions[] RETIREMENT ledger's cut ids into the ps source
+    # multiset. `revise --cut PS-NNN` retires an id, so items[] alone is no longer the full ps
+    # history -- and the duplicate arm below works by COUNTING a number in this multiset, so a cut id
+    # was invisible to it: a re-issued PS-002 appeared exactly ONCE (the new item) and sailed through
+    # GREEN while silently aliasing the shipped candidate the original PS-002 minted. With the cut
+    # ids unioned in, a re-issue counts TWICE and is a VISIBLE duplicate -- which is what this audit
+    # already promises. The counter arm benefits too: max(nums) now includes retired ids, so a
+    # counters.ps below a RETIRED max is a staleness hit rather than a silent floor drop.
+    # Pairs with id_allocator.seed_max_for('ps'), which scans the same ledger as its self-heal floor:
+    # that is the PREVENTIVE guard, this is the DETECTIVE one, and BC-PROJ-6 is exactly about the two
+    # not drifting apart.
+    sources["ps"] = _scan([i.get("id") for i in scope.get("items", []) if isinstance(i, dict)]
+                          + [c for r in scope.get("revisions", []) or [] if isinstance(r, dict)
+                             for c in r.get("cut") or []], "ps")
 
     _COUNTERS_HOLDER = {
         "ship": _counters_of(ship),      # shippability.json

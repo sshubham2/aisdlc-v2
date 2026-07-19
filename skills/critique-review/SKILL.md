@@ -51,7 +51,7 @@ else
 SDIR="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/active_slice.py" --vault "$VAULT" --repo-root . --path-only)"
 fi
 rc=$?; if [ "$rc" -ne 0 ] || [ -z "$SDIR" ]; then echo "HALT: slice resolution refused (rc=$rc) -- ownership or ambiguity; see stderr. Do NOT guess a slice. If you are an agent: STOP and report the owner to the user; do NOT set the override yourself." >&2; if [ "$rc" -eq 0 ]; then rc=1; fi; exit "$rc"; fi
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$SDIR" 2>/dev/null || echo "(project-frame unavailable)"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --slice-dir "$SDIR" || echo "(project-frame unavailable)"
 ```
 
 Use the project frame to re-check whether the first Critic missed a direction-fit concern or flagged one that

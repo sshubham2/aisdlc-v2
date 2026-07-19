@@ -357,3 +357,49 @@ def test_public_surface_unverified_reason_enum_enforced():
     good["public_surface_unverified"] = [{"token": "x", "reason": "not-indexed"}]
     assert not any("public_surface_unverified" in v
                    for v in lint_artifact(good, "doc-manifest", ex, "test"))
+
+
+# ── slice-077 (M3): PRESENCE_SYMMETRIC restructured to list-of-tuples ────────────────
+# BOTH residue (ejected_from/ejection_reason, slice-072) AND demote (demoted_at/demote_reason)
+# co-constraints must fire independently — neither may clobber the other.
+
+def _sc(cands):
+    return {"_schema": "aisdlc/slice-candidates@1", "project": "t",
+            "candidates": cands, "pick_log": []}
+
+
+def test_presence_symmetric_both_co_constraints_fire_independently():
+    from scripts.lib.artifact_lint import _presence_symmetric_violations
+    data = _sc([
+        {"id": "SC-1", "ejected_from": "slice-070"},           # ejection_reason missing (slice-072)
+        {"id": "SC-2", "demoted_at": "2026-07-18T00:00:00Z"},  # demote_reason missing (slice-077)
+        {"id": "SC-3"},                                         # normal — neither
+    ])
+    v = _presence_symmetric_violations(data, "slice-candidates", "t")
+    assert any("SC-1" in x and "ejection_reason" in x for x in v), v
+    assert any("SC-2" in x and "demote_reason" in x for x in v), v
+    assert "SC-3" not in " ".join(v)
+
+
+def test_demote_coconstraint_reason_without_at_flagged():
+    from scripts.lib.artifact_lint import _presence_symmetric_violations
+    data = _sc([{"id": "SC-9", "demote_reason": "later"}])  # demoted_at missing
+    v = _presence_symmetric_violations(data, "slice-candidates", "t")
+    assert any("SC-9" in x and "demoted_at" in x for x in v), v
+
+
+def test_both_half_writes_in_one_row_report_both():
+    from scripts.lib.artifact_lint import _presence_symmetric_violations
+    data = _sc([{"id": "SC-X", "ejected_from": "slice-1", "demoted_at": "t"}])  # both reasons missing
+    v = _presence_symmetric_violations(data, "slice-candidates", "t")
+    assert any("ejection_reason" in x for x in v), v
+    assert any("demote_reason" in x for x in v), v
+
+
+def test_wellformed_demote_and_eject_rows_pass():
+    from scripts.lib.artifact_lint import _presence_symmetric_violations
+    data = _sc([
+        {"id": "SC-A", "demoted_at": "t", "demote_reason": "later"},
+        {"id": "SC-B", "ejected_from": "slice-1", "ejection_reason": "budget"},
+    ])
+    assert _presence_symmetric_violations(data, "slice-candidates", "t") == []

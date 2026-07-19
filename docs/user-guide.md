@@ -189,6 +189,30 @@ generates observation questions, and appends new risks to `risk-register.json` f
 comprehensive upfront architecture vault (threat model, cost estimation, requirements, non-functional
 constraints, diagrams).
 
+### Structure the product into areas (day-0, optional)
+
+Once `/slice-candidates --product` has materialized the product's declared scope into capability-shaped
+candidates, you can group those capabilities into named **product areas** — the day-0 product-structuring
+step for Minimal/Standard projects (no full `/heavy-architect` needed):
+
+```bash
+$PY scripts/lib/product_scope.py set-area --item PS-NNN --area "<NAME>" --json
+```
+
+`set-area` annotates one already-materialized capability in place (an atomic write; it mints nothing and
+re-materializes nothing). `set-component --component NAME` remains as a back-compat alias for the
+pre-slice-084 term. Every capability starts in the reserved `unassigned` bucket — that is legal and the
+default; annotating is opt-in. Once ≥1 capability carries an area:
+
+- `/pulse` renders a per-area **capability-progress rollup** ("Product shape", §5) ranked least-complete-first,
+  plus a completeness-governor WARN if the scope is decomposed but nothing is built yet.
+- `/slice --area <NAME>` (§4a) scopes the ranked recommendation to that one area.
+
+This **product area** grouping (over capabilities) is a separate concept from Heavy's **code-component**
+inventory (`components/*.json`, AST-derived by `/sync`, over actual source). An optional per-capability
+`code_components[]` link between the two is reconciled by `/drift-check`'s ACL-1 sweep (§6), which flags a
+link gone stale — the named code component was renamed or removed — as a `STALE CLAIM`.
+
 ---
 
 ## 4. The per-slice loop
@@ -215,6 +239,7 @@ see a refusal, check that your `git config user.email` matches what `/slice` rec
 ```
 /slice
 /slice "<description or hint>"
+/slice --area <NAME>
 ```
 
 `/slice` reads the pre-ranked `candidates.json` backlog, presents a ranked recommendation with a top pick
@@ -222,6 +247,14 @@ and 2–4 alternatives (coupling with in-flight slices is surfaced), and waits f
 if you say "you pick"). It then defines the slice (name, risk tier, acceptance criteria ≤5, verification
 plan, must-not-defer items, out-of-scope), writes `mission-brief.json` + `milestone.json`, claims the
 candidate with a worktree + branch, and auto-advances to `/risk-spike`.
+
+**`--area <NAME>`** (alias `--component`, slices 080/084) scopes the ranked recommendation to ONE product
+area — use `unassigned` for product capabilities not yet grouped into an area. It is a read-only **LENS**
+on the same pick surface, never a lock: it takes no lock, mints no id, writes no status, and blocked/
+in-flight candidates still show globally for context. `/slice` also surfaces the per-area rollup and, when
+the product's scope is decomposed but nothing is built yet, biases its recommendation toward a real
+product capability over more pipeline instrumentation. Pair `--area` with `/pulse`'s "Product shape" line
+(§5) to see which area is least complete before picking.
 
 **Risk tier (the per-slice cost lever):**
 - `low` — pure CSS/copy/docs/test-only or a genuinely small bug-fix / small feature
@@ -331,10 +364,12 @@ phone over Remote Control. You then approve to proceed to `/build-slice`.
 
 Plan-mode execution: the Builder explores code with CRG queries and targeted Reads, drafts a task sequence,
 and **halts for your explicit approval** before writing any code. Execution proceeds task-by-task with
-per-task verification, a mandatory mid-slice smoke gate, and a multi-audit pre-finish gate (including
-`/drift-check --fast` and any project-declared reality gates from `.aisdlc/reality-gates.json` — including
-the `bandit`/`pip-audit` security gates `/ai-sdlc:setup` seeds by default on Python projects — run
-fail-closed). Writes `build-log.json` and updates `milestone.json`.
+per-task verification, a mandatory mid-slice smoke gate, and a multi-audit pre-finish gate — including
+`/drift-check --fast`, the deterministic **STUB-DEAD-1** stub/dead-code scan (`stub_dead_audit.py`: a
+diff-scoped `ast` check that blocks on a stub function body, a silent broad `except: pass`, or unreachable
+code the diff introduces), and any project-declared reality gates from `.aisdlc/reality-gates.json`
+(including the `bandit`/`pip-audit` security gates `/ai-sdlc:setup` seeds by default on Python projects) —
+all run fail-closed. Writes `build-log.json` and updates `milestone.json`.
 
 ### 4h. Code review — `/code-review`
 
@@ -416,6 +451,16 @@ snapshot, and recommended next action.
 
 Run at session start, after time away, before major decisions, or when handing off.
 
+**Product shape (slices 080–084).** When the product's scope has been materialized
+(`/slice-candidates --product`), `/pulse` renders a read-only, per-area **capability-progress rollup** —
+a "Product shape" line ("X/Y capabilities done (materialized candidate archived)") for the whole app, then
+each product area listed least-complete-first. If the scope is decomposed but **0 capabilities are built
+yet**, it renders a distinct **completeness-governor WARN** pointing at `/slice --area <NAME>` — a nudge to
+pick a real product capability instead of more pipeline instrumentation; it changes no ranking and blocks
+no pick. `/pulse` also surfaces **out-of-scope (orphaned) candidates**: a still-live, still-pickable
+candidate whose parent product-scope capability was cut from the product's declared scope — a
+mark-without-sweep leak report so cut work doesn't keep quietly surfacing at the `/slice` pick gate.
+
 ### `/query-design` — grounded codebase Q&A
 
 ```
@@ -449,6 +494,11 @@ the code surface it documented).
 - `--status` — read-only current-state view: fold the append-only `drift-log.json` into accepted/open/resolved state; no detection, no vault writes
 - `--resolve` — interactive walk-through of existing findings
 - `[path]` — scope to one component/contract folder
+
+In full mode (never `--fast`), it also runs the **ACL-1** area↔code-link sweep: if a product-scope
+capability's optional `code_components[]` link names a code component that no longer exists in the Heavy
+`components/*.json` inventory (renamed or removed by `/sync`), it surfaces as a STALE CLAIM. It degrades to
+a silent no-op when there's no product scope, no declared links, or no code-component inventory yet.
 
 Run before starting a new slice, after external changes, or any time the vault feels out of sync.
 
@@ -495,11 +545,21 @@ archived slice's claims would otherwise stand as live assertions while a new act
 ```
 
 Mines "Missed by Critic" entries from the last N archived reflections (default: 15), classifies
-blind-spot patterns, and produces 0–3 evidence-backed Critic check proposals for your review. Accepted
-proposals are persisted to `critic-calibration-log.json` in the vault; `/critique` reads them before
-every review. Never edits the plugin's shipped agent prompt — a project overlay is used instead,
-preserving upgradability. Run every 10–20 slices, after repeated Critic misses, or after a serious
-post-ship bug.
+blind-spot patterns, and produces 0–3 evidence-backed Critic check proposals for your review (plus optional
+LIGHTEN / GATE-SKIP proposals for model-on-model gates that have stopped earning their spawn — the reality
+spine, `risk-spike`/`validate-slice`, can never be lightened or skipped). Accepted proposals are persisted
+to `critic-calibration-log.json` in the vault; `/critique` reads them before every review. Never edits the
+plugin's shipped agent prompt — a project overlay is used instead, preserving upgradability.
+
+After you've accepted what you want for this project, it offers a final **Step 5**: a default-deny
+**declassifier** turns the overlay into ONE redacted, maintainer-ready digest you can mail upstream so
+recurring, evidence-backed checks reach the shipped `agents/critique.md` in a future plugin version. The
+structural notes/gate-skips are auto-projected through a closed field/value allowlist (free-text bodies are
+withheld, reduced to a recurrence count); any `active_checks` text you choose to forward crosses only via an
+explicit free-text genericize-and-review gate (you rewrite it to strip project-specific identifiers, then
+confirm), with a fail-closed backstop refusing any un-genericized path/slice-id/file token that slips
+through; a credential scrub runs last as defense-in-depth. **The raw log is never mailed** — only the
+declassified export. Run every 10–20 slices, after repeated Critic misses, or after a serious post-ship bug.
 
 ### `/release` — grounded documentation
 
@@ -557,7 +617,49 @@ test passes at slice end".
 
 ## 8. Vault admin
 
-The vault is plain JSON outside your repo. Key commands for vault lifecycle:
+The vault is plain JSON stored **outside** your repo, so the design record survives clones, branches, and
+worktrees without polluting git history.
+
+### Where the vault lives (and how to set a custom location)
+
+The vault path resolves in three tiers, highest precedence first:
+
+1. **`AI_SDLC_VAULT_ROOT` environment variable** — an absolute path that overrides everything. The pipeline
+   does not export it, so set it in your shell **before launching Claude Code**. Session-scoped and
+   ephemeral — best for tests, CI, or a one-off redirect.
+2. **Per-project pin** at `<git-common-dir>/aisdlc/vault-root` — a single line holding the absolute vault
+   path. Shared across every worktree of the repo (the git common-dir is shared) and never git-tracked.
+   This is the durable, recommended way to set a custom location for one project, and it survives a repo
+   rename.
+3. **Computed default** — `<base>/<project-slug>-<hash>`, where `<base>` is the contents of
+   `~/.claude/ai-sdlc-vault-base` if present, otherwise `~/.aisdlc`. The slug is the repo-root basename and
+   the hash is keyed on the git common-dir, so all worktrees of one repo share a single vault.
+
+**Set a custom location for this project (recommended — the tier-2 pin):**
+
+```bash
+$PY scripts/lib/vault_admin.py write-pin --vault "/absolute/path/to/my-vault"
+```
+
+This writes and read-back-verifies the pin (and creates the directory). Omit `--vault` to pin the
+*currently resolved* vault (useful to freeze it before a repo rename so it isn't orphaned); pass `--vault`
+to point at a new location.
+
+**Override for a single session (the env var):**
+
+```bash
+export AI_SDLC_VAULT_ROOT="/absolute/path/to/my-vault"   # before launching Claude Code
+```
+
+**Change the base directory for _every_ project on this machine:** put a base path in
+`~/.claude/ai-sdlc-vault-base`; each project's vault then lands at `<that-base>/<slug>-<hash>`.
+
+> **Note:** Changing the resolved path does **not** move existing content. If a vault already exists at the
+> old location its files stay there — copy them across first (or use `export` / `import` below), or the
+> pipeline starts against an empty vault. To confirm which path and tier are active at any time, run
+> `python3 /path/to/aisdlc-v2/scripts/lib/_vault_paths.py`.
+
+### Vault lifecycle commands
 
 ```bash
 # Identify which vault is active and which resolution tier won
@@ -572,7 +674,7 @@ $PY scripts/lib/vault_admin.py export
 # Import a vault on another machine
 $PY scripts/lib/vault_admin.py import <archive>.tgz
 
-# Pin the vault to this repo (tier-2 git config pin)
+# Pin the vault to this repo (tier-2 git config pin; add --vault <path> for a custom location — see above)
 $PY scripts/lib/vault_admin.py write-pin
 
 # Delete an orphaned vault

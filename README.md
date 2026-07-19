@@ -274,6 +274,18 @@ risk ledger is `<vault>/risk-register.json`. `/slice-candidates --product` mater
 declared scope** (decomposed once from `concept.json`) into that backlog — without it, a backlog can fill
 entirely with pipeline *exhaust* (risks, findings, reflections) and the product itself is never pickable.
 
+**Capability-level tracking (slices 080–084).** Once a capability is materialized, it can be grouped into a
+named **product area** — `product_scope.py set-area --item PS-NNN --area NAME` (the day-0 product-structure
+step for Minimal/Standard; no full `/heavy-architect` needed — `set-component`/`--component` remain back-compat
+aliases from the pre-slice-084 term). `/pulse` surfaces a read-only, per-area **"Product shape"** rollup
+(ranked least-complete-first) and warns with a **completeness governor** whenever the product's scope is
+decomposed but zero capabilities are built, biasing the next pick toward real product work rather than more
+pipeline instrumentation. `/slice --area <NAME>` scopes the candidate pick to one area (`unassigned` for
+un-grouped capabilities) — a read-only lens, never a lock. This **product area** (the grouping axis over
+capabilities) is a distinct concept from Heavy's **code-component** inventory (`components/*.json`,
+AST-derived by `/sync`); an optional `code_components[]` link between the two is reconciled by
+`/drift-check`'s ACL-1 sweep.
+
 Invoke any skill with its slash command — the plugin namespaces them, so `/diagnose` is `/ai-sdlc:diagnose`, etc.
 
 ### What a slice actually costs (be honest before adopting)
@@ -358,7 +370,7 @@ Licensed under the **MIT License** — see [LICENSE](LICENSE).
 
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.39.0
+Shubhendu Shubham · plugin `ai-sdlc` v2.39.2
 
 ---
 

@@ -8,21 +8,53 @@ All notable changes, newest first. Versions are reconstructed from git history; 
 
 _Nothing unreleased._
 
+## [2.40.0] — 2026-07-16
+
+### Added
+
+- **residue:** record an audit-enforced ejection reason on every residue-born candidate (slice-072-add-residue-disposition-gate) [ADR-076, ADR-077]
+- **product-scope:** define a capability's one-to-many relation to its slice candidates (slice-075-define-capability-to-candidates-one-to-many-relation) [ADR-085, ADR-086]
+- **backlog:** add a product-priority path-class term + manual demote lever to backlog ranking (slice-077-add-product-priority-term-to-backlog-ranking) [ADR-088]
+- **pulse:** surface out-of-scope (orphaned) candidates read-only in /pulse (slice-078-surface-orphaned-candidates-in-pulse) [ADR-089]
+- **product-scope:** add a component lens + capability-progress rollup (read-only) (slice-080-add-component-lens-and-progress-rollup) [ADR-091]
+- **product-scope:** add a component-annotation producer (set-component) so the component lens + capability rollup are non-degenerate (slice-081-add-component-annotation-producer) [ADR-092]
+- **slice-story:** Wire /slice-story to consume the product_rollup capability-progress envelope so the report surfaces product shape and per-component progress. (slice-082-wire-slice-story-to-consume-capability-rollup) [ADR-093, ADR-094]
+- **trust-ledger:** compose a per-slice trust ledger from existing gate evidence (slice-084-build-per-slice-trust-ledger) [ADR-097, ADR-098, ADR-101]
+- **build:** add STUB-DEAD-1 deterministic diff-scoped stub/dead-code pre-finish gate (slice-085-add-deterministic-stub-and-dead-code-gate) [ADR-099, ADR-100]
+- **calibration:** make the upstream Critic-calibration loop executable via a default-deny declassifier (slice-087-add-upstream-calibration-export) [ADR-103, ADR-104]
+
+### Changed
+
+- document custom vault location + resolution tiers
+- refresh product docs for capability/area tracking + recent gates
+- resolve the AC4 real-vault test dynamically via VAULT_ROOT
+
+### Fixed
+
+- **build-checks:** reject a malformed build-check rule at mint (vault_edit) and make the BC-1 audit fail loud rather than silently drop it (slice-071-lint-build-check-rules-at-mint) [ADR-075]
+- **product-scope:** Repair the `product_scope.py revise` contract, which had two defects at the SAME boundary: a delta-shaped payload silently DELETED every omitted item from the product's scope of record at exit 0 (SC-160), and one proven assumption froze the scope permanently (SC-161). (slice-073-fix-product-scope-revise-contract) [ADR-078, ADR-079, ADR-080]
+- **project-frame:** Delete project_frame_synth's vault-relocating --repo-root and fix the three design-review call sites (design-slice, critique, critique-review) that silently degraded the designer/Critic/Meta-Critic context to a blank frame. (slice-074-fix-project-frame-callsites-vault-root-degrade) [ADR-081, ADR-082, ADR-083, ADR-084]
+- **product-scope:** enforce completeness of the two product-scope contract fields (verification_plan, user_visible_outcome) at the single _check_contract recognizer (slice-076-enforce-product-item-contract-completeness) [ADR-087]
+- **product-scope:** Extend product_scope.py's source taxonomy so `discover` and `slice-NNN-abandoned` source refs classify as EXHAUST, so the real-vault census reports UNCLASSIFIED == 0 instead of 3 rows outside the taxonomy. (slice-079-close-candidate-source-taxonomy-gap) [ADR-090]
+- **product-scope:** harden two product-scope input seams against malformed/reserved input (SC-182 write seam + SC-181 read seam, folded) (slice-083-harden-product-scope-seam-guards) [ADR-095, ADR-096]
+- restore product_shape in the story-sections example schema (areas) to unblock build-consistency
+
 ## [2.39.2] — 2026-07-15
 
 ### Changed
 
-- embed the release CI pre-flight + post-cut-checkout discipline
-
-### Fixed
-
-- release_cut leaves the operator on the integration branch, not master
+- release 2.39.2: merge aisdlc-uat -> master + bump + changelog
 
 ## [2.39.1] — 2026-07-15
 
 ### Changed
 
+- embed the release CI pre-flight + post-cut-checkout discipline
 - release 2.39.1: merge aisdlc-uat -> master + bump + changelog
+
+### Fixed
+
+- release_cut leaves the operator on the integration branch, not master
 
 ## [2.39.0] — 2026-07-15
 

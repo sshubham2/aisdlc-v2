@@ -16,11 +16,11 @@ concatenated:
                     mode from `triage.json`).
   - **Trajectory**— where it is deliberately heading: deduped active rule
                     FAMILIES (recent `methodology-changelog.md` entry titles —
-                    a v1 self-development artifact; OPTIONAL in a v2 project
-                    vault, degrades gracefully when absent), pending
-                    `candidates.json` candidate names (live statuses only),
-                    open `risk-register.json` entries score-ranked with score
-                    shown.
+                    a v1 self-development artifact; the one OPTIONAL source, so
+                    its absence is an `INFO` note, NOT a degrade — see ADR-084),
+                    pending `candidates.json` candidate names (live statuses
+                    only), open `risk-register.json` entries score-ranked with
+                    score shown.
   - **Impact**    — this slice's name + one-line intent + whether `design.json`
                     exists yet (degraded to mission-brief-only at Step 0.5).
 
@@ -29,9 +29,12 @@ v2 mapping (the 4 rollouts — see CLAUDE.md):
     field access matches the schemas-by-example in `skills/*/examples/`.
   - **External vault.** Reads route through `VAULT_ROOT`
     (`scripts.lib._vault_paths`), the external-store seam — never a hardcoded
-    in-repo `architecture/`. The `--repo-root` CLI flag is preserved and
-    defaults to `VAULT_ROOT`; it relocates the vault root (a single dir holding
-    the vault JSONs) for testing / explicit override.
+    in-repo `architecture/`. That seam is the CLI's ONLY vault source: there is
+    no root flag (ADR-083 deleted `--repo-root`, which relocated the vault and
+    which all three call sites were passing `.` — pointing the synthesizer at
+    the code repo and degrading every frame to blank). To relocate the vault,
+    set `AI_SDLC_VAULT_ROOT` (precedence #1 in `_vault_paths`) or call
+    `synthesize_frame(vault_root=...)` directly.
   - **`slice-queue.md` is gone.** Pending candidate NAMES come from
     `candidates.json` `candidates[].title`, filtered to LIVE statuses
     (candidate / spiking / active / blocked / deferred).
@@ -49,8 +52,10 @@ Design decisions (ADR-080), unchanged in v2:
     NO ASCII-fold (the codebase-standard mechanism, consistent with siblings).
 
 Exit codes (binary contract):
-  0  frame emitted (clean OR degraded-with-stderr-WARN on a missing source)
-  2  usage error (missing/invalid required `--slice-dir` or bad `--max-lines`)
+  0  frame emitted (clean OR degraded-with-stderr-WARN on a missing REQUIRED
+     source)
+  2  usage error (missing/invalid required `--slice-dir`, bad `--max-lines`, or
+     any unrecognized flag — including a re-introduced `--repo-root`)
   NEVER 1 — frame-synth failure is not a slice-regression class; the frame is
   advisory context to /design-slice + /critique, never a gate.
 
@@ -59,6 +64,8 @@ Usage::
     # Library (preferred; called from skill prose via Bash capture)
     from scripts.lib.project_frame_synth import synthesize_frame
     frame = synthesize_frame(VAULT_ROOT, VAULT_ROOT / "slices" / "slice-NNN-x")
+    # (the library entry still takes the vault root directly — it is the
+    #  in-process relocation seam the deleted CLI flag never legitimately served)
 
     # CLI
     python -m scripts.lib.project_frame_synth \\
@@ -203,16 +210,19 @@ def _identity(vault_root: Path, warn) -> list[str]:
 _VERSION_HEADER_RE = re.compile(r"^##\s+v\d")
 
 
-def _active_families(vault_root: Path, warn) -> list[str]:
+def _active_families(vault_root: Path, note) -> list[str]:
     """Deduped active rule FAMILIES from the recent changelog.
 
     `methodology-changelog.md` is a v1 SELF-DEVELOPMENT artifact — it tracks the
-    pipeline's own rule evolution, NOT a normal v2 project deliverable, so it may
-    legitimately be absent from a v2 project vault. Treated as OPTIONAL: a missing
-    file degrades this Trajectory sub-part with a stderr WARN and an empty list
-    (exactly as v1 degraded on a missing source), never fabricated and never a
-    crash. Kept as a `.md` read (NOT converted to `.json`) because, when it DOES
-    exist, it is the same H2-structured markdown self-development log v1 parsed;
+    pipeline's own rule evolution, NOT a normal v2 project deliverable, so a v2
+    project vault legitimately never has one. It is therefore the ONE source that
+    opts OUT of the degrade channel (ADR-084): its absence yields an empty list
+    and an `INFO` note, NOT a `project-frame degraded` WARN. Every other source
+    takes `warn` — degrade is the DEFAULT, and a new source added here degrades
+    unless someone deliberately opts it out at this call site.
+
+    Kept as a `.md` read (NOT converted to `.json`) because, when it DOES exist,
+    it is the same H2-structured markdown self-development log v1 parsed;
     converting it is out of scope for this tool (this port only consumes it).
 
     Synthesis, not concatenation: takes the FIRST real rule-id entry-title per
@@ -222,7 +232,7 @@ def _active_families(vault_root: Path, warn) -> list[str]:
     like SKILL / SOFT / Mechanism."""
     changelog = _read(vault_root / "methodology-changelog.md")
     if not changelog:
-        warn("methodology-changelog.md missing (optional self-dev artifact)")
+        note("methodology-changelog.md absent (optional self-dev artifact)")
         return []
     lines = changelog.splitlines()
     n = len(lines)
@@ -299,8 +309,8 @@ def _open_risks(vault_root: Path, warn) -> list[str]:
     return out
 
 
-def _trajectory(vault_root: Path, warn) -> list[str]:
-    families = _active_families(vault_root, warn)
+def _trajectory(vault_root: Path, warn, note) -> list[str]:
+    families = _active_families(vault_root, note)
     candidates = _pending_candidates(vault_root, warn)
     risks = _open_risks(vault_root, warn)
     return [
@@ -334,39 +344,56 @@ def _impact(slice_dir: Path, warn) -> list[str]:
 
 
 def synthesize_frame(
-    repo_root: Path, slice_dir: Path, max_lines: int = _MAX_FRAME_LINES
+    vault_root: Path, slice_dir: Path, max_lines: int = _MAX_FRAME_LINES
 ) -> str:
     """Synthesize the ephemeral project-frame as a markdown string.
 
-    `repo_root` is the VAULT ROOT — the directory holding the vault JSON
-    artifacts (`concept.json`, `triage.json`, `candidates.json`,
-    `risk-register.json`). In normal use this is `VAULT_ROOT` (the external
-    store); the `--repo-root` CLI flag (and this arg) relocates it for testing /
-    explicit override. v1 composed `repo_root / VAULT_ROOT / X` because v1's
-    `VAULT_ROOT` was a RELATIVE in-tree `architecture/`; in v2 `VAULT_ROOT` is an
-    ABSOLUTE external path, so that composition collapses — the vault root is
-    passed directly as `repo_root`.
+    `vault_root` is the directory holding the vault JSON artifacts
+    (`concept.json`, `triage.json`, `candidates.json`, `risk-register.json`).
+    In normal use this is `VAULT_ROOT` (the external store), which is what the
+    CLI always passes — this arg is the in-process relocation seam (fixtures,
+    explicit override). It was named `repo_root` until ADR-083, a name that
+    invited `.` — the code repo — from every caller and blanked the frame.
+    v1 composed `repo_root / VAULT_ROOT / X` because v1's `VAULT_ROOT` was a
+    RELATIVE in-tree `architecture/`; in v2 `VAULT_ROOT` is an ABSOLUTE external
+    path, so that composition collapses — the vault root is passed directly.
 
     Deterministic: no wall-clock, no randomness, stable ordering. Degrades
-    section-by-section (with a stderr WARN) on any missing source rather than
-    raising. Truncates to `max_lines` with a marker."""
+    section-by-section (with a stderr WARN) on a missing REQUIRED source rather
+    than raising; the one OPTIONAL source's absence is an `INFO` note on a
+    separate stderr line (ADR-084). Truncates to `max_lines` with a marker."""
     warnings: list[str] = []
+    notes: list[str] = []
 
     def warn(msg: str) -> None:
         warnings.append(msg)
 
-    vault_root = Path(repo_root)
+    def note(msg: str) -> None:
+        notes.append(msg)
+
+    vault_root = Path(vault_root)
     slice_dir = Path(slice_dir)
 
     lines: list[str] = [_ATTACK_LENS, ""]
     lines += _identity(vault_root, warn) + [""]
-    lines += _trajectory(vault_root, warn) + [""]
+    lines += _trajectory(vault_root, warn, note) + [""]
     lines += _impact(slice_dir, warn)
 
     if warnings:
         # WARN to stderr (visibility per the error model); never to the frame.
         print(
             "WARN: project-frame degraded — " + "; ".join(warnings),
+            file=sys.stderr,
+        )
+    if notes:
+        # ADR-084: a benign absence is NOT a degrade. Separate, un-prefixed line
+        # so the degrade channel keeps its discriminating power — a WARN that
+        # fires on every healthy vault trains its own suppression, which is
+        # exactly how `--repo-root .` survived at three call sites. Still stderr,
+        # never stdout: the frame is piped verbatim into the designer/Critic
+        # prompt and counts against _MAX_FRAME_LINES.
+        print(
+            "INFO: project-frame -- " + "; ".join(notes),
             file=sys.stderr,
         )
 
@@ -381,19 +408,20 @@ def synthesize_frame(
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
-    _stdout.reconfigure_stdout_utf8()
+def _build_parser() -> argparse.ArgumentParser:
+    """The CLI surface, as an introspectable object.
+
+    Extracted from `main` so the SHIP-081 guard can derive the set of valid flags
+    from the LIVE parser (`_actions[].option_strings`) instead of a hand-frozen
+    list that drifts. There is deliberately NO vault-root flag and NO hidden
+    tombstone for the deleted `--repo-root`: a `help=argparse.SUPPRESS` action is
+    still registered in `_actions`, so a tombstone would report as a live flag
+    under introspection and green-light the exact regression the guard exists to
+    catch. Plain absence makes argparse reject the spelling at rc=2, everywhere —
+    including call sites outside any scanner's corpus."""
     parser = argparse.ArgumentParser(
         prog="project_frame_synth",
         description="Emit the ephemeral PFS-1 project-frame to stdout (v2 JSON).",
-    )
-    parser.add_argument(
-        "--repo-root",
-        default=str(VAULT_ROOT),
-        help=(
-            "vault root holding the vault JSON artifacts (default: the resolved "
-            "external-store VAULT_ROOT). Relocates the vault for testing / override."
-        ),
     )
     parser.add_argument(
         "--slice-dir",
@@ -406,12 +434,19 @@ def main(argv: list[str] | None = None) -> int:
         default=_MAX_FRAME_LINES,
         help=f"line budget (default: {_MAX_FRAME_LINES})",
     )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    _stdout.reconfigure_stdout_utf8()
+    parser = _build_parser()
     args = parser.parse_args(argv)  # argparse exits 2 on missing --slice-dir
     if args.max_lines < 1:
         parser.error("--max-lines must be >= 1")  # exit 2 (usage); never a budget breach
 
+    # The vault resolves ONLY through the _vault_paths seam (ADR-083).
     frame = synthesize_frame(
-        Path(args.repo_root), Path(args.slice_dir), max_lines=args.max_lines
+        Path(VAULT_ROOT), Path(args.slice_dir), max_lines=args.max_lines
     )
     print(frame)
     return 0

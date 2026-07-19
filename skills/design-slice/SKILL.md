@@ -77,14 +77,16 @@ Before designing, run the ephemeral project-frame so the design is direction-awa
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --repo-root . --slice-dir "$VAULT/slices/<active-slice>"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/project_frame_synth.py" --slice-dir "$VAULT/slices/<active-slice>"
 ```
 
 Emits ≤40 lines: **Identity** / **Trajectory** / **Impact**. First line is an adversarial ATTACK-LENS preamble —
 read it as a lens for where this slice fights the project's direction. **Advisory only, never a gate**: if the
 tool fails, proceed with `(project-frame unavailable)` and design normally.
 
-At this point `design.json` does not exist yet; the Impact section will be mission-brief-only (expected; ignore the stderr WARN).
+At this point `design.json` does not exist yet; the Impact section will be mission-brief-only — expected, and reported
+as a plain `Design: mission-brief-only` line, not as a degrade. A `WARN: project-frame degraded` on stderr means a
+REQUIRED vault source is genuinely missing: read it, do not wave it through.
 
 Capture stdout — it is shared designer context too.
 

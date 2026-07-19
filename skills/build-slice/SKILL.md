@@ -169,6 +169,28 @@ Draft a concrete task sequence:
   tired user rubber-stamps. If you exceed 10: do NOT present the long plan for approval; propose the split
   instead ("this is 2 slices: <A> now, <B> as candidate SC-NNN") and let the user choose.
 
+  **Minting the split-off candidate B through the residue gate (slice-072 / [[ADR-077]]).** While this slice is
+  **OPEN**, resolve-in-slice is the actionable default — this is the build-slice half of the residue default-flip.
+  When the user accepts the split, candidate **B** is a residue ejection from THIS slice, so mint it **through the
+  residue gate** so its provenance is recorded: build the candidate payload via `residue_disposition.py` (stamping
+  `ejected_from` = this slice + a **required, non-empty** `ejection_reason` = the split rationale; it fail-closes on
+  an empty reason), then append it to `<vault>/candidates.json` via `vault_edit append` — OMIT the `id` (the
+  allocator mints `SC-NNN` in-lock):
+  ```bash
+  TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+  T="$(mktemp -d "$TMPD/aisdlc-mint.XXXXXX")"
+  # Write candidate B's body (title/description/source/… — NO id) to "$T/item.json", then build + append:
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/residue_disposition.py" \
+      --item-file "$T/item.json" --ejected-from slice-NNN \
+      --ejection-reason "<why B is a separate cut — the split rationale, non-empty>" \
+      --json > "$T/cand.json"
+  rc=$?; [ "$rc" = 0 ] || { echo "STOP: residue gate refused (rc=$rc) — supply a non-empty ejection_reason" >&2; exit "$rc"; }
+  $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file candidates.json --array candidates --content-file "$T/cand.json"
+  rm -rf "$T"
+  ```
+  The `build-log.json` `deferrals` path (Step 7 — an in-slice record, NOT a candidate mint) is unchanged and out
+  of the gate's candidate-provenance scope.
+
 ## Step 3: User approval (PCA-1 gate-halt)
 
 Present the plan. **HALT for explicit user sign-off — do NOT auto-advance into Step 4.**
@@ -341,7 +363,7 @@ rm -rf "$T"
 
 ## Step 7: Do-not-defer enforcement
 
-Items in `mission-brief.json` `must_not_defer` CANNOT be shipped as TODO / stub / silent-except / skipped. If deferring any: STOP, ask user explicitly. Approved deferrals go in `build-log.json` `deferrals` with rationale.
+Items in `mission-brief.json` `must_not_defer` CANNOT be shipped as TODO / stub / silent-except / skipped. If deferring any: STOP, ask user explicitly. Approved deferrals go in `build-log.json` `deferrals` with rationale — this is an **in-slice record, not a candidate mint**, and keeps its existing rationale requirement (out of the residue gate's scope). If instead an approved deferral **MINTS a backlog candidate** (the "this is 2 slices: B as SC-NNN" split above), route that mint through the **residue gate** (`residue_disposition.py`) so the minted candidate carries `ejected_from` + a recorded `ejection_reason` (slice-072 / [[ADR-077]]).
 
 ## Step 8: Write output artifacts
 

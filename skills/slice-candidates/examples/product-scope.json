@@ -1,6 +1,6 @@
 {
   "_schema": "aisdlc/product-scope@1",
-  "_note": "The PRODUCT's own scope, decomposed ONCE from concept.json and persisted (slice-068 / [[ADR-067]]). Written by /slice-candidates --product via scripts/lib/product_scope.py; NEVER hand-authored by a model. Item ids are minted by the RECEIVER (id_allocator, in-lock): spike B1 measured only 22% cross-run key agreement between two BLIND decompositions of the SAME concept -- 5 of 7 semantically-identical items drifted their key, including the orchestrator itself -- so a model-emitted key can never be a cross-run identity, and a key-match dedup would re-mint 78% of the backlog on every run. depends_on carries PS ids (the model's run-local labels are rewritten inside the lock; decomposition_label keeps the original for traceability). materialize mints one candidate per item, deduped on candidate provenance source:[{type:'product-scope', ref:'PS-NNN'}] across live u archive -- the archive half is load-bearing, or a shipped item is resurrected forever. persist is CREATE-ONLY; revise is the deliberate scope correction (preserves already-minted ids BY id, never re-mints). Every item MUST carry >=1 blocking unproven assumption: /risk-spike step-0 SKIPS a candidate that has none, and a product capability is unproven by definition.",
+  "_note": "The PRODUCT's own scope, decomposed ONCE from concept.json and persisted (slice-068 / [[ADR-067]]). Written by /slice-candidates --product via scripts/lib/product_scope.py; NEVER hand-authored by a model. Item ids are minted by the RECEIVER (id_allocator, in-lock): spike B1 measured only 22% cross-run key agreement between two BLIND decompositions of the SAME concept -- 5 of 7 semantically-identical items drifted their key, including the orchestrator itself -- so a model-emitted key can never be a cross-run identity, and a key-match dedup would re-mint 78% of the backlog on every run. depends_on carries PS ids (the model's run-local labels are rewritten inside the lock; decomposition_label keeps the original for traceability). materialize mints one candidate per item, deduped on candidate provenance source:[{type:'product-scope', ref:'PS-NNN'}] across live u archive -- the archive half is load-bearing, or a shipped item is resurrected forever. persist is CREATE-ONLY; revise is the deliberate scope correction (preserves already-minted ids BY id, never re-mints). Every item MUST carry >=1 BLOCKING assumption: /risk-spike step-0 SKIPS a candidate that has none, and a product capability is unproven by definition. That assumption must also still be `unproven` when it is NEW -- but NOT for an item already materialized as a candidate (its spike has necessarily already run), or one proven spike would freeze the scope forever (slice-073 / [[ADR-079]]). `revise` REFUSES a payload that silently omits a live item; the only way to remove one is `revise --cut PS-NNN --reason '<why>'`, which appends to the APPEND-ONLY `revisions[]` ledger below -- prior entries are never rewritten or truncated. `revisions` is OPTIONAL and array-shaped (artifact_lint.OPTIONAL_KEYS): an ABSENT key is a legal, permanent state meaning `empty history`, never a refusal and never a migration -- a membership-preserving revise never creates it. Its `cut` ids are LOAD-BEARING, not documentation: they are the ps retirement history that id_allocator.seed_max_for('ps') scans so a retired PS id is never re-issued onto a shipped candidate. `reason` is required IFF `cut` (an added item is self-describing; a cut destroys the only record of what was there), hence null on the add-only record.",
   "project": "<name>",
   "concept_sha256": "<sha256 of the concept.json this decomposition was taken from>",
   "decomposed_at": "<ts>",
@@ -14,6 +14,8 @@
       "title": "build-payments-core",
       "description": "The deterministic payment-capture core every other surface depends on.",
       "user_visible_outcome": "A real test payment is captured and persisted.",
+      "area": "payments",
+      "code_components": [],
       "depends_on": [],
       "assumptions": [
         {
@@ -51,6 +53,28 @@
         }
       ],
       "verification_plan": "A real seller watches a real test payment flip the order live."
+    }
+  ],
+  "revisions": [
+    {
+      "at": "<ts>",
+      "cut": [
+        "PS-003"
+      ],
+      "added": [],
+      "reason": "descoped -- the concept revision dropped in-app refunds",
+      "items_before": 3,
+      "items_after": 2
+    },
+    {
+      "at": "<ts>",
+      "cut": [],
+      "added": [
+        "PS-004"
+      ],
+      "reason": null,
+      "items_before": 2,
+      "items_after": 3
     }
   ]
 }

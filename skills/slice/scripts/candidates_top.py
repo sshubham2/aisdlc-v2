@@ -48,7 +48,7 @@ _REPO = pathlib.Path(__file__).resolve().parents[3]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from scripts.lib import _stdout
+from scripts.lib import _stdout, product_priority
 from scripts.lib._vault_paths import VAULT_ROOT
 
 _PICKABLE = {"candidate", "deferred"}
@@ -84,6 +84,30 @@ def _effort(cand: dict) -> str:
 
 def _effort_rank(cand: dict) -> int:
     return _EFFORT_RANK.get(_effort(cand).upper(), 9)
+
+
+# ── slice-077 (SC-138 / ADR-088): the product-priority path-class term at the pick surface ──
+
+def _effective_score(cand: dict) -> float:
+    """Base severity score + the product-priority path-class term (score space). REUSES `_priority`'s
+    isinstance guard so a non-dict priority (the live SC-152/SC-153 shape) fail-SAFEs to term 0 and
+    NEVER raises (M4). A demote CO-CONSTRAINT violation still raises DemoteCoConstraintError (caught in
+    main -> fail-visible + exit 1); a non-dict priority alone does not — the two are independent."""
+    base = _score(cand)
+    pc = product_priority.path_class(cand)          # raises ONLY on a half-written demote
+    if not isinstance(cand.get("priority"), dict):
+        return base                                 # non-dict priority -> term 0 (fail-safe)
+    return base + product_priority.product_term(pc)
+
+
+def _demote_reason(cand: dict) -> str:
+    return str(cand.get("demote_reason") or "").strip()
+
+
+def _is_off_path(cand: dict) -> bool:
+    """True iff this candidate is explicitly demoted. Safe AFTER a clean sort (no surviving
+    co-constraint violation), which is the only place the formatters run."""
+    return product_priority.path_class(cand) == product_priority.OFF_PATH
 
 
 def _blast(cand: dict) -> str:
@@ -172,13 +196,24 @@ def _unmet_deps(cand: dict, live_ids: set[str]) -> list[str]:
 
 def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
               blocked: list[dict], in_flight: list[dict], top: int,
-              all_live: list[dict]) -> str:
+              all_live: list[dict], area_lens: dict | None = None) -> str:
     lines: list[str] = []
     lines.append(
         f"CANDIDATES (live backlog: {project}) — "
         f"{len(ranked)} pickable, {len(blocked)} blocked-on-spike, "
         f"{len(in_flight)} in-flight"
     )
+    if area_lens is not None:
+        # slice-080/ADR-091 (slice-084 renamed component→area): the lens filters ONLY pickable (m2);
+        # blocked/in-flight stay global.
+        name = area_lens["area"]
+        if area_lens["known"]:
+            lines.append(f"  [area lens: {name} — pickable filtered to this product area; "
+                         f"blocked/in-flight shown globally]")
+        else:
+            known = ", ".join(area_lens.get("areas") or []) or "none"
+            lines.append(f"  [area lens: {name} — UNKNOWN area, 0 pickable. "
+                         f"Known: {known}]")
 
     lines.append("")
     if ranked:
@@ -187,7 +222,12 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
         for i, (cand, unmet) in enumerate(shown, 1):
             cid = cand.get("id", "?")
             title = cand.get("title", "")
-            meta = f"score {_score(cand):g}  effort {_effort(cand) or '?'}"
+            if _is_off_path(cand):
+                # M5: surface the override so the ordering is explicable + auditable at pick time.
+                meta = (f"score {_score(cand):g} -> {_effective_score(cand):g} "
+                        f"[demoted: {_demote_reason(cand)}]  effort {_effort(cand) or '?'}")
+            else:
+                meta = f"score {_score(cand):g}  effort {_effort(cand) or '?'}"
             if _blast(cand):
                 meta += f"  blast: {_blast(cand)}"
             if unmet:
@@ -246,7 +286,7 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
 
 def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
               blocked: list[dict], in_flight: list[dict], top: int,
-              all_live: list[dict]) -> str:
+              all_live: list[dict], area_lens: dict | None = None) -> str:
     shown = ranked[:top] if top > 0 else ranked
     payload = {
         "action": "candidates-top",
@@ -261,6 +301,9 @@ def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
                 "id": c.get("id"),
                 "title": c.get("title"),
                 "score": _score(c),
+                "effective_score": _effective_score(c),   # M5: the sort key's actual value
+                "path_class": product_priority.path_class(c),
+                "demote_reason": _demote_reason(c) or None,
                 "effort": _effort(c) or None,
                 "blast_radius": _blast(c) or None,
                 "deps_unmet": unmet,
@@ -279,6 +322,10 @@ def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
         ],
         "in_flight": [_in_flight_entry(c) for c in in_flight],
     }
+    if area_lens is not None:
+        # slice-080/ADR-091 (slice-084 renamed component→area): added ONLY when the lens is active, so
+        # the default-OFF payload is byte-identical to today (critique m5).
+        payload["area_lens"] = area_lens
     return json.dumps(payload, ensure_ascii=False) + "\n"
 
 
@@ -309,6 +356,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                    help="how many ranked picks to show (<=0 = all; default 5)")
     p.add_argument("--json", action="store_true",
                    help="emit JSON (default: human-readable text for prompt injection)")
+    p.add_argument("--area", dest="area", default=None, metavar="NAME",
+                   help="OPTIONAL area lens (slice-080/ADR-091; slice-084 renamed from --component): "
+                        "filter the PICKABLE list to PRODUCT capabilities bound to this area (use "
+                        "'unassigned' for product capabilities with no area yet — NOT pipeline chores, "
+                        "which the lens excludes). Blocked/in-flight stay global context. Read-only — "
+                        "takes no lock, mints no id, writes no status; default-OFF is byte-identical.")
+    p.add_argument("--component", dest="area", default=None, metavar="NAME",
+                   help="deprecated alias of --area (slice-084)")
     return p
 
 
@@ -371,15 +426,48 @@ def main(argv: list[str] | None = None) -> int:
         elif bucket == "in_flight":
             in_flight.append(c)
 
-    # Rank pickable: highest score first, then smaller effort, then id (stable).
-    pickable.sort(key=lambda c: (-_score(c), _effort_rank(c), str(c.get("id"))))
-    ranked = [(c, _unmet_deps(c, live_ids)) for c in pickable]
-    blocked.sort(key=lambda c: str(c.get("id")))
-    in_flight.sort(key=lambda c: str(c.get("id")))
+    # coupling spans EVERY live candidate — snapshot it BEFORE the lens filter so the conflict signal
+    # stays global even when the pickable list is narrowed to one component (slice-080 m2).
+    all_live = pickable + blocked + in_flight
 
-    all_live = pickable + blocked + in_flight  # coupling spans every live candidate
-    fmt = _fmt_json if args.json else _fmt_text
-    sys.stdout.write(fmt(project, ranked, blocked, in_flight, args.top, all_live))
+    # slice-080/ADR-091 (slice-084 renamed component→area): the OPTIONAL --area lens filters ONLY
+    # pickable (blocked/in-flight stay global). Read-only: it reads product-scope.json for the
+    # {PS-id: area} map and joins each candidate via owner_refs (ambiguous multi-parent -> 'unassigned'
+    # — M-add-1). Default-OFF (arg None) leaves everything untouched: no import, no filter, no payload key.
+    #
+    # slice-084 A1 (source-scoping): the area lens is a PRODUCT view, so it restricts to product-sourced
+    # candidates FIRST (owner_refs non-empty). Without this, `--area unassigned` returned the pipeline-
+    # exhaust chores too — every one of which maps to 'unassigned' because it carries no product-scope
+    # source — conflating the declared product capabilities with ~88 chores. The lens now answers "which
+    # product capability comes next in area X", never "everything the pipeline happens to have queued".
+    area_lens = None
+    if args.area is not None:
+        from scripts.lib import product_rollup, product_scope
+        area_map = product_rollup.read_area_map(_root(args.vault))
+        known = set(area_map.values()) | {product_rollup.UNASSIGNED}
+        pickable = [c for c in pickable
+                    if product_scope.owner_refs(c)
+                    and product_rollup.candidate_area(c, area_map) == args.area]
+        area_lens = {"area": args.area, "known": args.area in known,
+                     "areas": sorted(known)}
+
+    # Rank pickable: highest EFFECTIVE score (severity + product-priority term, slice-077) first,
+    # then smaller effort, then id (stable). A demote co-constraint violation raises here and is
+    # CAUGHT below -> fail-visible message naming the id + exit 1 (M4), never a raw traceback that
+    # blinds the /slice injection (a non-dict priority stays injection-safe: it fail-safes to term 0).
+    try:
+        pickable.sort(key=lambda c: (-_effective_score(c), _effort_rank(c), str(c.get("id"))))
+        ranked = [(c, _unmet_deps(c, live_ids)) for c in pickable]
+        blocked.sort(key=lambda c: str(c.get("id")))
+        in_flight.sort(key=lambda c: str(c.get("id")))
+        fmt = _fmt_json if args.json else _fmt_text
+        out = fmt(project, ranked, blocked, in_flight, args.top, all_live, area_lens)
+    except product_priority.DemoteCoConstraintError as exc:
+        sys.stderr.write(
+            f"candidates_top: candidate {exc.candidate_id!r} has a half-written demote ({exc}) — "
+            f"fix the candidate's demoted_at/demote_reason pair; refusing to emit a mis-ranked backlog.\n")
+        return 1
+    sys.stdout.write(out)
     return 0
 
 

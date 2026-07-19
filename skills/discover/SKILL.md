@@ -155,6 +155,13 @@ the concept's scope ONCE into candidate-shaped product items (ids minted in-lock
 model), persists them to `<vault>/product-scope.json`, and materializes them as `product-scope`-sourced candidates
 so `/slice` can pick the product at all.
 
+**Day-0 product structure (slice-084 C2).** That decomposition can carry a per-item `area` — a small, stable set of
+coarse product subsystems (`payments`, `auth`, `search`). Assigning `area` during this decompose IS the day-0
+product-structure step for **Minimal/Standard** projects: it feeds the per-area capability rollup (`/pulse`) and the
+`/slice --area <NAME>` pick lens with no separate annotation pass, and without the full `/heavy-architect` bundle. It
+stays OPTIONAL (an un-grouped capability is `unassigned`, annotatable later with `set-area`); the code-axis
+`components/*.json` inventory is a DIFFERENT, Heavy-only concept, bridged optionally by each item's `code_components`.
+
 This is a named successor step, the same shape as `/discover`'s other hand-offs — and it is what stops a greenfield
 project reproducing the 0-product-candidate state. Skipping it is allowed (nothing blocks), but say plainly what is
 skipped: the backlog will contain the risks and the one first-slice candidate, and nothing else about the product

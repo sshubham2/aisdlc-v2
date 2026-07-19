@@ -318,25 +318,80 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
 **NEVER** write a `gate_skips` entry targeting `risk-spike` or `validate-slice` — the reality spine cannot be
 skipped at any precision. If the agent ever proposed one, drop it (agent bug).
 
-## Step 5 — suggest mailing the log to the maintainer
+## Step 5 — declassify + suggest mailing the REDACTED export to the maintainer
 
 Accepted checks are now live for THIS project via the overlay. To improve the **base Critic for every project** in the
-next plugin version, the maintainer needs the log. Print the suggestion + the absolute path to attach:
+next plugin version, the maintainer needs the *recurring, generic* signal — but `critic-calibration-log.json` also holds
+project-private content (free-text check/note prose that can quote your own code identifiers, absolute paths, code
+excerpts). So Step 5 does **not** mail the raw log. It runs a **default-deny declassifier**
+(`scripts/calibration_export.py`, ADR-103/104) that emits ONE safe-by-default maintainer payload, then suggests mailing
+THAT.
+
+**5a. active_checks consent gate (in-loop human declassification — the ONLY path active_checks reach the payload).**
+The export auto-emits `calibration_notes` / `gate_skips` structurally (closed field+value vocab; free text withheld) and
+does NOT machine-read `active_checks` from the log — a check's `check` text is both the payload's whole value AND an
+unclosable free-prose leak surface, so each accepted check crosses ONLY through your explicit review here. For each
+`active_check` (`CC-NNN`) you want to forward upstream:
+
+1. **Show ONLY its `check` text.** Drop `example`, `id`, `added_at`, `category`, `evidence` — never forward them (the
+   `example` field in particular embeds project-private code identifiers verbatim).
+2. **Genericize it in a free-text conversational turn** — you rewrite the prose to strip every project-specific example
+   (e.g. "run_catalog vs _execute_verifications" → "two divergent implementations of the same behavior"). This is a
+   **free-text rewrite, NOT an `AskUserQuestion` choice** (a multiple-choice tool cannot capture rewritten prose).
+3. **Then** gate include/skip with `AskUserQuestion` (include the genericized text / skip). **Default is EXCLUDE** — an
+   un-reviewed check is never emitted.
+
+**5b. Resolve the staging path — the Write step (5a) and the export MUST agree on ONE literal path.** Run this block
+first; it prints the deterministic staging path (a fixed name, NO shell `$$` — a `$$` PID is unknowable to the Write
+tool, so the file you write and the file the export reads would not coincide). If you included any checks in 5a, use the
+Write tool to write the JSON **array** of `{text, recurrence_count}` objects (with `recurrence_count =
+len(set(check.evidence))` — an integer distinct-slice count, the evidence-backed prioritization signal; **never the
+slice-ids**) to **exactly** the `STAGING` path printed here. Forward no checks → skip the Write entirely; the export then
+emits the notes/skips structural digest only. The export reads the staging file single-shot and removes it.
+
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+STAGING="$TMPD/aisdlc-calib-approved.json"        # DETERMINISTIC (no $$): 5a's Write MUST target this exact path
+echo "If you included any checks in 5a, Write the {text, recurrence_count} JSON array to: $STAGING"
+echo "If you forwarded no checks, do NOT create that file — the export will emit the notes/skips digest only."
+```
+
+**5c. Run the export.** It re-derives the same deterministic paths (each bash block is a fresh shell), passes
+`--approved-checks` ONLY when 5a actually wrote the staging file (an `-f` existence test — so the notes/skips-only mode
+is reachable, not an always-on flag), then points you at the REDACTED artifact to mail.
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
-echo "Mail your calibration log to the maintainer (s2.shubh2@gmail.com) so recurring checks can be folded into the"
-echo "base agents/critique.md in the next plugin version. Attach:"
-echo "${VAULT}/critic-calibration-log.json"
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+STAGING="$TMPD/aisdlc-calib-approved.json"        # same deterministic path 5b printed / 5a wrote
+OUT="$TMPD/aisdlc-calibration-upstream.md"
+if [ -f "$STAGING" ]; then
+  $PY "${CLAUDE_SKILL_DIR}/scripts/calibration_export.py" --vault "$VAULT" --approved-checks "$STAGING" --out "$OUT"
+else
+  $PY "${CLAUDE_SKILL_DIR}/scripts/calibration_export.py" --vault "$VAULT" --out "$OUT"
+fi
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "calibration_export REFUSED (rc=$rc) — see the redaction manifest on stderr above; NOTHING was emitted." >&2
+  echo "Common causes: an empty/hollow log (no notes/skips AND no included checks), or an un-genericized token in a check." >&2
+else
+  echo "Wrote a REDACTED, maintainer-ready calibration digest to: $OUT"
+  echo "Review it, then mail it to the maintainer (s2.shubh2@gmail.com) so recurring, generic checks can be folded into"
+  echo "the base agents/critique.md in the next plugin version. Attach the REDACTED export ($OUT) — NOT the raw log."
+fi
 ```
 
-This is a **suggestion, not a gate** — the project already benefits now via the vault overlay; mailing the log is only
-how generic checks reach the shipped `agents/critique.md`. Never send mail automatically; the user decides.
+This is a **suggestion, not a gate** — the project already benefits now via the vault overlay; mailing the redacted
+export is only how generic checks reach the shipped `agents/critique.md`. **Never mail the raw
+`critic-calibration-log.json`** — it carries project-private free text; the declassified export is the safe boundary.
+Never send mail automatically; the user decides. The manifest + this wording make **no "fully scrubbed" claim** —
+paths/code safety comes from the allowlist + the consent gate; `secret_scrub` is a credential-only backstop applied
+last.
 
 ## Critical rules
 
 - USE the Agent tool with `subagent_type: "critic-calibrate"`. Do not re-implement the classification rubric here.
-- NEVER edit `agents/critique.md` from a project. Accepted checks go to the vault overlay (`active_checks`, Step 4a); generic ones reach the base ONLY via the maintainer-mailed log (Step 5).
+- NEVER edit `agents/critique.md` from a project. Accepted checks go to the vault overlay (`active_checks`, Step 4a); generic ones reach the base ONLY via the maintainer-mailed **redacted export** (Step 5) — never the raw log.
 - ONE proposal at a time. Never bundle all three into one `AskUserQuestion`.
 - TRUST the agent's zero-proposal outcome. Don't re-prompt.
 - EVIDENCE-BASED only. Every proposal cites miss counts (ADD) or precision/quiet-rate + slice numbers (LIGHTEN), never hypothetical.
@@ -346,7 +401,7 @@ how generic checks reach the shipped `agents/critique.md`. Never send mail autom
 ## Anti-patterns
 
 - **Bundled proposals**: present them separately; users accept/reject each independently.
-- **Editing the plugin base from a project**: writing to `agents/critique.md` — the edit is lost on the next plugin upgrade AND dirties the code repo on `master` (breaks the slice-worktree contract). Accepted checks belong in `active_checks` (vault overlay); generic ones travel to the maintainer by mailed log.
+- **Editing the plugin base from a project**: writing to `agents/critique.md` — the edit is lost on the next plugin upgrade AND dirties the code repo on `master` (breaks the slice-worktree contract). Accepted checks belong in `active_checks` (vault overlay); generic ones travel to the maintainer via the Step-5 redacted export (never the raw log).
 - **Generic additions**: "pay more attention to edge cases" is useless; "Check HEIC EXIF orientation for iPhone upload paths (missed in slice-019, -021, -025)" is useful.
 - **Over-calibrating**: if nothing accepted 3 runs in a row, widen the window (25-30 slices) or skip until more data accumulates.
 

@@ -156,6 +156,14 @@ OPTIONAL_KEYS: dict[str, frozenset[str]] = {
     # `heuristic_walkthrough` sibling is made optional by its own `_note` marker in the
     # example (so the dead-row guard still verifies its nested enum paths).
     "user-test": frozenset({"preflight_used"}),
+    # slice-073: `revisions` is the append-only scope-change ledger, written by
+    # `product_scope revise` ONLY when the item set actually changes. Array-shaped, so it
+    # cannot carry the dict-with-`_note` optional marker — this entry is the only
+    # mechanism. It MUST ship in the SAME change that adds revisions[] to the
+    # `product-scope` canonical example (spike A1, constraint 2): the example edit alone
+    # reds every live, revisions-less product-scope.json. An absent key is a legal,
+    # PERMANENT state meaning "empty history", never a state to migrate away from.
+    "product-scope": frozenset({"revisions"}),
 }
 
 # ── slice-013 (ADR-009): documented-enum coverage ════════════════════════════════════
@@ -370,6 +378,49 @@ ROW_REQUIRED_NONEMPTY: dict[tuple[str, str], str] = {
     ("validation", "criteria[]"): "evidence",
 }
 
+# slice-072 (ADR-077): presence-triggered SYMMETRIC per-row check — distinct from the
+# value-triggered CO_CONSTRAINTS above. For each row at the list path, if EITHER field
+# carries a NON-EMPTY VALUE the OTHER must too (all-or-nothing sibling provenance).
+# Keyed on VALUE truthiness, NEVER key-presence: a NORMAL candidate that OMITS both keys
+# passes (both falsy), and a stray `field: null` / `""` is treated as absent (m1).
+# slice-077 (M3): a (artifact_key, list path) maps to a LIST of field-pairs, so MULTIPLE
+# co-constraints coexist under ONE key without clobbering each other (a single-tuple dict
+# would let a second entry silently last-write-win over the first). candidates[] carries
+# BOTH the residue pair (slice-072) AND the demote pair (slice-077 / ADR-088).
+PRESENCE_SYMMETRIC: dict[tuple[str, str], list[tuple[str, str]]] = {
+    ("slice-candidates", "candidates[]"): [
+        ("ejected_from", "ejection_reason"),   # slice-072 residue provenance (MUST keep firing)
+        ("demoted_at", "demote_reason"),       # slice-077 demote provenance
+    ],
+}
+
+# The kind of provenance a sibling-pair records, for a precise violation message.
+_PRESENCE_KIND: dict[tuple[str, str], str] = {
+    ("ejected_from", "ejection_reason"): "residue",
+    ("demoted_at", "demote_reason"): "demote",
+}
+
+
+def _presence_symmetric_violations(data: dict, key: str, label: str) -> list[str]:
+    v: list[str] = []
+    for (ak, parent), pairs in PRESENCE_SYMMETRIC.items():
+        if ak != key:
+            continue
+        loc = parent or "<top-level>"
+        for (fa, fb) in pairs:
+            kind = _PRESENCE_KIND.get((fa, fb), "sibling")
+            for row in _walk_elements(data, parent):
+                a = str(row.get(fa) or "").strip()
+                b = str(row.get(fb) or "").strip()
+                if bool(a) == bool(b):
+                    continue  # both present (ok) or both absent (normal row, ok)
+                present, missing = (fa, fb) if a else (fb, fa)
+                rid = row.get("id") or "?"
+                v.append(f"{label}: {loc} row {rid!r} has `{present}` set but `{missing}` "
+                         f"empty/absent — {kind} provenance is presence-symmetric "
+                         f"(`{fa}` truthy <=> `{fb}` non-empty)")
+    return v
+
 
 def _row_required_violations(data: dict, key: str, label: str) -> list[str]:
     v: list[str] = []
@@ -446,6 +497,7 @@ def lint_artifact(data: dict, key: str, example: dict, label: str) -> list[str]:
                 v.append(f"{label}: `{path}` = {val!r} not in {sorted(allowed)}")
     v.extend(_co_constraint_violations(data, key, label))
     v.extend(_row_required_violations(data, key, label))
+    v.extend(_presence_symmetric_violations(data, key, label))
     return v
 
 
@@ -532,6 +584,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--skip-unknown", action="store_true",
                    help="skip (don't fail) files whose artifact type can't be determined "
                         "— for a dir sweep that includes files this lint doesn't model")
+    p.add_argument("--co-constraint-gate", action="store_true",
+                   help="slice-072 (ADR-077): legacy-TOLERANT residue-provenance gate. Over the "
+                        "given file(s) ONLY the presence-symmetric co-constraint "
+                        "(ejected_from <=> ejection_reason) HARD-fails; every other finding "
+                        "(required keys, enum drift like the legacy spike_status='pending' rows) "
+                        "is downgraded to a non-fatal warning. Run this over candidates.json so a "
+                        "reason-less eject is blocked without stranding the write on unrelated drift.")
     p.add_argument("--json", action="store_true", help="machine-readable output")
     args = p.parse_args(argv)
 
@@ -570,7 +629,17 @@ def main(argv: list[str] | None = None) -> int:
                                   f"(no recognized `_schema`; pass --type)")
                 continue
             checked += 1
-            violations.extend(lint_artifact(data, key, examples[key], str(f)))
+            if args.co_constraint_gate:
+                # slice-072 (ADR-077): only the residue-provenance co-constraint hard-fails;
+                # everything else (required keys, enum drift) degrades to a warning so a
+                # legitimate eject is never stranded on unrelated pre-existing candidates.json drift.
+                all_v = lint_artifact(data, key, examples[key], str(f))
+                hard = _presence_symmetric_violations(data, key, str(f))
+                hard_set = set(hard)
+                violations.extend(hard)
+                warnings.extend(v for v in all_v if v not in hard_set)
+            else:
+                violations.extend(lint_artifact(data, key, examples[key], str(f)))
             for w in schema_skew(data, key, examples[key], plugin_ver):
                 warnings.append(f"{f}: {w}")
 

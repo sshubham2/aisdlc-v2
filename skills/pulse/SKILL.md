@@ -67,6 +67,37 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_snapshot.py" \
     --active-slice milestone.json risk-register.json slices/action-points.json 2>/dev/null
 ```
 
+**Out-of-scope (orphaned) candidates — read-only leak report (injected):**
+
+```!
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY "${CLAUDE_SKILL_DIR}/scripts/orphaned_candidates.py" --vault "$VAULT" 2>/dev/null || echo '{"scope_present":true,"orphaned":[],"error":"orphan adapter failed to launch"}'
+```
+
+This emits the tri-state envelope `{scope_present, orphaned:[{candidate, ref}], error?}` — a read-only
+"leak report" for candidates whose parent product-scope capability was CUT (mark-WITHOUT-sweep). The
+adapter subprocesses `product_scope materialize --dry-run --json`, keys on its EXIT CODE, and filters to
+LIVE candidates; it is exit-0-always with any error riding stdout. The `|| echo` fallback is the
+launch-failure guard (M3): because the adapter is exit-0-always, a non-zero exit is unambiguously a
+launch failure, kept fail-visible past the injection's `2>/dev/null`.
+
+**Product shape — capability-progress rollup (read-only, injected):**
+
+```!
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_rollup.py" --vault "$VAULT" --json 2>/dev/null || echo '{"scope_present":true,"error":"product rollup failed to launch","pulse_line":"Product shape unavailable — launch failure"}'
+```
+
+This emits the capability-progress envelope `{scope_present, empty_scope, whole_app, areas:[...],
+unassigned, pulse_line, governor?, error?}` (slice-080 / [[ADR-091]]; slice-084 renamed component→area) — a
+read-only DERIVED VIEW that reuses `product_scope.cmd_done` as the single done-derivation and counts
+CAPABILITIES (never slices) done/pending whole-app + per-area, with a mandatory `unassigned / cross-cutting` bucket. It is exit-0-always with any
+error riding stdout; the `|| echo` is the launch-failure guard. **THREAD the envelope's pre-rendered
+`pulse_line` into the Candidates section below** — it ALWAYS names the done_definition ('materialized
+candidate archived', NOT 'capability built'), so no mode (including `--brief`) can render a bare 'X/Y done'.
+Omit the rollup line entirely when `scope_present` is false; on a non-empty `error`, render a WARN
+(fail-visible — never a silent no-line).
+
 **Heavy-mode architecture phase — presence probe** (existence + counts only, NOT full content; these are the
 `/heavy-architect` outputs, which the per-slice scan above does not cover — without this probe a Heavy project
 sitting between `/heavy-architect` and the first `/slice` would look "pre-architecture" and falsely recommend
@@ -136,6 +167,28 @@ Do NOT read individual slice design/mission files (active slice excepted). Do NO
   `STALE-CLAIM: SC-NNN (<user>, idle <N>d)` — claimed-but-idle work (including an abandoned reservation, otherwise
   invisible to pickers) blocks the DAG silently; the vault has no locking, so this surfacing IS the team-awareness
   mechanism. Descriptive only — pulse changes nothing.
+- **Out-of-scope (orphaned) candidates (mark-without-sweep — read-only):** from the Step-1
+  `orphaned_candidates.py` injection envelope `{scope_present, orphaned:[{candidate, ref}], error?}`. Each
+  `orphaned` entry is a LIVE candidate whose parent product-scope capability was CUT — surface it distinctly as
+  **out-of-scope** (NOT the git-branch `orphaned` klass at the stranded audit above), pairing the candidate id
+  with its cut `ref`. **THREAD this `{orphaned, error}` envelope into the Step-2 computed-state dict** passed to
+  the Step-3 Haiku render (default/--full) AND render it inline in `--brief` — so every mode surfaces it,
+  mirroring the stranded-audit inject → dict → template chain. Omit the line entirely when `orphaned` is empty;
+  on a non-empty `error`, render a WARN (fail-visible — never a silent no-line). /pulse takes NO action on
+  orphans (append-only backlog).
+- **Product shape — capability-progress rollup (read-only, slice-080 / [[ADR-091]]; slice-084 renamed component→area):** from the Step-1
+  `product_rollup.py` injection envelope `{scope_present, empty_scope, whole_app, areas, unassigned,
+  pulse_line, governor?, error?}`. Render the pre-rendered `pulse_line` verbatim as the **Product shape** line, then a
+  **Per area** line listing each area least-complete-first (`name done/total`). **If the envelope carries a
+  non-empty `governor` string** (slice-084 B4 — emitted when the product's scope is decomposed but ZERO of its
+  capabilities are built), render it verbatim as a distinct **WARN** immediately under the Product-shape line: it
+  names that the team is building pipeline instrumentation while the product itself sits at 0 built, and points at
+  `/slice --area <NAME>` to pick a real capability next. **THREAD this envelope
+  into the Step-2 computed-state dict** passed to the Step-3 Haiku render (default/--full) AND render it inline in
+  `--brief` — the `pulse_line` already carries the honest 'materialized candidate archived' qualifier, so every
+  mode surfaces it without a bare 'X/Y done'. Omit the Product-shape line when `scope_present` is false; when
+  `empty_scope` is true the `pulse_line` itself reads 'scope present, 0 capabilities decomposed yet' (never
+  '0/0'); on a non-empty `error`, render a WARN. Counts are CAPABILITIES, never slices; /pulse changes nothing.
 
 **Retired-risk freshness (§6.1 — reality sign-offs are perishable):** from `risk-register.json`, risks with
 `status: retired` whose retiring spike (`notes`/`discovered.at`) is older than **6 months** AND whose title names
@@ -237,7 +290,7 @@ here first if you're tempted to extend the dispatch, the way the commit-slice re
 #   - The output template for the requested mode (below)
 ```
 
-The Haiku agent fills the template and returns the summary text. Main thread prints it. The Haiku agent does NOT re-run override resolution — it consumes the `recommended_next_action_override` key already resolved in Step 2.
+The Haiku agent fills the template and returns the summary text. Main thread prints it. The Haiku agent does NOT re-run override resolution — it consumes the `recommended_next_action_override` key already resolved in Step 2, and the `{orphaned, error}` envelope threaded from Step 2 (rendered as the Candidates out-of-scope slot / a WARN on error).
 
 ### Default output template
 
@@ -277,6 +330,10 @@ The Haiku agent fills the template and returns the summary text. Main thread pri
 ## Candidates
 - Backlog: <N not-started + in-flight>  (blocked-on-spike: <N>)
 - Top priority: <SC-NNN — description>
+- Product shape: <the rollup envelope's `pulse_line` verbatim>   [omit this whole line when scope_present is false; WARN: product shape unavailable — <error> when the rollup envelope carries an error]
+- Per component (least-complete first): <name done/total, ...>   [omit when the components array is empty (e.g. an un-annotated scope — everything is unassigned)]
+- Out-of-scope (parent capability cut): <SC-NNN (was PS-NNN), ...>   [omit this whole line when the orphaned set is empty]
+[If the orphan envelope carries an error: WARN: out-of-scope surface unavailable — <error>]
 
 ## Risk exposure
 - **Active HIGH**: <N> — <R-NN (label), ...>
@@ -331,6 +388,8 @@ high → low reality-contact:]
 HIGH risks: <N> (<R-NN, ...>)  |  Shippability: <N> paths, last OK <N> slices ago
 Calibrate: <N> slices since last (<state>)  |  Drift: <clean | N unresolved>
 Candidates: <N> live (<N> blocked-on-spike)
+Product shape: <the rollup envelope's `pulse_line` verbatim — carries the 'materialized' qualifier so --brief never shows a bare X/Y done>   [omit when scope_present is false; WARN: product shape unavailable — <error> on a rollup-envelope error]
+Out-of-scope: <SC-NNN (was PS-NNN), ...>   [omit this line when none; WARN: out-of-scope surface unavailable — <error> on an orphan-envelope error]
 Recent lessons: <3 one-liners>
 ```
 

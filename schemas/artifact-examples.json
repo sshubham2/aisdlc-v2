@@ -51,12 +51,23 @@
       ],
       "verification_plan": "Real test-mode event -> verified -> order PAID.",
       "history": [{ "event": "created", "by": "discover", "at": "<ts>" }]
+    }, {
+      "id": "SC-041", "title": "extract-shared-retry-helper", "status": "candidate", "progress": "not-started",
+      "slice": null, "claimed_by": null, "started_at": null,
+      "source": [{ "type": "reflection-deferred", "ref": "slice-072" }],
+      "description": "Pull the duplicated retry backoff into a shared helper.",
+      "rationale": "Deferred out of its owning slice as an out-of-scope cut, recorded on capture.",
+      "dependencies": [], "assumptions": [],
+      "priority": { "score": 3, "effort": "S", "blast_radius": "shared/lib" },
+      "ejected_from": "slice-072",
+      "ejection_reason": "out of budget for slice-072; deliberate out-of-scope cut recorded on capture (residue provenance)",
+      "history": [{ "event": "created", "by": "reflect", "at": "<ts>" }]
     }],
     "pick_log": []
   },
   "product-scope": {
     "_schema": "aisdlc/product-scope@1",
-    "_note": "The PRODUCT's own scope, decomposed ONCE from concept.json and persisted (slice-068 / [[ADR-067]]). Written by /slice-candidates --product via scripts/lib/product_scope.py; NEVER hand-authored by a model. Item ids are minted by the RECEIVER (id_allocator, in-lock): spike B1 measured only 22% cross-run key agreement between two BLIND decompositions of the SAME concept -- 5 of 7 semantically-identical items drifted their key, including the orchestrator itself -- so a model-emitted key can never be a cross-run identity, and a key-match dedup would re-mint 78% of the backlog on every run. depends_on carries PS ids (the model's run-local labels are rewritten inside the lock; decomposition_label keeps the original for traceability). materialize mints one candidate per item, deduped on candidate provenance source:[{type:'product-scope', ref:'PS-NNN'}] across live u archive -- the archive half is load-bearing, or a shipped item is resurrected forever. persist is CREATE-ONLY; revise is the deliberate scope correction (preserves already-minted ids BY id, never re-mints). Every item MUST carry >=1 blocking unproven assumption: /risk-spike step-0 SKIPS a candidate that has none, and a product capability is unproven by definition.",
+    "_note": "The PRODUCT's own scope, decomposed ONCE from concept.json and persisted (slice-068 / [[ADR-067]]). Written by /slice-candidates --product via scripts/lib/product_scope.py; NEVER hand-authored by a model. Item ids are minted by the RECEIVER (id_allocator, in-lock): spike B1 measured only 22% cross-run key agreement between two BLIND decompositions of the SAME concept -- 5 of 7 semantically-identical items drifted their key, including the orchestrator itself -- so a model-emitted key can never be a cross-run identity, and a key-match dedup would re-mint 78% of the backlog on every run. depends_on carries PS ids (the model's run-local labels are rewritten inside the lock; decomposition_label keeps the original for traceability). materialize mints one candidate per item, deduped on candidate provenance source:[{type:'product-scope', ref:'PS-NNN'}] across live u archive -- the archive half is load-bearing, or a shipped item is resurrected forever. persist is CREATE-ONLY; revise is the deliberate scope correction (preserves already-minted ids BY id, never re-mints). Every item MUST carry >=1 BLOCKING assumption: /risk-spike step-0 SKIPS a candidate that has none, and a product capability is unproven by definition. That assumption must also still be `unproven` when it is NEW -- but NOT for an item already materialized as a candidate (its spike has necessarily already run), or one proven spike would freeze the scope forever (slice-073 / [[ADR-079]]). `revise` REFUSES a payload that silently omits a live item; the only way to remove one is `revise --cut PS-NNN --reason '<why>'`, which appends to the APPEND-ONLY `revisions[]` ledger below -- prior entries are never rewritten or truncated. `revisions` is OPTIONAL and array-shaped (artifact_lint.OPTIONAL_KEYS): an ABSENT key is a legal, permanent state meaning `empty history`, never a refusal and never a migration -- a membership-preserving revise never creates it. Its `cut` ids are LOAD-BEARING, not documentation: they are the ps retirement history that id_allocator.seed_max_for('ps') scans so a retired PS id is never re-issued onto a shipped candidate. `reason` is required IFF `cut` (an added item is self-describing; a cut destroys the only record of what was there), hence null on the add-only record.",
     "project": "<name>",
     "concept_sha256": "<sha256 of the concept.json this decomposition was taken from>",
     "decomposed_at": "<ts>",
@@ -66,6 +77,8 @@
         "id": "PS-001", "decomposition_label": "payments-core", "title": "build-payments-core",
         "description": "The deterministic payment-capture core every other surface depends on.",
         "user_visible_outcome": "A real test payment is captured and persisted.",
+        "area": "payments",
+        "code_components": [],
         "depends_on": [],
         "assumptions": [
           { "id": "A1", "statement": "Card capture can be driven headlessly against the provider's test mode.", "risk_ref": null, "blocking": true, "spike_status": "unproven", "spike_ref": null, "spike_evidence": null, "fallback": null }
@@ -82,6 +95,10 @@
         ],
         "verification_plan": "A real seller watches a real test payment flip the order live."
       }
+    ],
+    "revisions": [
+      { "at": "<ts>", "cut": ["PS-003"], "added": [], "reason": "descoped -- the concept revision dropped in-app refunds", "items_before": 3, "items_after": 2 },
+      { "at": "<ts>", "cut": [], "added": ["PS-004"], "reason": null, "items_before": 2, "items_after": 3 }
     ]
   },
   "adr": {
@@ -434,6 +451,18 @@
     "headline": "Show teammates who's viewing a document, live.",
     "stage": "pre-build", "mode": "standard", "risk_tier": "medium",
     "tldr_md": "We're adding a small live indicator so people editing a shared document can see who else is looking at it right now. The first plan needed one always-open connection per viewer; testing showed a single server couldn't hold enough of those, so the design switched to a lighter live feed. A reviewer also caught that the feed didn't check who was asking, so we added a sign-in check before any names are shared.",
+    "product_shape_framing": "This slice adds to the live-collaboration area of the product.",
+    "product_shape": {
+      "_note": "slice-082 (slice-084 renamed components->areas): grounded capability counts, INJECTED deterministically by the /slice-story skill (never written by the narrator — numbers out of the LLM's hands). render_story renders the 'Where this fits in the product' section from this block. states: populated | degenerate_unassigned | empty_scope | no_scope | error. CR1: inject stamps a provenance marker `\"_source\": \"story_inputs.inject\"` that render_story REQUIRES before rendering these counts (a narrator-authored block, lacking the stamp, is never rendered) — the stamp is omitted from this example on purpose, since the example documents the data shape only.",
+      "state": "populated",
+      "unit": "capabilities",
+      "whole_app": { "done": 6, "in_progress": 3, "total": 16 },
+      "areas": [
+        { "name": "live-collaboration", "done": 2, "in_progress": 1, "total": 7, "rank": 1 },
+        { "name": "billing", "done": 3, "in_progress": 2, "total": 5, "rank": 2 }
+      ],
+      "unassigned": { "done": 1, "in_progress": 0, "total": 4 }
+    },
     "signoff": {
       "_note": "Optional. Who has actually said 'yes' to this slice, separated by WHAT did the approving: reality (a spike on a real environment, or real-device/data testing) vs the model (a design or code review). Reality-approved and model-approved are NOT the same green. not_yet = checks that haven't happened at this lifecycle stage.",
       "reality_approved": [

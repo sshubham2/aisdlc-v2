@@ -63,6 +63,39 @@
           "at": "<ts>"
         }
       ]
+    },
+    {
+      "id": "SC-041",
+      "title": "extract-shared-retry-helper",
+      "status": "candidate",
+      "progress": "not-started",
+      "slice": null,
+      "claimed_by": null,
+      "started_at": null,
+      "source": [
+        {
+          "type": "reflection-deferred",
+          "ref": "slice-072"
+        }
+      ],
+      "description": "Pull the duplicated retry backoff into a shared helper.",
+      "rationale": "Deferred out of its owning slice as an out-of-scope cut, recorded on capture.",
+      "dependencies": [],
+      "assumptions": [],
+      "priority": {
+        "score": 3,
+        "effort": "S",
+        "blast_radius": "shared/lib"
+      },
+      "ejected_from": "slice-072",
+      "ejection_reason": "out of budget for slice-072; deliberate out-of-scope cut recorded on capture (residue provenance)",
+      "history": [
+        {
+          "event": "created",
+          "by": "reflect",
+          "at": "<ts>"
+        }
+      ]
     }
   ],
   "pick_log": []
