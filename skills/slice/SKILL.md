@@ -30,18 +30,25 @@ Product-scope presence (read-only backstop — slice-068):
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" census --json
 ```
 
-Product shape — component progress + OPTIONAL component lens (read-only, slice-080 / [[ADR-091]]):
+Product shape — per-AREA capability progress + OPTIONAL area lens (read-only, slice-080 / [[ADR-091]]; slice-084 renamed component→area):
 ```!
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_rollup.py" --json 2>/dev/null || echo '{"scope_present":false}'
 ```
 
-The rollup envelope carries a `components` array ranked **least-complete-first** (`{name, done, total, rank}`)
-plus the mandatory `unassigned / cross-cutting` bucket — a **priority-ranked component list** for orienting the
-pick. If the user wants to view the pick surface through ONE component, re-run the candidate digest filtered:
-`$PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5 --component <NAME>` (use `unassigned` for the
-cross-cutting bucket). This is a **LENS, not a lock** — it filters the PICKABLE list only (blocked/in-flight stay
-global), takes no lock, mints no id, writes no status/ownership. Default-OFF (no `--component`) is byte-identical
-to the digest above. Omit the component surface entirely when `scope_present` is false (an un-decomposed product).
+The rollup envelope carries an `areas` array ranked **least-complete-first** (`{name, done, total, rank}`)
+plus the mandatory `unassigned / cross-cutting` bucket — a **priority-ranked product-area list** for orienting the
+pick. **If the user invoked `/slice --area <NAME>`** (or otherwise wants the pick surface scoped to ONE product
+area), re-run the candidate digest filtered to it and recommend from that filtered set:
+`$PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5 --area <NAME>` (use `unassigned` for PRODUCT
+capabilities not yet grouped into an area — the lens shows product capabilities ONLY, never pipeline-exhaust
+chores). This is a **LENS, not a lock** — it filters the PICKABLE list only (blocked/in-flight stay global),
+takes no lock, mints no id, writes no status/ownership. `--component <NAME>` stays as a back-compat alias.
+Default-OFF (no `--area`) is byte-identical to the digest above. **If the rollup envelope carries a non-empty
+`governor` string** (the product's scope is decomposed but 0 of its capabilities are built — slice-084 B4),
+surface it as a WARN and **bias the recommendation toward a product-sourced capability** (`/slice --area
+<NAME>`, or any candidate whose `source.type == product-scope`) over more pipeline instrumentation. The governor
+is descriptive: it changes no ranking and blocks no pick. Omit the product-area surface entirely when
+`scope_present` is false (an un-decomposed product).
 
 Stranded-slice consult (R-26 — never define a slice on top of genuinely-stranded prior work):
 ```!

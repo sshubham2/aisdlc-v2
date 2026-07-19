@@ -332,10 +332,10 @@ def _render_product_shape(shape: dict, framing: str = "") -> str:
              f"<strong>{wd} of {wt} {html.escape(unit, quote=False)}</strong> are built{_ip_clause(w)}.</p>")
 
     body = whole
-    comps = shape.get("components") or []
-    if comps:
+    areas = shape.get("areas") or []
+    if areas:
         rows = []
-        for c in comps:
+        for c in areas:
             if not isinstance(c, dict):
                 continue
             name = html.escape(str(c.get("name", "")).strip(), quote=False)
@@ -344,7 +344,7 @@ def _render_product_shape(shape: dict, framing: str = "") -> str:
         if rows:
             body += f'<p class="ps-sub">By area:</p><ul class="ps-list">{"".join(rows)}</ul>'
         u = shape.get("unassigned") or {}
-        if int(u.get("total") or 0):                   # cross-cutting caps not filed under any component
+        if int(u.get("total") or 0):                   # cross-cutting caps not filed under any area
             ud, ut = int(u.get("done") or 0), int(u.get("total") or 0)
             body += (f'<p class="ps-unassigned">Not yet grouped into an area: '
                      f"{ud} of {ut} built{_ip_clause(u)}.</p>")

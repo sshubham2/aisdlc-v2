@@ -77,7 +77,8 @@
         "id": "PS-001", "decomposition_label": "payments-core", "title": "build-payments-core",
         "description": "The deterministic payment-capture core every other surface depends on.",
         "user_visible_outcome": "A real test payment is captured and persisted.",
-        "component": "payments",
+        "area": "payments",
+        "code_components": [],
         "depends_on": [],
         "assumptions": [
           { "id": "A1", "statement": "Card capture can be driven headlessly against the provider's test mode.", "risk_ref": null, "blocking": true, "spike_status": "unproven", "spike_ref": null, "spike_evidence": null, "fallback": null }

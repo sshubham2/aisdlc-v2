@@ -57,11 +57,13 @@ def test_slice_is_read_only_and_carries_the_backstop_notice():
         "/slice must consult the census as a read-only backstop"
     )
     assert "READ-ONLY" in text
-    # slice-081 (m3 / FBCD-1): the mutating-verb set grew 3->4 with `set-component`. A slice that changes
-    # the cardinality of a counted set must extend that set's enumeration (this is the ONLY enumeration
-    # guard -- there is no _DISPATCH-completeness test). Both the quote- and space-forms are enumerated.
+    # slice-081 (m3 / FBCD-1): the mutating-verb set grew 3->4 with `set-component` (slice-084 renamed it
+    # to `set-area`, keeping `set-component` as an alias — BOTH are mutating and enumerated). A slice that
+    # changes the cardinality of a counted set must extend that set's enumeration (this is the ONLY
+    # enumeration guard -- there is no _DISPATCH-completeness test). Both quote- and space-forms are enumerated.
     for mutating in ("product_scope.py\" persist", "product_scope.py\" materialize",
                      "product_scope.py\" revise",
+                     "product_scope.py\" set-area", "product_scope.py set-area",
                      "product_scope.py\" set-component", "product_scope.py set-component"):
         assert mutating not in text, (
             f"/slice must never invoke a MUTATING product_scope verb ({mutating}) — it is a read-only "
@@ -160,16 +162,17 @@ def test_slice_candidates_surfaces_set_component_after_materialize():
     hand-off the pipeline actually executes (the CONSUMER), not the CLI shape (which the unit tests cover).
     """
     text = SLICE_CANDIDATES.read_text(encoding="utf-8")
-    assert "set-component" in text, (
-        "slice-candidates/SKILL.md --product flow must SURFACE `set-component`, or the producer ships INERT"
+    assert "set-area" in text, (
+        "slice-candidates/SKILL.md --product flow must SURFACE `set-area` (slice-084 renamed set-component "
+        "-> set-area), or the producer ships INERT"
     )
     # positioned as the post-materialize enabler: it appears AFTER the materialize verb is introduced
-    assert text.index("materialize") < text.rindex("set-component"), (
-        "set-component must be documented as the step AFTER materialize (it annotates already-materialized "
+    assert text.index("materialize") < text.rindex("set-area"), (
+        "set-area must be documented as the step AFTER materialize (it annotates already-materialized "
         "capabilities)"
     )
-    # non-vacuous: still the --product section, and it names what the annotation de-inerts
-    assert "--product" in text and "component" in text
+    # non-vacuous: still the --product section, and it names what the annotation de-inerts (the product area)
+    assert "--product" in text and "area" in text
 
 
 def test_the_design_manifest_records_the_wiring():

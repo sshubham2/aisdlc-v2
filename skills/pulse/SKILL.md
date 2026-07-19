@@ -88,10 +88,10 @@ VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vau
 $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_rollup.py" --vault "$VAULT" --json 2>/dev/null || echo '{"scope_present":true,"error":"product rollup failed to launch","pulse_line":"Product shape unavailable — launch failure"}'
 ```
 
-This emits the capability-progress envelope `{scope_present, empty_scope, whole_app, components:[...],
-unassigned, pulse_line, error?}` (slice-080 / [[ADR-091]]) — a read-only DERIVED VIEW that reuses
-`product_scope.cmd_done` as the single done-derivation and counts CAPABILITIES (never slices) done/pending
-whole-app + per-component, with a mandatory `unassigned / cross-cutting` bucket. It is exit-0-always with any
+This emits the capability-progress envelope `{scope_present, empty_scope, whole_app, areas:[...],
+unassigned, pulse_line, governor?, error?}` (slice-080 / [[ADR-091]]; slice-084 renamed component→area) — a
+read-only DERIVED VIEW that reuses `product_scope.cmd_done` as the single done-derivation and counts
+CAPABILITIES (never slices) done/pending whole-app + per-area, with a mandatory `unassigned / cross-cutting` bucket. It is exit-0-always with any
 error riding stdout; the `|| echo` is the launch-failure guard. **THREAD the envelope's pre-rendered
 `pulse_line` into the Candidates section below** — it ALWAYS names the done_definition ('materialized
 candidate archived', NOT 'capability built'), so no mode (including `--brief`) can render a bare 'X/Y done'.
@@ -176,10 +176,14 @@ Do NOT read individual slice design/mission files (active slice excepted). Do NO
   mirroring the stranded-audit inject → dict → template chain. Omit the line entirely when `orphaned` is empty;
   on a non-empty `error`, render a WARN (fail-visible — never a silent no-line). /pulse takes NO action on
   orphans (append-only backlog).
-- **Product shape — capability-progress rollup (read-only, slice-080 / [[ADR-091]]):** from the Step-1
-  `product_rollup.py` injection envelope `{scope_present, empty_scope, whole_app, components, unassigned,
-  pulse_line, error?}`. Render the pre-rendered `pulse_line` verbatim as the **Product shape** line, then a
-  **Per component** line listing each component least-complete-first (`name done/total`). **THREAD this envelope
+- **Product shape — capability-progress rollup (read-only, slice-080 / [[ADR-091]]; slice-084 renamed component→area):** from the Step-1
+  `product_rollup.py` injection envelope `{scope_present, empty_scope, whole_app, areas, unassigned,
+  pulse_line, governor?, error?}`. Render the pre-rendered `pulse_line` verbatim as the **Product shape** line, then a
+  **Per area** line listing each area least-complete-first (`name done/total`). **If the envelope carries a
+  non-empty `governor` string** (slice-084 B4 — emitted when the product's scope is decomposed but ZERO of its
+  capabilities are built), render it verbatim as a distinct **WARN** immediately under the Product-shape line: it
+  names that the team is building pipeline instrumentation while the product itself sits at 0 built, and points at
+  `/slice --area <NAME>` to pick a real capability next. **THREAD this envelope
   into the Step-2 computed-state dict** passed to the Step-3 Haiku render (default/--full) AND render it inline in
   `--brief` — the `pulse_line` already carries the honest 'materialized candidate archived' qualifier, so every
   mode surfaces it without a bare 'X/Y done'. Omit the Product-shape line when `scope_present` is false; when

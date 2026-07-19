@@ -244,6 +244,7 @@ contains apostrophes, which a heredoc mangles):
     "title": "<verb-led candidate title, e.g. build-payments-core>",
     "description": "<what this capability IS, in one or two sentences>",
     "user_visible_outcome": "<what a real user can DO once it exists>",
+    "area": "<OPTIONAL product-area grouping, e.g. payments — omit to leave the capability unassigned>",
     "depends_on": ["<label of another item in THIS list>"],
     "assumptions": [ { "id": "A1", "statement": "<the blocking feasibility premise>",
                        "blocking": true, "spike_status": "unproven" } ],
@@ -263,6 +264,13 @@ Rules, each of which is load-bearing — `persist` REFUSES the file (exit 2) if 
   by definition and has everything to spike.
 - **Emit the `depends_on` DAG.** It yields the critical path: items are minted in topological order, so the roots —
   the things everything else waits on — surface first at the pick gate.
+- **OPTIONAL — group each item into a product `area`.** Assigning `area` HERE, at decompose time, is the day-0
+  product-structure step for Minimal/Standard projects (slice-084 A2/C2): it feeds the per-area capability rollup
+  and the `/slice --area <NAME>` lens with no separate annotation pass. Use a **small, stable** set of coarse area
+  names — the product's natural subsystems (`payments`, `auth`, `search`), NOT one area per capability. `area` is
+  the PRODUCT grouping axis; it is distinct from Heavy-mode `components/*.json` (the AST-derived code inventory),
+  which the optional `code_components` link bridges later. Omit `area` to leave a capability `unassigned` and
+  annotate it afterward with `set-area`.
 - Decompose the product as it IS scoped, not as you would scope it. Respect `non_goals`.
 
 ### product-3 — Cross it into the vault (the ONCE-ACT)
@@ -338,26 +346,29 @@ The same protection covers the sibling write paths: `vault_edit remove` / `set -
 `product-scope.json`/`items` all REFUSE ([[ADR-080]]) — scope items are written only by `persist`/`revise`, which
 enforce the decomposition contract.
 
-### product-5 — `set-component`: annotate a capability's component (makes the `/slice --component` lens non-degenerate)
+### product-5 — `set-area`: annotate a capability's product-area (makes the `/slice --area` lens non-degenerate)
 
-After `materialize`, every capability lands in the reserved **`unassigned`** stratum, so the capability-progress
-rollup reads `Whole app 0/N … N unassigned` — correct but **inert**. Run **`set-component`** to assign a real component
-to a capability, so the per-component progress view and the `/slice --component <NAME>` lens become non-degenerate
-(slice-081 / [[ADR-092]]):
+Assigning `area` at decompose time (product-2) is the primary path; use `set-area` to annotate a capability that was
+left un-grouped, or to re-group one. After `materialize`, any capability with no `area` lands in the reserved
+**`unassigned`** stratum, so the capability-progress rollup reads `Whole app 0/N … N unassigned` — correct but
+**inert** for grouping. Run **`set-area`** to assign a real product-area to a capability, so the per-area progress
+view and the `/slice --area <NAME>` lens become non-degenerate (slice-081 / [[ADR-092]]; slice-084 renamed
+set-component→set-area):
 
 ```bash
-$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" set-component --item PS-NNN --component "<NAME>" --json
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" set-area --item PS-NNN --area "<NAME>" --json
 ```
 
-- `set-component` annotates ONE already-materialized capability **in place** (atomic `safe_mutate_text` write, bumps `revised_at`); it
+- `set-area` annotates ONE already-materialized capability **in place** (atomic `safe_mutate_text` write, bumps `revised_at`); it
   mints nothing, re-materializes nothing, and appends no `revisions[]` entry — the read-side consumers
-  (`product_rollup`, `candidates_top --component`) join the component at READ time via `owner_refs`.
-- The `--component` name is validated at the write seam: an **empty/whitespace** name, or the reserved sentinel
+  (`product_rollup`, `candidates_top --area`) join the area at READ time via `owner_refs`.
+- The `--area` name is validated at the write seam: an **empty/whitespace** name, or the reserved sentinel
   **`unassigned`** (case-insensitive), is **REFUSED** (non-zero exit) and leaves `product-scope.json` byte-identical.
 - Re-annotating a capability to the **same** value is an idempotent no-op (`changed:false`, byte-identical, no
-  `revised_at` churn); a **reassignment** echoes the prior component in the command result.
+  `revised_at` churn); a **reassignment** echoes the prior area in the command result.
+- `set-component --component <NAME>` remains as a back-compat alias of `set-area --area <NAME>` (slice-084).
 - Un-annotated capabilities stay in `unassigned` (backward-compatible; a zero-annotation rollup is byte-identical).
-  After annotating ≥1 capability, re-run `/slice --component <NAME>` (or `product_scope done`) to see the lens.
+  After annotating ≥1 capability, re-run `/slice --area <NAME>` (or `product_scope done`) to see the lens.
 
 ## --demote mode — 'good enough for now' (slice-077 / [[ADR-088]])
 

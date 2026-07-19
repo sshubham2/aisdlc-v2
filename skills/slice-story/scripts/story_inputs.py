@@ -12,11 +12,11 @@ Findings this pins (all accepted-pending at TRI-1, slice-082):
   * M2 — a SINGLE fetch+project invocation (this module's `project`/`inject` do product_rollup.compute_rollup
     THEN project in one call), and the launch-failure `|| echo` guard emits the PROJECTION shape
     ({"state":"error",...}), never /pulse's envelope shape (which has no `state` key the degrade reads).
-  * M3 — product_rollup's error envelope and no-scope return OMIT whole_app/components/unassigned (keys
+  * M3 — product_rollup's error envelope and no-scope return OMIT whole_app/areas/unassigned (keys
     ABSENT). project_rollup_for_story branches error -> no_scope -> empty_scope BEFORE it ever reads
     whole_app, so a degenerate envelope can never KeyError (must-not-defer: never crash the narrator/renderer).
   * m3 — the substrate carries `in_progress` per stratum (not just done/total), so an actively-in-progress
-    component is distinguishable from an untouched one in a section whose point is per-component PROGRESS.
+    area is distinguishable from an untouched one in a section whose point is per-area PROGRESS.
   * M-add-1 — the substrate is the AUTHORITATIVE numeric block render_story renders DETERMINISTICALLY; the
     `inject` verb writes it into story-sections.json on the MAIN THREAD (never via the sonnet narrator), so
     the counts a stakeholder reads are code-rendered, not LLM-transcribed. The narrator authors only prose.
@@ -24,9 +24,9 @@ Findings this pins (all accepted-pending at TRI-1, slice-082):
 The substrate (or the degrade states) — this is the contract render_story._render_product_shape consumes:
 
     populated              {state, unit, whole_app:{done,in_progress,total},
-                            components:[{name,done,in_progress,total,rank}], unassigned:{done,in_progress,total}}
-    degenerate_unassigned  as populated but components:[] + a `note` (every capability unassigned — the COMMON
-                            live case until SC-183 annotates components; framed honestly, never 'no progress')
+                            areas:[{name,done,in_progress,total,rank}], unassigned:{done,in_progress,total}}
+    degenerate_unassigned  as populated but areas:[] + a `note` (every capability unassigned — the COMMON
+                            live case until SC-183 annotates areas; framed honestly, never 'no progress')
     empty_scope            {state, unit, note}          (scope present, 0 capabilities decomposed yet)
     no_scope               {state}                       (render omits the section entirely)
     error                  {state, error}                (fail-visible note; render never errors)
@@ -54,7 +54,7 @@ UNIT = "capabilities"
 INJECT_SOURCE = "story_inputs.inject"
 _EMPTY_NOTE = "A product shape is defined, but no capabilities have been broken out into it yet."
 _UNASSIGNED_NOTE = ("Progress isn't broken down by area yet — every capability is still "
-                    "unassigned to a component.")
+                    "unassigned to an area.")
 
 
 # ── the projection (pure — the whole AC1 unit-test surface) ──────────────────────────────────
@@ -74,7 +74,7 @@ def project_rollup_for_story(env: dict) -> dict:
     """Project product_rollup's envelope down to slice-story's jargon-stripped numeric substrate.
 
     M3 BRANCH ORDER is load-bearing: error -> no_scope -> empty_scope are each recognised BEFORE any
-    read of whole_app/components/unassigned, because product_rollup's `error` and no-scope returns OMIT
+    read of whole_app/areas/unassigned, because product_rollup's `error` and no-scope returns OMIT
     those keys entirely (a naive env['whole_app'] would KeyError and crash the narrator). DROPS /pulse's
     presentation fields (pulse_line, done_definition) at source (M-add-1 / ADR-093)."""
     if not isinstance(env, dict):
@@ -88,20 +88,20 @@ def project_rollup_for_story(env: dict) -> dict:
     # (3) scope present but nothing decomposed — a distinct honest note, never '0/0 done'.
     if env.get("empty_scope"):
         return {"state": "empty_scope", "unit": env.get("unit") or UNIT, "note": _EMPTY_NOTE}
-    # (4) populated — NOW it is safe to read whole_app/components/unassigned.
-    components = [
+    # (4) populated — NOW it is safe to read whole_app/areas/unassigned.
+    areas = [
         {"name": str(c.get("name", "")), **_stratum(c), "rank": int(c.get("rank") or 0)}
-        for c in (env.get("components") or []) if isinstance(c, dict)
+        for c in (env.get("areas") or []) if isinstance(c, dict)
     ]
     sub = {
-        "state": "populated" if components else "degenerate_unassigned",
+        "state": "populated" if areas else "degenerate_unassigned",
         "unit": env.get("unit") or UNIT,
         "whole_app": _stratum(env.get("whole_app") or {}),
-        "components": components,
+        "areas": areas,
         "unassigned": _stratum(env.get("unassigned") or {}),
     }
-    if not components:
-        # m1 / the COMMON live case (component join deferred to SC-183): frame it honestly.
+    if not areas:
+        # m1 / the COMMON live case (area join deferred to SC-183): frame it honestly.
         sub["note"] = _UNASSIGNED_NOTE
     return sub
 
@@ -123,7 +123,7 @@ def _render_text(sub: dict) -> str:
         return f"product shape: {sub.get('note')}"
     w = sub["whole_app"]
     lines = [f"whole app: {w['done']}/{w['total']} built ({w['in_progress']} in progress)"]
-    for c in sub["components"]:
+    for c in sub["areas"]:
         lines.append(f"  [{c['rank']}] {c['name']}: {c['done']}/{c['total']} built "
                      f"({c['in_progress']} in progress)")
     if state == "degenerate_unassigned":
@@ -173,7 +173,7 @@ def _cmd_inject(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    _stdout.reconfigure_stdout_utf8()              # a component name may be non-ASCII
+    _stdout.reconfigure_stdout_utf8()              # an area name may be non-ASCII
     ap = argparse.ArgumentParser(prog="story_inputs", description=(__doc__ or "").splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
 

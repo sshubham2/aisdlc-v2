@@ -46,7 +46,7 @@ def _story(**overrides) -> dict:
 _POPULATED = {
     "state": "populated", "unit": "capabilities", "_source": "story_inputs.inject",
     "whole_app": {"done": 6, "in_progress": 3, "total": 16},
-    "components": [
+    "areas": [
         {"name": "auth", "done": 2, "in_progress": 1, "total": 7, "rank": 1},
         {"name": "billing", "done": 3, "in_progress": 2, "total": 5, "rank": 2},
     ],
@@ -63,7 +63,7 @@ def test_populated_counts_are_rendered_exactly(tmp_path):
     assert "Where this fits in the product" in html
     assert "6 of 16 capabilities" in html                     # whole-app
     assert "(3 in progress)" in html                          # m3 whole-app in-flight
-    assert "auth" in html and "2 of 7 built" in html          # per-component
+    assert "auth" in html and "2 of 7 built" in html          # per-area
     assert "billing" in html and "3 of 5 built" in html
     assert "(1 in progress)" in html and "(2 in progress)" in html
     assert "Not yet grouped into an area: 1 of 4 built" in html  # cross-cutting unassigned bucket
@@ -115,16 +115,16 @@ def test_unstamped_narrator_authored_shape_is_never_rendered(tmp_path):
 
 def test_degenerate_unassigned_shows_whole_counts_and_note_no_components(tmp_path):
     shape = {"state": "degenerate_unassigned", "unit": "capabilities", "_source": "story_inputs.inject",
-             "whole_app": {"done": 0, "in_progress": 4, "total": 4}, "components": [],
+             "whole_app": {"done": 0, "in_progress": 4, "total": 4}, "areas": [],
              "unassigned": {"done": 0, "in_progress": 4, "total": 4},
-             "note": "Progress isn't broken down by area yet — every capability is still unassigned to a component."}
+             "note": "Progress isn't broken down by area yet — every capability is still unassigned to an area."}
     cp = _run(tmp_path, _story(product_shape=shape))
     assert cp.returncode == 0, cp.stderr
     html = (tmp_path / "story.html").read_text(encoding="utf-8")
     assert "Where this fits in the product" in html
     assert "0 of 4 capabilities" in html and "(4 in progress)" in html
-    assert "still unassigned to a component" in html
-    assert "By area:" not in html                            # no per-component breakdown when all unassigned
+    assert "still unassigned to an area" in html
+    assert "By area:" not in html                            # no per-area breakdown when all unassigned
 
 
 def test_empty_scope_renders_note(tmp_path):
@@ -184,9 +184,9 @@ def test_product_shape_framing_prose_is_scanned(tmp_path):
 
 
 def test_product_shape_counts_are_not_scanned_as_prose(tmp_path):
-    # the substrate is DATA (deterministic), not prose: a component literally named with an underscore token
+    # the substrate is DATA (deterministic), not prose: an area literally named with an underscore token
     # is html-escaped data, never a jargon leak (only prose fields are scanned).
     shape = json.loads(json.dumps(_POPULATED))
-    shape["components"][0]["name"] = "no_children-service"
+    shape["areas"][0]["name"] = "no_children-service"
     cp = _run(tmp_path, _story(product_shape=shape))
     assert cp.returncode == 0, cp.stderr

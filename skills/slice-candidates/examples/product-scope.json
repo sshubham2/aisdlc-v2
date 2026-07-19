@@ -14,7 +14,8 @@
       "title": "build-payments-core",
       "description": "The deterministic payment-capture core every other surface depends on.",
       "user_visible_outcome": "A real test payment is captured and persisted.",
-      "component": "payments",
+      "area": "payments",
+      "code_components": [],
       "depends_on": [],
       "assumptions": [
         {

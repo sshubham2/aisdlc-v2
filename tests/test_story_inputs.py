@@ -49,7 +49,7 @@ def _populated_env():
     unassigned = {"name": "unassigned", **_stratum(done=1, unknown=3)}                        # total 4
     return {"scope_present": True, "unit": "capabilities",
             "done_definition": "materialized candidate archived", "empty_scope": False,
-            "whole_app": whole, "components": comps, "unassigned": unassigned,
+            "whole_app": whole, "areas": comps, "unassigned": unassigned,
             "pulse_line": "Whole app 6/16 capabilities done (materialized candidate archived; ...)"}
 
 
@@ -58,7 +58,7 @@ def _degenerate_env():
     whole = _stratum(done=0, in_progress=4)
     return {"scope_present": True, "unit": "capabilities",
             "done_definition": "materialized candidate archived", "empty_scope": False,
-            "whole_app": whole, "components": [],
+            "whole_app": whole, "areas": [],
             "unassigned": {"name": "unassigned", **_stratum(done=0, in_progress=4)},
             "pulse_line": "Whole app 0/4 capabilities done (...)"}
 
@@ -71,9 +71,9 @@ def test_populated_projection_shape_and_fidelity():
     assert sub["unit"] == "capabilities"
     # M-add-1 count fidelity: the substrate mirrors the envelope's numbers exactly.
     assert sub["whole_app"] == {"done": 6, "in_progress": 3, "total": 16}
-    assert [c["name"] for c in sub["components"]] == ["auth", "billing"]
-    assert sub["components"][0] == {"name": "auth", "done": 2, "in_progress": 1, "total": 7, "rank": 1}
-    assert sub["components"][1] == {"name": "billing", "done": 3, "in_progress": 2, "total": 5, "rank": 2}
+    assert [c["name"] for c in sub["areas"]] == ["auth", "billing"]
+    assert sub["areas"][0] == {"name": "auth", "done": 2, "in_progress": 1, "total": 7, "rank": 1}
+    assert sub["areas"][1] == {"name": "billing", "done": 3, "in_progress": 2, "total": 5, "rank": 2}
     assert sub["unassigned"] == {"done": 1, "in_progress": 0, "total": 4}
     # ADR-093: /pulse's presentation fields are DROPPED at source (never reach the story).
     blob = json.dumps(sub)
@@ -84,14 +84,14 @@ def test_populated_projection_shape_and_fidelity():
 def test_m3_in_progress_is_carried():
     # m3: an in-progress component must be distinguishable from an untouched one.
     sub = project(_populated_env())
-    assert sub["components"][0]["in_progress"] == 1
+    assert sub["areas"][0]["in_progress"] == 1
     assert sub["whole_app"]["in_progress"] == 3
 
 
 def test_degenerate_unassigned_has_honest_note():
     sub = project(_degenerate_env())
     assert sub["state"] == "degenerate_unassigned"
-    assert sub["components"] == []
+    assert sub["areas"] == []
     assert sub["whole_app"] == {"done": 0, "in_progress": 4, "total": 4}
     assert sub.get("note") and "unassigned" in sub["note"].lower()
 
@@ -115,7 +115,7 @@ def test_no_scope_return_projects_to_no_scope_no_crash():
 
 def test_empty_scope_is_distinct_present_with_note():
     raw = {"scope_present": True, "empty_scope": True, "unit": "capabilities",
-           "whole_app": _stratum(), "components": [], "unassigned": {"name": "unassigned", **_stratum()}}
+           "whole_app": _stratum(), "areas": [], "unassigned": {"name": "unassigned", **_stratum()}}
     sub = project(raw)
     assert sub["state"] == "empty_scope"
     assert sub.get("note")
@@ -136,9 +136,9 @@ def test_malformed_env_degrades_to_error():
 def test_partial_populated_env_never_crashes():
     # whole_app present but a component missing counts -> total-function defaults, no crash.
     raw = {"scope_present": True, "empty_scope": False, "whole_app": {"done": 1, "total": 2},
-           "components": [{"name": "x", "rank": 1}], "unassigned": {}}
+           "areas": [{"name": "x", "rank": 1}], "unassigned": {}}
     sub = project(raw)
-    assert sub["components"][0] == {"name": "x", "done": 0, "in_progress": 0, "total": 0, "rank": 1}
+    assert sub["areas"][0] == {"name": "x", "done": 0, "in_progress": 0, "total": 0, "rank": 1}
     assert sub["whole_app"] == {"done": 1, "in_progress": 0, "total": 2}
 
 
@@ -197,8 +197,8 @@ def test_cli_inject_unreadable_sections_is_fail_visible(tmp_path):
 
 # ── BC-PROJ-3: the serialize leg — a non-ASCII component name round-trips VERBATIM ───────────
 
-def _ps_item(iid, component):
-    return {"id": iid, "title": iid.lower(), "component": component,
+def _ps_item(iid, area):
+    return {"id": iid, "title": iid.lower(), "area": area,
             "assumptions": [{"id": "A1", "statement": "x", "blocking": True, "spike_status": "unproven"}]}
 
 
@@ -220,7 +220,7 @@ def test_project_cli_preserves_non_ascii_component_literal(tmp_path):
                         capture_output=True, text=True, encoding="utf-8")
     assert cp.returncode == 0, cp.stderr
     assert "café" in cp.stdout and "caf\\u00e9" not in cp.stdout   # literal char, not an escape
-    assert json.loads(cp.stdout)["components"][0]["name"] == "café"
+    assert json.loads(cp.stdout)["areas"][0]["name"] == "café"
 
 
 def test_inject_writes_non_ascii_component_verbatim(tmp_path):

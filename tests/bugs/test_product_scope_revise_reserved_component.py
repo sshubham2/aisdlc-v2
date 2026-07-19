@@ -1,15 +1,15 @@
 """
-Bug (SC-182): `product_scope revise` accepts an item whose `component` is the reserved sentinel
+Bug (SC-182): `product_scope revise` accepts an item whose grouping label is the reserved sentinel
 `unassigned`, writing it verbatim.
 
-`_valid_component` (slice-081 / ADR-092) rejects the reserved sentinel, but it is wired ONLY into
-`cmd_set_component`. `cmd_revise` writes `it.get("component") or prev.get("component")` (:1351)
-without validation, so a capability annotated `unassigned` collides with the rollup's reserved
-catch-all bucket -- two distinct `unassigned` surfaces, conflated candidates in the `--component
-unassigned` lens. This is the write-seam asymmetry: one write path is guarded, another is not.
+`_valid_area` (slice-081 / ADR-092; renamed from `_valid_component` in slice-084) rejects the reserved
+sentinel, and slice-083 wired it into the shared `_load_items` seam so EVERY write path (persist / revise /
+--scope-file replay) enforces it — closing the write-seam asymmetry where one path was guarded and another
+was not. slice-084 renamed the field `component` -> `area` and keeps `component` as a back-compat alias:
+the alias MUST NOT be a bypass — both keys normalize through `_valid_area` at the seam.
 
-Expected: `revise` rejects the reserved component (exit 2), same shape as `set-component` -- the
-`_valid_component` sentinel rule holds across every write seam, single-sourced.
+Expected: `revise` rejects the reserved value (exit 2), whether supplied as `area` OR the `component`
+alias -- the sentinel rule holds across every write seam, single-sourced.
 Actual (pre-fix): accepted, exit 0, `unassigned` persisted verbatim.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _write(p: Path, obj) -> None:
     p.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def test_revise_rejects_reserved_unassigned_component(run_script, tmp_path):
+def _setup(tmp_path) -> Path:
     v = tmp_path / "vault"
     v.mkdir()
     _write(v / "product-scope.json", {
@@ -43,17 +43,39 @@ def test_revise_rejects_reserved_unassigned_component(run_script, tmp_path):
         "_schema": "aisdlc/slice-candidates@1", "project": "fixture",
         "counters": {"sc": 0}, "candidates": [], "pick_log": [],
     })
+    return v
+
+
+def _reserved_not_persisted(v: Path) -> None:
+    persisted = json.loads((v / "product-scope.json").read_text(encoding="utf-8"))
+    item = next(i for i in persisted["items"] if i["id"] == "PS-001")
+    assert item.get("area") != "unassigned", "the reserved sentinel was written to the scope (area)"
+    assert item.get("component") != "unassigned", "the reserved sentinel was written to the scope (component alias)"
+
+
+def test_revise_rejects_reserved_unassigned_component(run_script, tmp_path):
+    # canonical `area`
+    v = _setup(tmp_path)
     rev = tmp_path / "rev.json"
-    _write(rev, {"items": [dict(_ITEM, component="unassigned")]})
-
+    _write(rev, {"items": [dict(_ITEM, area="unassigned")]})
     r = run_script(SCRIPT, ["--vault", str(v), "revise", "--items-file", str(rev), "--json"])
-
     assert r.returncode == 2, (
-        f"revise accepted the reserved 'unassigned' component (exit {r.returncode}); "
-        f"set-component rejects it -- the guard must hold on every write seam. stderr={r.stderr}"
+        f"revise accepted the reserved 'unassigned' area (exit {r.returncode}); set-area rejects it -- "
+        f"the guard must hold on every write seam. stderr={r.stderr}"
     )
     assert "unassigned" in r.stderr.lower(), r.stderr
-    # And the reserved name must NOT have been persisted.
-    persisted = json.loads((v / "product-scope.json").read_text(encoding="utf-8"))
-    comp = next(i for i in persisted["items"] if i["id"] == "PS-001").get("component")
-    assert comp != "unassigned", "the reserved sentinel was written to the scope"
+    _reserved_not_persisted(v)
+
+
+def test_revise_rejects_reserved_via_component_alias(run_script, tmp_path):
+    # the back-compat `component` alias must ALSO be rejected -- an alias is not a bypass (slice-084)
+    v = _setup(tmp_path)
+    rev = tmp_path / "rev.json"
+    _write(rev, {"items": [dict(_ITEM, component="unassigned")]})
+    r = run_script(SCRIPT, ["--vault", str(v), "revise", "--items-file", str(rev), "--json"])
+    assert r.returncode == 2, (
+        f"revise accepted the reserved 'unassigned' via the component alias (exit {r.returncode}); "
+        f"the alias must normalize through the same seam validator. stderr={r.stderr}"
+    )
+    assert "unassigned" in r.stderr.lower(), r.stderr
+    _reserved_not_persisted(v)

@@ -196,22 +196,23 @@ def _unmet_deps(cand: dict, live_ids: set[str]) -> list[str]:
 
 def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
               blocked: list[dict], in_flight: list[dict], top: int,
-              all_live: list[dict], component_lens: dict | None = None) -> str:
+              all_live: list[dict], area_lens: dict | None = None) -> str:
     lines: list[str] = []
     lines.append(
         f"CANDIDATES (live backlog: {project}) — "
         f"{len(ranked)} pickable, {len(blocked)} blocked-on-spike, "
         f"{len(in_flight)} in-flight"
     )
-    if component_lens is not None:
-        # slice-080/ADR-091: the lens filters ONLY pickable (m2); blocked/in-flight stay global.
-        name = component_lens["component"]
-        if component_lens["known"]:
-            lines.append(f"  [component lens: {name} — pickable filtered to this component; "
+    if area_lens is not None:
+        # slice-080/ADR-091 (slice-084 renamed component→area): the lens filters ONLY pickable (m2);
+        # blocked/in-flight stay global.
+        name = area_lens["area"]
+        if area_lens["known"]:
+            lines.append(f"  [area lens: {name} — pickable filtered to this product area; "
                          f"blocked/in-flight shown globally]")
         else:
-            known = ", ".join(component_lens.get("components") or []) or "none"
-            lines.append(f"  [component lens: {name} — UNKNOWN component, 0 pickable. "
+            known = ", ".join(area_lens.get("areas") or []) or "none"
+            lines.append(f"  [area lens: {name} — UNKNOWN area, 0 pickable. "
                          f"Known: {known}]")
 
     lines.append("")
@@ -285,7 +286,7 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
 
 def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
               blocked: list[dict], in_flight: list[dict], top: int,
-              all_live: list[dict], component_lens: dict | None = None) -> str:
+              all_live: list[dict], area_lens: dict | None = None) -> str:
     shown = ranked[:top] if top > 0 else ranked
     payload = {
         "action": "candidates-top",
@@ -321,10 +322,10 @@ def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
         ],
         "in_flight": [_in_flight_entry(c) for c in in_flight],
     }
-    if component_lens is not None:
-        # slice-080/ADR-091: added ONLY when the lens is active, so the default-OFF payload is
-        # byte-identical to today (critique m5).
-        payload["component_lens"] = component_lens
+    if area_lens is not None:
+        # slice-080/ADR-091 (slice-084 renamed component→area): added ONLY when the lens is active, so
+        # the default-OFF payload is byte-identical to today (critique m5).
+        payload["area_lens"] = area_lens
     return json.dumps(payload, ensure_ascii=False) + "\n"
 
 
@@ -355,11 +356,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                    help="how many ranked picks to show (<=0 = all; default 5)")
     p.add_argument("--json", action="store_true",
                    help="emit JSON (default: human-readable text for prompt injection)")
-    p.add_argument("--component", default=None, metavar="NAME",
-                   help="OPTIONAL component lens (slice-080/ADR-091): filter the PICKABLE list to "
-                        "capabilities bound to this component (use 'unassigned' for the cross-cutting "
-                        "bucket). Blocked/in-flight stay global context. Read-only — takes no lock, "
-                        "mints no id, writes no status; default-OFF is byte-identical.")
+    p.add_argument("--area", dest="area", default=None, metavar="NAME",
+                   help="OPTIONAL area lens (slice-080/ADR-091; slice-084 renamed from --component): "
+                        "filter the PICKABLE list to PRODUCT capabilities bound to this area (use "
+                        "'unassigned' for product capabilities with no area yet — NOT pipeline chores, "
+                        "which the lens excludes). Blocked/in-flight stay global context. Read-only — "
+                        "takes no lock, mints no id, writes no status; default-OFF is byte-identical.")
+    p.add_argument("--component", dest="area", default=None, metavar="NAME",
+                   help="deprecated alias of --area (slice-084)")
     return p
 
 
@@ -426,19 +430,26 @@ def main(argv: list[str] | None = None) -> int:
     # stays global even when the pickable list is narrowed to one component (slice-080 m2).
     all_live = pickable + blocked + in_flight
 
-    # slice-080/ADR-091: the OPTIONAL --component lens filters ONLY pickable (blocked/in-flight stay
-    # global). Read-only: it reads product-scope.json for the {PS-id: component} map and joins each
-    # candidate via owner_refs (ambiguous multi-parent -> 'unassigned' — M-add-1). Default-OFF (arg
-    # None) leaves everything untouched: no import, no filter, no payload key.
-    component_lens = None
-    if args.component is not None:
-        from scripts.lib import product_rollup
-        comp_map = product_rollup.read_component_map(_root(args.vault))
-        known = set(comp_map.values()) | {product_rollup.UNASSIGNED}
+    # slice-080/ADR-091 (slice-084 renamed component→area): the OPTIONAL --area lens filters ONLY
+    # pickable (blocked/in-flight stay global). Read-only: it reads product-scope.json for the
+    # {PS-id: area} map and joins each candidate via owner_refs (ambiguous multi-parent -> 'unassigned'
+    # — M-add-1). Default-OFF (arg None) leaves everything untouched: no import, no filter, no payload key.
+    #
+    # slice-084 A1 (source-scoping): the area lens is a PRODUCT view, so it restricts to product-sourced
+    # candidates FIRST (owner_refs non-empty). Without this, `--area unassigned` returned the pipeline-
+    # exhaust chores too — every one of which maps to 'unassigned' because it carries no product-scope
+    # source — conflating the declared product capabilities with ~88 chores. The lens now answers "which
+    # product capability comes next in area X", never "everything the pipeline happens to have queued".
+    area_lens = None
+    if args.area is not None:
+        from scripts.lib import product_rollup, product_scope
+        area_map = product_rollup.read_area_map(_root(args.vault))
+        known = set(area_map.values()) | {product_rollup.UNASSIGNED}
         pickable = [c for c in pickable
-                    if product_rollup.candidate_component(c, comp_map) == args.component]
-        component_lens = {"component": args.component, "known": args.component in known,
-                          "components": sorted(known)}
+                    if product_scope.owner_refs(c)
+                    and product_rollup.candidate_area(c, area_map) == args.area]
+        area_lens = {"area": args.area, "known": args.area in known,
+                     "areas": sorted(known)}
 
     # Rank pickable: highest EFFECTIVE score (severity + product-priority term, slice-077) first,
     # then smaller effort, then id (stable). A demote co-constraint violation raises here and is
@@ -450,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
         blocked.sort(key=lambda c: str(c.get("id")))
         in_flight.sort(key=lambda c: str(c.get("id")))
         fmt = _fmt_json if args.json else _fmt_text
-        out = fmt(project, ranked, blocked, in_flight, args.top, all_live, component_lens)
+        out = fmt(project, ranked, blocked, in_flight, args.top, all_live, area_lens)
     except product_priority.DemoteCoConstraintError as exc:
         sys.stderr.write(
             f"candidates_top: candidate {exc.candidate_id!r} has a half-written demote ({exc}) — "

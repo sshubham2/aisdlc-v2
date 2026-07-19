@@ -1,6 +1,6 @@
 """slice-080 / SC-165 / [[ADR-091]] — the read-only capability-progress rollup (product_rollup.py).
 
-Covers AC2 (whole-app + per-component CAPABILITY counts, derived-at-read-time priority order, writes
+Covers AC2 (whole-app + per-area CAPABILITY counts, derived-at-read-time priority order, writes
 nothing), AC3's contract (the --json envelope /pulse consumes + the always-qualified pulse_line), and
 AC5 (no new id kind / no lock / no stored status / strata-sum conservation), plus the ratified critique
 fixes: M1 (full 5-way partition + conservation over the full set, proven non-vacuously with a
@@ -30,11 +30,11 @@ SCRIPT = PLUGIN_ROOT / "scripts" / "lib" / "product_rollup.py"
 
 # ── fixture builders ───────────────────────────────────────────────────────────────
 
-def _ps_item(iid, component=None, title=None):
+def _ps_item(iid, area=None, title=None):
     it = {"id": iid, "title": title or iid.lower(), "assumptions": [
         {"id": "A1", "statement": "x", "blocking": True, "spike_status": "unproven"}]}
-    if component is not None:
-        it["component"] = component
+    if area is not None:
+        it["area"] = area                     # slice-084: canonical grouping key (was `component`)
     return it
 
 
@@ -54,7 +54,7 @@ def _write(vault: Path, scope_items, live, archive):
 
 
 def _five_state_vault(vault: Path):
-    """A scope exercising ALL five strata across three components (M1 non-vacuous: it INCLUDES a
+    """A scope exercising ALL five strata across three areas (M1 non-vacuous: it INCLUDES a
     no-children capability, a rejected-only capability, and an ambiguous->unknown pair)."""
     scope = [
         _ps_item("PS-100", "payments"),   # done (shipped child archived)
@@ -83,7 +83,7 @@ def _sha_readset(vault: Path) -> dict:
     return out
 
 
-# ── AC2 / M1 / M2 — whole-app + per-component counts over the full 5-way partition ──
+# ── AC2 / M1 / M2 — whole-app + per-area counts over the full 5-way partition ──
 
 def test_ac2_whole_app_and_per_component_counts(tmp_path):
     _five_state_vault(tmp_path)
@@ -93,7 +93,7 @@ def test_ac2_whole_app_and_per_component_counts(tmp_path):
     w = env["whole_app"]
     assert (w["done"], w["rejected_only"], w["in_progress"], w["no_children"], w["unknown"], w["total"]) \
         == (1, 1, 1, 1, 2, 6), w
-    comps = {c["name"]: c for c in env["components"]}
+    comps = {c["name"]: c for c in env["areas"]}
     assert comps["payments"]["done"] == 1 and comps["payments"]["rejected_only"] == 1
     assert comps["billing"]["in_progress"] == 1 and comps["billing"]["no_children"] == 1
     assert env["unassigned"]["unknown"] == 2 and env["unassigned"]["total"] == 2
@@ -104,7 +104,7 @@ def test_m2_rejected_only_does_not_inflate_done(tmp_path):
     counted in the headline 'done' — it lands in rejected_only."""
     _five_state_vault(tmp_path)
     env = product_rollup.compute_rollup(tmp_path)
-    payments = next(c for c in env["components"] if c["name"] == "payments")
+    payments = next(c for c in env["areas"] if c["name"] == "payments")
     assert payments["done"] == 1, "only the SHIPPED capability counts as done"
     assert payments["rejected_only"] == 1, "the rejected-only capability must be surfaced separately"
     assert payments["composition"] == {"shipped": 1, "rejected": 1}
@@ -117,18 +117,18 @@ def test_m1_strata_conserve(tmp_path):
     env = product_rollup.compute_rollup(tmp_path)
     w = env["whole_app"]
     for s in ("done", "rejected_only", "in_progress", "no_children", "unknown", "total"):
-        strata_sum = env["unassigned"][s] + sum(c[s] for c in env["components"])
+        strata_sum = env["unassigned"][s] + sum(c[s] for c in env["areas"])
         assert strata_sum == w[s], f"conservation breach on {s!r}: {strata_sum} != {w[s]}"
     assert sum(w[s] for s in
                ("done", "rejected_only", "in_progress", "no_children", "unknown")) == w["total"]
 
 
-# ── M-add-2 — the component order is pinned: least-complete first, then |caps|, then name ──
+# ── M-add-2 — the area order is pinned: least-complete first, then |caps|, then name ──
 
 def test_m_add_2_component_order_least_complete_first(tmp_path):
     _five_state_vault(tmp_path)
     env = product_rollup.compute_rollup(tmp_path)
-    order = [(c["name"], c["rank"]) for c in env["components"]]
+    order = [(c["name"], c["rank"]) for c in env["areas"]]
     # billing ratio 0/2=0.0 is less complete than payments 1/2=0.5 -> billing ranks first
     assert order == [("billing", 1), ("payments", 2)], order
 
@@ -175,7 +175,7 @@ def test_m4_corrupt_scope_is_fail_visible_error(tmp_path):
 
 def test_m4_idset_mismatch_degrades_to_error():
     done_result = {"items": [{"item": "PS-1", "state": "no-children", "archived_composition": {}}]}
-    scope = {"items": [{"id": "PS-1"}, {"id": "PS-2", "component": "x"}]}  # scope carries an extra item
+    scope = {"items": [{"id": "PS-1"}, {"id": "PS-2", "area": "x"}]}  # scope carries an extra item
     env = product_rollup.build_envelope(done_result, scope)
     assert env.get("error") and "changed between reads" in env["error"], env
 
@@ -225,9 +225,47 @@ def test_build_envelope_routes_conservation_breach_to_error(monkeypatch):
     monkeypatch.setattr(product_rollup, "_conserves", lambda *a, **k: False)
     done_result = {"items": [{"item": "PS-1", "state": "done",
                               "archived_composition": {"shipped": 1, "rejected": 0}}]}
-    scope = {"items": [{"id": "PS-1", "component": "x"}]}
+    scope = {"items": [{"id": "PS-1", "area": "x"}]}
     env = product_rollup.build_envelope(done_result, scope)
     assert env.get("error") and "conservation" in env["error"], env
+
+
+# ── slice-084 B4 — the completeness governor: present iff scope decomposed but 0 capabilities built ──
+
+def test_b4_governor_present_when_scope_decomposed_but_zero_built(tmp_path):
+    scope = [_ps_item("PS-1", "core"), _ps_item("PS-2", "core")]
+    live = [_cand("SC-1", ["PS-1"])]                       # PS-1 in-progress, PS-2 no-children -> 0 built
+    _write(tmp_path, scope, live, [])
+    env = product_rollup.compute_rollup(tmp_path)
+    assert env["whole_app"]["done"] == 0 and env["whole_app"]["total"] == 2, env["whole_app"]
+    assert env.get("governor"), "B4: a decomposed-but-0-built product must carry a governor nudge"
+    assert "0/2" in env["governor"] and "instrumentation" in env["governor"], env["governor"]
+
+
+def test_b4_governor_absent_once_anything_built(tmp_path):
+    _five_state_vault(tmp_path)                            # PS-100 shipped -> done == 1
+    env = product_rollup.compute_rollup(tmp_path)
+    assert env["whole_app"]["done"] >= 1
+    assert "governor" not in env, "B4: a product with >=1 built capability carries NO governor"
+
+
+def test_b4_governor_absent_on_empty_scope(tmp_path):
+    (tmp_path / "product-scope.json").write_text(json.dumps(
+        {"_schema": "aisdlc/product-scope@1", "project": "fx", "items": []}), encoding="utf-8")
+    (tmp_path / "candidates.json").write_text(json.dumps({"candidates": []}), encoding="utf-8")
+    env = product_rollup.compute_rollup(tmp_path)
+    assert env["empty_scope"] and "governor" not in env, env
+
+
+# ── slice-084 — a legacy `component:` scope key is still stratified (back-compat alias on read) ──
+
+def test_legacy_component_field_still_rolls_up(tmp_path):
+    scope = [{"id": "PS-1", "title": "x", "component": "payments",
+              "assumptions": [{"id": "A1", "statement": "x", "blocking": True, "spike_status": "unproven"}]}]
+    live = [_cand("SC-1", ["PS-1"])]
+    _write(tmp_path, scope, live, [])
+    env = product_rollup.compute_rollup(tmp_path)
+    assert "payments" in [c["name"] for c in env["areas"]], env["areas"]
 
 
 # ── AC3 contract — the CLI emits the envelope /pulse consumes, exit 0 always ──
