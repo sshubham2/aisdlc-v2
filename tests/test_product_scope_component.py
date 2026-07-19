@@ -300,3 +300,76 @@ def test_setcomp_m5_reassignment_echoes_previous(run_script, pvault, tmp_path):
     second = json.loads(_setcomp(run_script, pvault, ids["pay-core"], "billing").stdout)
     assert second["changed"] is True and second["component"] == "billing"
     assert second["previous"] == "payments", "a reassignment must echo the prior component value (m5)"
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# slice-083 / SC-182 / [[ADR-096]] — the reserved-component guard now holds on EVERY write seam.
+#
+# _valid_component (slice-081) was wired only into set-component; slice-083 routes persist / revise /
+# --scope-file replay through it at the shared _load_items boundary, single-sourced. These tests lock
+# the two accepted-pending Critic findings: M2 (raw-truthy whitespace lock) and m3 (persist reserved).
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+
+def test_sc182_revise_rejects_reserved_component_every_write_seam(run_script, pvault, tmp_path):
+    """AC1 parity at the revise seam: a reserved 'unassigned' component rejects (exit 2), single-sourced
+    through _valid_component -- the guard is no longer set-component-only."""
+    items = {"items": [
+        {"label": "a", "title": "build-a", "description": "a", "user_visible_outcome": "a",
+         "depends_on": [], "assumptions": _assump(), "verification_plan": "x"},
+    ]}
+    assert _persist(run_script, pvault, items, tmp_path).returncode == 0
+    a_id = next(iter(_scope_items(pvault)))
+    rev = {"items": [{"id": a_id, "title": "build-a", "component": "unassigned",
+                      "assumptions": _assump(), "verification_plan": "x"}]}
+    r = _revise(run_script, pvault, rev, tmp_path, "rev.json")
+    assert r.returncode == 2, f"revise must reject the reserved component (exit 2), got {r.returncode}: {r.stderr}"
+    assert "unassigned" in r.stderr.lower(), r.stderr
+    assert _scope_items(pvault)[a_id].get("component") in (None, ""), "the reserved name must never persist"
+
+
+def test_sc182_m2_revise_rejects_whitespace_only_component_locks_raw_truthy(run_script, pvault, tmp_path):
+    """M2: the write-seam gate keys on RAW truthiness (isinstance-str + comp), NOT comp.strip(). A
+    whitespace-only component is truthy -> routed to _valid_component -> stripped to '' -> rejected
+    (exit 2). This LOCKS the raw-truthy semantics: a future .strip()-based gate would skip validation
+    and silently persist '   ' -- and this test would go red (slice-076 precedent)."""
+    items = {"items": [
+        {"label": "a", "title": "build-a", "description": "a", "user_visible_outcome": "a",
+         "depends_on": [], "assumptions": _assump(), "verification_plan": "x"},
+    ]}
+    assert _persist(run_script, pvault, items, tmp_path).returncode == 0
+    a_id = next(iter(_scope_items(pvault)))
+    rev = {"items": [{"id": a_id, "title": "build-a", "component": "   ",
+                      "assumptions": _assump(), "verification_plan": "x"}]}
+    r = _revise(run_script, pvault, rev, tmp_path, "rev.json")
+    assert r.returncode == 2, f"revise must reject a whitespace-only component (exit 2), got {r.returncode}: {r.stderr}"
+    assert "component" in r.stderr.lower(), r.stderr
+    assert _scope_items(pvault)[a_id].get("component") in (None, ""), "whitespace must never persist"
+
+
+def test_sc182_m3_persist_rejects_reserved_component_scope_byte_absent(run_script, pvault, tmp_path):
+    """m3: a reserved 'unassigned' component in a persist items-file rejects PRE-LOCK (exit 2) via the
+    shared _load_items choke point (:1166), and product-scope.json is never created (byte-ABSENT)."""
+    scope_p = pvault / "product-scope.json"
+    assert not scope_p.exists(), "precondition: no scope yet (persist is create-only)"
+    items = {"items": [
+        {"label": "pay-core", "title": "build-pay-core", "description": "core",
+         "user_visible_outcome": "captures", "depends_on": [], "component": "unassigned",
+         "assumptions": _assump(), "verification_plan": "drive it"},
+    ]}
+    r = _persist(run_script, pvault, items, tmp_path)
+    assert r.returncode == 2, f"persist must reject the reserved component (exit 2), got {r.returncode}: {r.stderr}"
+    assert "unassigned" in r.stderr.lower(), r.stderr
+    assert not scope_p.exists(), "a pre-lock reject must leave product-scope.json byte-ABSENT (never created)"
+
+
+def test_sc182_persist_and_revise_strip_a_supplied_component(run_script, pvault, tmp_path):
+    """The introduced value is NORMALIZED (stripped) on the write paths -- check == persisted value, no
+    differential. A ' payments ' component persists as 'payments' (via _valid_component's strip return)."""
+    items = {"items": [
+        {"label": "a", "title": "build-a", "description": "a", "user_visible_outcome": "a",
+         "depends_on": [], "component": "  payments  ", "assumptions": _assump(), "verification_plan": "x"},
+    ]}
+    assert _persist(run_script, pvault, items, tmp_path).returncode == 0
+    it = next(iter(_scope_items(pvault).values()))
+    assert it.get("component") == "payments", "a supplied component must persist stripped (check == write)"

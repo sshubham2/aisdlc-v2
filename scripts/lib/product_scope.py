@@ -459,7 +459,13 @@ def _observed(vault: Path, live: list[dict]) -> list[dict]:
     AC2 (run twice, nothing shipped between) cannot catch that; only AC3 can.
     """
     arch = _load_json(vault / "archive" / "candidates.json").get("candidates") or []
-    return list(live) + [c for c in arch if isinstance(c, dict)]
+    # SC-181 / ADR-096 (DR-1 M-add-1): filter the LIVE half symmetric with the archive half. The
+    # arch/live asymmetry (only arch was filtered) WAS the SC-181 root cause -- a non-dict live row
+    # reached _plan -> children_by_parent -> owner_refs -> iter_sources -> .get on a str. One boundary
+    # fix covers every _observed caller (dry-run :1072, mint :1088, and the sibling reads); byte-identical
+    # on an all-dict backlog. Only the OBSERVED/planning view is filtered -- the written file keeps every
+    # row (the mint appends the original cands at :1149).
+    return [c for c in live if isinstance(c, dict)] + [c for c in arch if isinstance(c, dict)]
 
 
 def _now() -> str:
@@ -491,6 +497,19 @@ def _load_items(path: str, *, allow_empty: bool = False) -> list[dict]:
     for it in items:
         if not isinstance(it, dict):
             raise _Refuse(2, "usage", f"{p}: every item must be a JSON object; got {type(it).__name__}")
+        # SC-182 / ADR-096: recognize the one untrusted write-seam field at the shared boundary. This
+        # loop is _load_items' single choke point for all THREE callers -- persist (:1185), revise
+        # (:1271), and the read-only --scope-file replay (:1452) -- so routing a SUPPLIED component
+        # through the single-sourced _valid_component (:1637) here closes every write seam at once (the
+        # set-component parity SC-182 is about). RAW truthiness (isinstance-str + comp, NOT .strip())
+        # mirrors revise's `it.get('component') or prev` short-circuit exactly, so check == the persisted
+        # value with no differential (m2/M2); _valid_component then strips + rejects the reserved sentinel.
+        # Blank/absent/non-string is LEFT UNTOUCHED: a description-only revise grandfathers a legacy prev
+        # component, and no new .strip() crash path is introduced. Sits AFTER the non-dict guard above so
+        # it.get() only runs on a dict (m2).
+        comp = it.get("component")
+        if isinstance(comp, str) and comp:
+            it["component"] = _valid_component(comp)
     _check_identities(items, p)
     return items
 
@@ -1616,9 +1635,11 @@ def cmd_done(vault: Path, args) -> dict:
 
 
 def _valid_component(name: str) -> str:
-    """The WRITE-seam validator (slice-081 / AC4). Returns the stripped value that will PERSIST; raises
-    _Refuse(2,'usage') on the two rejectable shapes. check == persisted-value (slice-076): the single
-    normalized string is both validated here and written by the caller, so no check/write differential.
+    """The single-sourced component validator (slice-081 / AC4; slice-083 / ADR-096 wires _load_items).
+    Returns the stripped value that will PERSIST; raises _Refuse(2,'usage') on the two rejectable shapes.
+    check == persisted-value (slice-076): the single normalized string is both validated here and written
+    by the caller, so no check/write differential. Called by set-component AND (via _load_items) by
+    persist / revise / the --scope-file replay, so the _Refuse message stays verb-neutral.
 
     Two rejects, and only two (the field stays OPTIONAL — absent/None is a legal un-annotated item, set
     only by persist/revise, never by this verb):
@@ -1631,13 +1652,13 @@ def _valid_component(name: str) -> str:
     s = (name or "").strip()
     if not s:
         raise _Refuse(2, "usage",
-                      "set-component --component must be a non-empty name (an empty/whitespace value is "
-                      "not a component). To leave a capability un-annotated, simply do not annotate it.")
+                      "component must be a non-empty name (an empty/whitespace value is not a "
+                      "component). To leave a capability un-annotated, simply do not annotate it.")
     if s.casefold() == UNASSIGNED.casefold():
         raise _Refuse(2, "usage",
-                      f"set-component --component {name!r} is the reserved sentinel {UNASSIGNED!r} -- the "
-                      f"catch-all bucket un-annotated capabilities fall into, never a destination you "
-                      f"post into. Choose a real component name, or leave the capability un-annotated.")
+                      f"component {name!r} is the reserved sentinel {UNASSIGNED!r} -- the catch-all "
+                      f"bucket un-annotated capabilities fall into, never a destination you post into. "
+                      f"Choose a real component name, or leave the capability un-annotated.")
     return s
 
 
