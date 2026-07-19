@@ -27,12 +27,28 @@ AC5 (the aivlc reality replay) lives in test_product_scope_aivlc_replay.py.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
+from scripts.lib import _vault_paths  # noqa: E402  (repo-root bootstrap above)
+
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "aivlc-vault"
 SCRIPT = "scripts/lib/product_scope.py"
+
+# THIS repo's real vault, resolved DYNAMICALLY the same way the code does (AI_SDLC_VAULT_ROOT env ->
+# git-common-dir config pin -> computed <slug>-<shorthash> default) — never a hardcoded clone hash, which
+# would silently never-run on a differently-located clone or an env/config-overridden vault. VAULT_ROOT
+# never raises (an unresolvable path simply isn't a dir), but the access is guarded belt-and-braces.
+try:
+    _REAL_VAULT = _vault_paths.VAULT_ROOT
+except Exception:  # pragma: no cover - best-effort; a resolution failure just skips the env-gated test
+    _REAL_VAULT = None
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────────
@@ -267,17 +283,21 @@ def test_ac4_absent_concept_fails_visibly(run_script, tmp_path):
 
 
 @pytest.mark.skipif(
-    not (Path.home() / ".aisdlc" / "aisdlc-v2-a5c48e41").is_dir(),
-    reason="this project's real vault is not on this host (CI); the tmp-vault case above carries the AC",
+    _REAL_VAULT is None or not Path(_REAL_VAULT).is_dir()
+    or (Path(_REAL_VAULT) / "concept.json").exists(),
+    reason="runs ONLY on the dev host where THIS repo's resolved vault (_vault_paths.VAULT_ROOT) exists "
+           "AND its concept.json is still genuinely absent. Skipped on CI (no vault) and once /discover "
+           "has written a concept (the premise no longer holds — the portable tmp-vault case "
+           "test_ac4_absent_concept_fails_visibly is the unconditional durable evidence).",
 )
 def test_ac4_against_this_projects_real_vault(run_script):
-    """AC4's stated target verbatim: THIS vault, 68 slices deep, where concept.json is GENUINELY
-    absent (skills/discover/SKILL.md:111 declares it an all-modes output — it was never written).
-    Backfilling it is out_of_scope; the code must fail visibly instead. Skips off this laptop by
-    design — the portable tmp-vault case above is the durable evidence (C9)."""
-    real = Path.home() / ".aisdlc" / "aisdlc-v2-a5c48e41"
-    assert not (real / "concept.json").exists(), "premise changed: this vault now HAS a concept.json"
-    r = _run(run_script, real, "decompose-context", "--json")
+    """AC4's stated target verbatim: THIS project's real vault — resolved DYNAMICALLY via
+    _vault_paths.VAULT_ROOT (never a hardcoded clone hash) — where concept.json is GENUINELY absent must
+    fail VISIBLY (exit 3, naming /discover) rather than silently no-mint. Environment-gated BY DESIGN: the
+    skipif above guarantees the premise (vault present, concept.json still absent), so a vault that has
+    since gained a concept SKIPS (premise gone) instead of failing on a stale assertion; the portable
+    tmp-vault case above is the durable, unconditional evidence (C9)."""
+    r = _run(run_script, _REAL_VAULT, "decompose-context", "--json")
     assert r.returncode == 3
     assert "/discover" in (r.stdout + r.stderr)
 
