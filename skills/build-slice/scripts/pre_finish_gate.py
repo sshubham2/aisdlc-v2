@@ -22,6 +22,7 @@ LINT-MOCK with no changed test files):
   TF-1       brief_variants_audit  <slice> --variant test_first --strict-pre-finish  (only with --test-first)
   BRANCH-1   branch_workflow_audit <slice>
   ARTIFACT-LINT artifact_lint      --dir <slice> --skip-unknown     (3.18.7 schema-by-example)
+  STUB-DEAD-1 stub_dead_audit      --worktree <wt> [--base <ref>]   (diff-scoped stub/dead-code)
 
 The BC-1 *enumerate* pass (`--json`, no `--strict`) that lists the applicable Critical
 rules for the Builder to attest stays a manual PRE-step — this gate runs BC-1 once, in
@@ -262,6 +263,22 @@ def run_gate(args: argparse.Namespace) -> tuple[str, list[CheckResult]]:
     else:
         results.append(CheckResult(name="ADR-APPEND-1", status="SKIP",
                                    summary="no decisions/ dir for this vault"))
+
+    # STUB-DEAD-1 (slice-085 / ADR-099 + ADR-100) — deterministic, diff-scoped stub/dead-code check.
+    # Reads the slice diff and BLOCKS a newly-introduced stub body / broad silent-except /
+    # unreachable-after-terminal at the exact path:line. Its non-zero exit folds into the all-pass
+    # gate verdict below. M-add-3: thread the base the gate already resolved (--changed-from-git)
+    # via --base so STUB-DEAD-1 shares the EXACT scope of BC-1/LINT-MOCK instead of re-resolving it;
+    # when the caller passed the lists explicitly (no --changed-from-git), the detector self-resolves.
+    sd = [_PY, str(_SCRIPTS / "stub_dead_audit.py"), "--worktree", worktree]
+    # getattr, not args.changed_from_git: run_gate is called directly with a hand-built Namespace
+    # by sibling tests (test_adr_append_only_audit, test_pre_finish_gate_multi_critical_ack_split)
+    # that predate this field, so a bare attribute access would AttributeError them. Absent/None ->
+    # the detector self-resolves its base (M-add-3 fallback).
+    base_ref = getattr(args, "changed_from_git", None)
+    if base_ref:
+        sd += ["--base", base_ref]
+    results.append(_run("STUB-DEAD-1", sd, cwd))
 
     gate = "FAIL" if any(r.status == "FAIL" for r in results) else "PASS"
     return gate, results
