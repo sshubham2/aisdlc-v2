@@ -32,6 +32,12 @@ from scripts.lib import _stdout  # noqa: E402
 EVIDENCE_WRITERS: tuple[str, ...] = (
     "skills/validate-slice/SKILL.md",
     "skills/risk-spike/SKILL.md",
+    # slice-087 (AC4): the outbound upstream export declassifies critic-calibration-log.json and
+    # MUST route the payload through secret_scrub as a credential backstop. This is an intentional
+    # NON-SKILL.md entry (a bundled script, not a skill) — do NOT drop it in a later cleanup that
+    # assumes every writer is a SKILL.md; a behavioral suite (tests/test_calibration_export.py) is
+    # the real enforcement, this static marker is the tripwire that the reference still exists.
+    "skills/critic-calibrate/scripts/calibration_export.py",
 )
 
 _MARKER = "secret_scrub"
