@@ -46,15 +46,26 @@
     "state": "ok",
     "derivation": "trust-ledger",
     "reality_approved": [
-      { "what": "Feasibility check on the real environment confirmed it works, with conditions." },
-      { "what": "The project's regression test suite passed." }
+      {
+        "what": "Feasibility check on the real environment confirmed it works, with conditions."
+      },
+      {
+        "what": "The project's regression test suite passed."
+      }
     ],
     "model_approved": [
-      { "what": "Design review by the model asked for changes." },
-      { "what": "Code review by the model raised some notes." }
+      {
+        "what": "Design review by the model asked for changes."
+      },
+      {
+        "what": "Code review by the model raised some notes."
+      }
     ],
     "not_yet": [
-      { "what": "AC2 has not been checked against reality yet.", "ref": "AC2" }
+      {
+        "what": "AC2 has not been checked against reality yet.",
+        "ref": "AC2"
+      }
     ]
   },
   "sections": [
