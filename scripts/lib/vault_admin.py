@@ -19,6 +19,13 @@ Subcommands:
                           Restore an exported archive into this repo's vault dir. Refuses a
                           non-empty target unless --force (then the target is REPLACED). Prints a
                           write-pin reminder — an imported vault should be pinned to its new repo.
+  migrate [--vault P] [--reverse]
+                          Convert gate-log <-> the append-only shard store (slice-088 / ADR-106):
+                          forward explodes the flat gate-log.json into per-entry shards + a derived
+                          local cache; --reverse rebuilds the flat file and tears the shards down.
+                          Fail-closed, reversible, idempotent (a re-run is a no-op); holds the single
+                          gate-log.json.lock across the whole read->build->verify->publish, so a
+                          parallel-slice append can never be lost or duplicated. Actions are logged.
 
 Exit: 0 ok · 2 usage (not a git tree / unknown vault / unconfirmed delete / bad archive)
       · 3 genuine failure (slice-058/ADR-055: a fail-visible pin-write / git-init-actuator
@@ -40,7 +47,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from scripts.lib import _stdout
+from scripts.lib import _shard_store, _stdout
 from scripts.lib._vault_paths import (
     _CONFIG_REL, _canonical, _git_common_dir, external_store_path, resolve_base,
 )
@@ -286,6 +293,31 @@ def cmd_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_migrate(args: argparse.Namespace) -> int:
+    """Convert gate-log <-> the shard store (slice-088 / ADR-106). Fail-closed, reversible,
+    idempotent; holds the single gate-log.json.lock across the whole read -> build -> verify ->
+    publish so no parallel-slice append is lost or duplicated. Actions are logged to stdout
+    (auditable, must-not-defer #4); a build / verify / publish failure is fail-VISIBLE (stderr +
+    exit 3 — the genuine-failure code, DISTINCT from the benign usage exit 2), and the flat file
+    is left intact (a re-run is safe)."""
+    vault = _this_repo_vault(args.vault)
+    if vault is None:
+        return 2
+    if not vault.is_dir():
+        sys.stderr.write(f"vault_admin migrate: no vault at {vault} — nothing to migrate.\n")
+        return 2
+    rel_key, array = "gate-log.json", "entries"
+    try:
+        result = _shard_store.migrate(vault, rel_key, array, reverse=args.reverse,
+                                      log=lambda m: print(m))
+    except Exception as exc:  # noqa: BLE001 — fail-closed actuator: ANY failure -> exit 3, flat intact
+        sys.stderr.write(f"vault_admin migrate: FAILED ({type(exc).__name__}: {exc}) — fail-closed; "
+                         f"the flat {rel_key} is left intact and no entry was lost or reordered.\n")
+        return 3
+    print(f"migrate: {result}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     p = argparse.ArgumentParser(prog="vault_admin", description="Vault lifecycle admin (4.7).")
@@ -305,9 +337,16 @@ def main(argv: list[str] | None = None) -> int:
     im.add_argument("archive", help="path to the .tgz produced by export")
     im.add_argument("--vault", default=None, help="target vault path (default: computed for this repo)")
     im.add_argument("--force", action="store_true", help="replace a non-empty target vault")
+    mg = sub.add_parser("migrate", help="convert gate-log <-> the shard store (slice-088; "
+                                        "fail-closed, reversible, idempotent)")
+    mg.add_argument("--vault", default=None, help="vault path (default: computed for this repo)")
+    mg.add_argument("--reverse", action="store_true",
+                    help="rebuild the flat gate-log.json from shards, remove the shard dir, and "
+                         "un-ignore the flat file (the symmetric rollback of a forward migrate)")
     args = p.parse_args(argv)
     return {"write-pin": cmd_write_pin, "git-init": cmd_git_init, "list": cmd_list,
-            "uninstall": cmd_uninstall, "export": cmd_export, "import": cmd_import}[args.cmd](args)
+            "uninstall": cmd_uninstall, "export": cmd_export, "import": cmd_import,
+            "migrate": cmd_migrate}[args.cmd](args)
 
 
 if __name__ == "__main__":

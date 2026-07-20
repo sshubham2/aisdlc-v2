@@ -113,7 +113,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]  # <plugin>/scripts/lib/vault
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from scripts.lib import _stdout, id_allocator
+from scripts.lib import _shard_store, _stdout, id_allocator
 from scripts.lib._vault_paths import VAULT_ROOT
 from scripts.lib._vault_write import (
     DuplicateAppendSuppressed,
@@ -443,16 +443,87 @@ def _cmd_query(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_append(args: argparse.Namespace) -> int:
+class _ReRouteToShard(Exception):
+    """slice-088 (B2 / M-add-1): raised INSIDE the flat append mutate (UNDER the single lock) when a
+    concurrent forward migrate has published the shard dir since the lock-free fast-path route check.
+    Writing the row to the (now-derived) cache would strand it there — the next regen rebuilds the
+    cache from shards and drops it (the silent lost-update B2 flagged). So ``_cmd_append`` catches
+    this and re-routes to the shard store: the flat-vs-shard route is FINALIZED under the lock."""
+
+
+def _sharded_append(args: argparse.Namespace, root: Path, target: Path, array: str,
+                    element: Any) -> int:
+    """slice-088 (ADR-106 / M2): the sharded-aggregate append path — the faithful behavioral twin
+    (CC-001) of the flat ``--stdin`` bounded-dedup contract, routed to ``_shard_store`` instead of a
+    whole-file RMW of the derived cache. gate-log is NOT a managed-kind file, so id-minting /
+    ``--unique-key`` / bc-shape guards do not apply here; the bounded dedup guard + fail-visible
+    error posture do. The dedup predicate is evaluated UNDER the shard store's single lock, so the
+    check + write are atomic (no concurrent append can slip between them)."""
+    rel = _vault_rel_key(root, target)
+    dedup_check = None
+    dedup_tail = 0
+    if args.stdin and not args.allow_duplicate:
+        # same predicate + window K as the flat path; recent = the bounded seq-ordered tail.
+        dedup_tail = len(element) if isinstance(element, list) else _DEDUP_WINDOW
+        dedup_check = lambda recent: _is_bounded_duplicate(element, recent, None)  # noqa: E731
     try:
-        target = _resolve_in_vault(_root(args), args.file)
+        _shard_store.append_entry(root, rel, array, element,
+                                  dedup_check=dedup_check, dedup_tail=dedup_tail)
+    except DuplicateAppendSuppressed as dup:
+        # idempotent SUCCESS — identical contract to the flat path (exit 0 + machine-readable stdout
+        # signal + greppable stderr note; array count +0). A non-zero would re-trigger the harness
+        # retry the guard exists to absorb.
+        print(json.dumps({"suppressed": True, "array": dup.array, "count": dup.count},
+                         ensure_ascii=False))
+        _err(f"DUPLICATE_SUPPRESSED array={dup.array} count={dup.count} — identical --stdin "
+             f"element already present in the last {_DEDUP_WINDOW}; append skipped "
+             f"(array unchanged; use --allow-duplicate to force)")
+        return 0
+    except FileExistsError as exc:
+        # O_EXCL seq collision — the fail-visible ledger-integrity stop (B1), never a silent drop.
+        _err(f"sharded append to {target} failed — shard seq collision (fail-visible per R-7): {exc}")
+        return 2
+    except TimeoutError as exc:
+        _err(f"sharded append to {target} timed out — another process holds the gate-log lock; "
+             f"wait a moment or check for a stalled session, then retry: {exc}")
+        return 2
+    except (ValueError, RuntimeError, OSError) as exc:
+        _err(f"sharded append to {target} failed (fail-visible per R-7): {exc}")
+        return 2
+    return 0
+
+
+def _cmd_append(args: argparse.Namespace) -> int:
+    root = _root(args)
+    try:
+        target = _resolve_in_vault(root, args.file)
         element = _element_source(args)
     except ValueError as exc:
         _err(str(exc)); return 2
     except OSError as exc:
         _err(f"cannot read content: {exc}"); return 2
 
+    # slice-088 (ADR-106): route an allowlisted, ALREADY-MIGRATED sharded aggregate's append to the
+    # record-level shard store instead of a whole-file RMW of the derived cache. A sharded aggregate
+    # requires an EXPLICIT --array (gate-log has two list fields, so auto-detect returns None); the
+    # predicate keys on the vault-relative POSIX path (m3) AND shard-dir-exists (pre-migration →
+    # the flat safe_mutate_text path below, unchanged — the AC2 backward-compatible fallback).
+    # NOTE: a distinct name (`shard_rel`) — the mutate() closure below LOCALLY assigns `rel` in its
+    # managed-kind branches, so reusing `rel` here would shadow into an UnboundLocalError.
+    shard_rel = _vault_rel_key(root, target)
+    shardable = bool(args.array) and _shard_store.sharded_dir_name(shard_rel, args.array) is not None
+    # Fast path: an already-migrated sharded aggregate routes straight to the shard store (avoids
+    # loading the whole derived cache — the M4 hot path). The under-lock re-check in mutate() below
+    # closes the residual forward-migrate-vs-append race the lock-free check leaves open.
+    if shardable and _shard_store.is_sharded(root, shard_rel, args.array):
+        return _sharded_append(args, root, target, args.array, element)
+
     def mutate(text: str) -> str:
+        # slice-088 (B2 / M-add-1): FINALIZE the flat-vs-shard route UNDER the lock. If a concurrent
+        # migrate published the shard dir since the lock-free fast-path check, do NOT write the row
+        # into the now-derived cache (the next regen would drop it) — re-route to the shard store.
+        if shardable and _shard_store.is_sharded(root, shard_rel, args.array):
+            raise _ReRouteToShard()
         was_create = not text.strip()  # 4.5: a brand-new file gets a _plugin_version stamp
         try:
             data = json.loads(text) if text.strip() else {}
@@ -554,6 +625,10 @@ def _cmd_append(args: argparse.Namespace) -> int:
 
     try:
         return _run_mutate(target, mutate)
+    except _ReRouteToShard:
+        # slice-088 (B2/M-add-1): a concurrent migrate published the shard dir while we held the lock
+        # for a flat write; the lock is now released — re-route this append to the shard store.
+        return _sharded_append(args, root, target, args.array, element)
     except DuplicateAppendSuppressed as dup:
         # slice-050 / SC-041 (M-add-1): idempotent SUCCESS. The identical --stdin element is
         # already present within the recent window, so the desired end state (one record) holds.
