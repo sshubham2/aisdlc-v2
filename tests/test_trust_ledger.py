@@ -108,8 +108,12 @@ def test_ac1_zero_authorship_and_provenance(tmp_path):
     assert any(l["source"]["file"] == "gate-log.json" and "validate-slice" in l["text"]
                for l in led["reality_confirmed"])
 
-    # ZERO model authorship: every line field is a structured key — no free-text prose field
-    allowed = {"text", "source", "reality_contact", "reality_proxy", "at", "reason", "state"}
+    # ZERO model authorship: every line field is a structured key — no free-text prose field.
+    # slice-086 (M3): gate/verdict/ac added CONSCIOUSLY to the closed set — each a structured
+    # gate-log enum / mission-brief id, not free text — so the zero-authorship invariant is
+    # EXTENDED, not weakened (story_signoff projects from these instead of parsing `text`).
+    allowed = {"text", "source", "reality_contact", "reality_proxy", "at", "reason", "state",
+               "gate", "verdict", "ac"}
     for key in _LINE_ARRAYS:
         for line in led[key]:
             assert set(line).issubset(allowed), (key, set(line) - allowed)
@@ -298,6 +302,24 @@ def test_m2_weakest_proxy_scoped_and_labeled(tmp_path):
 def test_proxy_rank_set_equal_to_gate_log():
     assert set(PROXY_RANK) == set(_PROXIES)
     assert len(PROXY_RANK) == len(_PROXIES)          # no duplicate rank entries
+
+
+# --- M3 (slice-086): the structured gate/verdict/ac enrichment does NOT change render() ---
+
+def test_enrichment_does_not_change_render(tmp_path):
+    """TF-1 characterization pin: render() reads only text/source/reality_contact/reality_proxy,
+    so the additive gate/verdict/ac fields are invisible to it — the human-facing view (and the
+    ship_receipt twin's contract, which is `text`) is byte-identical with or without enrichment."""
+    led = compose(_seed(tmp_path / "enrich"), "slice-050")
+    # a reality-confirmed gate line DOES carry the new structured fields
+    assert any(l.get("gate") and l.get("verdict") for l in led["reality_confirmed"])
+    stripped = json.loads(json.dumps(led))
+    for key in _LINE_ARRAYS:
+        for line in stripped[key]:
+            for k in ("gate", "verdict", "ac"):
+                line.pop(k, None)
+    for fmt in ("text", "md"):
+        assert render(stripped, fmt) == render(led, fmt)   # enrichment invisible to the view
 
 
 # --- render is a PURE function of the composed JSON --------------------------------------

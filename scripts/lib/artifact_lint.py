@@ -164,6 +164,13 @@ OPTIONAL_KEYS: dict[str, frozenset[str]] = {
     # reds every live, revisions-less product-scope.json. An absent key is a legal,
     # PERMANENT state meaning "empty history", never a state to migrate away from.
     "product-scope": frozenset({"revisions"}),
+    # slice-086: `product_shape_framing` is a bare STRING the narrator writes ONLY when it
+    # has a useful one-line framing (agents/slice-story.md: "Omit this field if you have no
+    # useful framing") — a framing-less story (e.g. a degenerate/unassigned product scope)
+    # legitimately omits it. Bare strings can't carry the dict-with-`_note` optional marker,
+    # so this is the only mechanism. (`signoff`/`trust_signoff` are object-valued and already
+    # optional via their own `_note` marker.)
+    "story-sections": frozenset({"product_shape_framing"}),
 }
 
 # ── slice-013 (ADR-009): documented-enum coverage ════════════════════════════════════

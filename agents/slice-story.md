@@ -113,15 +113,6 @@ Return exactly this object (omit optional fields you don't use; omit whole secti
   "mode": "standard",
   "risk_tier": "medium",
   "tldr_md": "One short paragraph (2-4 sentences) a busy reader can read alone and get the gist. Plain language.",
-  "signoff": {
-    "reality_approved": [
-      { "what": "Plain sentence: what was proven against the REAL world (a spike on a real environment; real-device/data testing).", "by": "spike on a real server", "ref": "R-27" }
-    ],
-    "model_approved": [
-      { "what": "Plain sentence: what a REVIEW (design or code) checked and signed off — a model reading the plan/code, not reality.", "by": "independent design review", "ref": "C1" }
-    ],
-    "not_yet": [ "Plain sentence: a check that has not happened yet at this stage (e.g. real-device testing, before the build)." ]
-  },
   "sections": [
     {
       "heading": "What we set out to do",
@@ -149,11 +140,7 @@ Field notes:
 - `items[].badge` — optional short tag the renderer shows as a chip: use `target` (an acceptance outcome), `proven` / `changed-course` (spike results), `fixed` / `noted` / `deferred` (review outcomes), `decision`. Plain words only.
 - `items[].ref` — optional trace tag (`"AC1"`, `"C1"`, `"ADR-014"`, `"R-27"`). Shown small and grey, for engineers who want to trace it. Never put a ref in prose.
 - `glossary[]` — optional; define any genuinely technical term you couldn't avoid, in one plain sentence. Keep it short (0-6 terms).
-- `signoff` — optional but **strongly preferred**: separate WHO has actually said "yes" to this slice by WHAT did the approving. This is the one distinction the owner most needs and the artifacts blur:
-  - `reality_approved[]` — things proven against the **real world**: a spike that ran on a real environment (`spikes/*.json` with a verdict), and — if the slice has been reality-tested — `validation.json` results on real devices/data. Reality can say a hard "no", so a reality "yes" is the strongest kind.
-  - `model_approved[]` — things a **review** signed off: the design review (`critique.json` / `critique-review.json`) or the code review (`code-review.json`). This is a model reading the plan or the code — valuable, but NOT the same as reality testing it. Be honest: "the design was reviewed and looked sound" is model-approved, not reality-approved.
-  - `not_yet[]` — plain sentences for checks that haven't happened at this stage (most importantly, before the build: "real-device/real-data testing hasn't happened yet"). Don't imply a slice is reality-proven when only a review has happened.
-  Each `reality_approved`/`model_approved` item is `{what, by, ref?}` — `what` is a plain sentence, `by` names the source in plain words ("spike on a real server", "independent design review"), `ref` is the optional trace tag. Omit a list that is empty; omit the whole `signoff` only if there is genuinely nothing to say (e.g. a pre-build slice with no spikes and no review yet).
+- **The "Who has signed off" panel is NOT yours to write** (slice-086 / [[ADR-102]]). The three trust columns — *Proven against reality* / *Reviewed by the model* / *Not yet proven against reality* — are derived MECHANICALLY from the deterministic trust ledger (the recorded gate outcomes and their reality-contact) and injected by the skill on the main thread. This is deliberate: whether something is *proven against reality* vs *only reviewed by a model* is a FACT read from the evidence, never a characterization a narrator makes — so a model can never (even accidentally) present a model-only pass as reality-proven. Do **not** author a `signoff` (or `trust_signoff`) block; if you include one it is ignored and overwritten. Write only the prose (objective, build narrative, what the review changed) in `sections[]`.
 
 ## Tone & style
 - **Plain first, precise second.** Lead each section with meaning a non-engineer gets; add the precise technical detail in `tech_note_md` or as a parenthetical the engineer will value.
