@@ -55,6 +55,7 @@ _REPO = Path(__file__).resolve().parents[3]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
+from scripts.lib import _shard_store  # noqa: E402
 from scripts.lib import _stdout  # noqa: E402
 from scripts.lib import expert_provenance as ep  # noqa: E402
 
@@ -269,9 +270,16 @@ def _render_reviews(slice_dir: Path, slice_id: str, gate_log_path: Path) -> str:
 
     # gate-log rows for this slice
     canon = _canon_slice(slice_id)
-    gl, _ = _load_json(gate_log_path) if gate_log_path else (None, None)
+    # slice-089/SC-194/AC5 (M1): derive-on-missing so the panel shows real rows on a synced/cloned
+    # vault (git-ignored cache absent, shard log present) instead of silently empty. A torn cache/
+    # shard RAISES (fail-visible) — caught by render()/render_story as a visible degrade, per
+    # must_not_defer[0], never swallowed into [].
+    if gate_log_path:
+        entries = _shard_store.read_entries(gate_log_path.parent, gate_log_path.name, "entries")
+    else:
+        entries = []
     gate_rows = []
-    for entry in ((gl or {}).get("entries") or []):
+    for entry in entries:
         if isinstance(entry, dict) and _canon_slice(entry.get("slice", "")) == canon:
             if entry.get("kind") == "miss":  # a RECALL/miss row carries no verdict (gate_log two-kind schema)
                 detail = "recall MISS — an issue this gate should have caught but missed"

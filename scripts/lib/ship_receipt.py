@@ -36,7 +36,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from scripts.lib import _stdout  # noqa: E402
+from scripts.lib import _shard_store, _stdout  # noqa: E402
 
 _SLICE_RE = re.compile(r"^(slice-\d+)(?:-.+)?$")
 _BRANCH_RE = re.compile(r"^slice/(\d+)(?:-.+)?$")
@@ -102,8 +102,16 @@ def cmd_emit(args: argparse.Namespace) -> int:
     deferral = ship.get("deferral") or {}
 
     gates: list[dict] = []
-    gl = _load(vault / "gate-log.json")
-    for row in gl.get("entries") or []:
+    # slice-089/SC-194/AC2: derive-on-missing — on a synced/cloned vault the git-ignored gate-log
+    # cache is absent but the shard log holds the rows; read_entries rebuilds them (read-only). A
+    # torn cache/shard surfaces (fail-visible) instead of a receipt claiming zero gates.
+    try:
+        entries = _shard_store.read_entries(vault)
+    except (OSError, ValueError, RuntimeError) as exc:
+        sys.stderr.write(f"ship_receipt: cannot read the gate-log for {canon} "
+                         f"({type(exc).__name__}: {exc}) — fail-visible; no receipt written.\n")
+        return 2
+    for row in entries:
         if isinstance(row, dict) and str(row.get("slice", "")) == canon and "verdict" in row:
             gates.append({k: row[k] for k in ("gate", "verdict", "reality_contact", "reality_proxy", "at")
                           if k in row})

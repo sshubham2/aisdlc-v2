@@ -110,3 +110,39 @@ def test_verify_non_slice_branch_not_applicable(run_script, tmp_path):
     r = run_script(SCRIPT, ["verify", "--branch", "feature/login", "--repo-root", tmp_path])
     assert r.returncode == 0
     assert "not applicable" in r.stdout
+
+
+# ── slice-089 / SC-194 (AC2): the gate-log read derives on a synced/cloned vault ──
+
+def test_emit_derives_gate_rows_on_synced_vault(run_script, vault, tmp_path):
+    """AC2: on a sharded vault whose derived cache is absent (a clone/sync), cmd_emit derives the
+    slice's real gate rows from the shard log, not zero — byte-identical to the cache-present run."""
+    from scripts.lib import _shard_store as S
+    name = _seed_vault(vault)  # flat gate-log.json with slice-007 rows (1 verdict row: risk-spike)
+    repo = tmp_path / "repo"; repo.mkdir()
+    r0 = run_script(SCRIPT, ["emit", "--slice", name, "--vault", vault, "--repo-root", repo])
+    assert r0.returncode == 0, r0.stderr
+    baseline = json.loads((repo / ".aisdlc" / "receipts" / "slice-007.json").read_text(encoding="utf-8"))["gates"]
+    assert [g["gate"] for g in baseline] == ["risk-spike"]
+
+    # migrate to shards, then DELETE the derived cache -> a synced/cloned vault (cache git-ignored).
+    assert S.migrate(vault, "gate-log.json", "entries")["action"] == "migrated"
+    (vault / "gate-log.json").unlink()
+    repo2 = tmp_path / "repo2"; repo2.mkdir()
+    r1 = run_script(SCRIPT, ["emit", "--slice", name, "--vault", vault, "--repo-root", repo2])
+    assert r1.returncode == 0, r1.stderr
+    derived = json.loads((repo2 / ".aisdlc" / "receipts" / "slice-007.json").read_text(encoding="utf-8"))["gates"]
+    assert derived, "gate rows must be non-empty (derived from shards), not silently zero"
+    assert derived == baseline, "derived gate rows must equal the cache-present receipt"
+
+
+def test_emit_fails_visible_on_torn_gate_log(run_script, vault, tmp_path):
+    """slice-089/must_not_defer[0]: a torn gate-log with NO shards must SURFACE (exit 2 + stderr),
+    never be swallowed into a receipt claiming zero gates. Proves the fail-visible RED path (BC-PROJ-12)."""
+    name = _seed_vault(vault)  # valid validation.json + a valid flat gate-log
+    (vault / "gate-log.json").write_text('{"entries": [trunc', encoding="utf-8")  # torn, no shard dir
+    repo = tmp_path / "repo"; repo.mkdir()
+    r = run_script(SCRIPT, ["emit", "--slice", name, "--vault", vault, "--repo-root", repo])
+    assert r.returncode == 2, f"a torn gate-log must fail-visibly (exit 2), got {r.returncode}: {r.stderr}"
+    assert "gate-log" in r.stderr
+    assert not (repo / ".aisdlc" / "receipts" / "slice-007.json").exists(), "no receipt on a torn log"

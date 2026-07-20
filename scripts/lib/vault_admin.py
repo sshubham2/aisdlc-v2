@@ -34,6 +34,7 @@ Exit: 0 ok · 2 usage (not a git tree / unknown vault / unconfirmed delete / bad
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -318,6 +319,31 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_read_entries(args: argparse.Namespace) -> int:
+    """Print a (possibly sharded) aggregate's entries as JSON — the shell entry point for SKILL.md
+    gate-log reads that cannot import _shard_store (slice-089 / SC-194). Derive-on-missing via
+    _shard_store.read_entries: on a synced/cloned vault whose git-ignored cache is absent, the
+    entries are rebuilt from the shard log (read-only, no write-back).
+
+    Exit 3 (+ stderr) on a GENUINE read failure — a torn cache with no shards / a torn shard —
+    matching vault_admin's 0-ok / 2-usage / 3-genuine-failure taxonomy (m1/critique, ADR-055), NOT
+    the usage exit 2 (which would collide with 'bad args / unknown vault')."""
+    vault = _this_repo_vault(args.vault)
+    if vault is None:
+        return 2
+    if not vault.is_dir():
+        sys.stderr.write(f"vault_admin read-entries: no vault at {vault}.\n")
+        return 2
+    try:
+        entries = _shard_store.read_entries(vault, args.rel_key, args.array)
+    except Exception as exc:  # noqa: BLE001 — fail-visible genuine failure (torn cache/shard) -> exit 3
+        sys.stderr.write(f"vault_admin read-entries: FAILED to read {args.rel_key} "
+                         f"({type(exc).__name__}: {exc}) — fail-visible; no rows emitted.\n")
+        return 3
+    print(json.dumps(entries, ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     p = argparse.ArgumentParser(prog="vault_admin", description="Vault lifecycle admin (4.7).")
@@ -343,10 +369,17 @@ def main(argv: list[str] | None = None) -> int:
     mg.add_argument("--reverse", action="store_true",
                     help="rebuild the flat gate-log.json from shards, remove the shard dir, and "
                          "un-ignore the flat file (the symmetric rollback of a forward migrate)")
+    re_ = sub.add_parser("read-entries", help="print a sharded aggregate's entries as JSON, "
+                                              "deriving on a missing cache (slice-089)")
+    re_.add_argument("--vault", default=None, help="vault path (default: computed for this repo)")
+    re_.add_argument("--rel-key", default="gate-log.json",
+                     help="the aggregate's vault-relative cache file (default: gate-log.json)")
+    re_.add_argument("--array", default="entries",
+                     help="the array key to read (only 'entries' is supported today)")
     args = p.parse_args(argv)
     return {"write-pin": cmd_write_pin, "git-init": cmd_git_init, "list": cmd_list,
             "uninstall": cmd_uninstall, "export": cmd_export, "import": cmd_import,
-            "migrate": cmd_migrate}[args.cmd](args)
+            "migrate": cmd_migrate, "read-entries": cmd_read_entries}[args.cmd](args)
 
 
 if __name__ == "__main__":
