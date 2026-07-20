@@ -79,7 +79,9 @@ mined from reflection prose:
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; M={'critique','critique-review','code-review'}; print(json.dumps([e for e in rows if e.get('gate') in M and e.get('kind') != 'miss'],indent=2))" "$VAULT"
+# slice-089/SC-194: derive-on-missing via the read-entries CLI (a synced/cloned vault has no local cache), captured with an explicit exit-check so a torn log surfaces read-entries' clean stderr, not a downstream JSON traceback (m3); a read failure degrades LOUDLY to "no gate-log data" (never a silent []).
+rows_json="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" read-entries --vault "$VAULT")" || { echo "critic-calibrate: gate-log unreadable via read-entries (see stderr above) -- proceeding with 'no gate-log data'." >&2; rows_json="[]"; }
+printf '%s' "$rows_json" | $PY -c "import json,sys; rows=json.load(sys.stdin); M={'critique','critique-review','code-review'}; print(json.dumps([e for e in rows if e.get('gate') in M and e.get('kind') != 'miss'],indent=2))"
 # per-gate precision/recall via the shipped, tested computation (absent findings_real -> UNKNOWN, never 0):
 for g in critique critique-review code-review; do $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/triage_precision.py" --gate-precision --gate "$g" --gate-log "$VAULT/gate-log.json"; done
 ```
@@ -100,7 +102,9 @@ error that passed every gate, the **highest-signal ADD evidence** there is. Extr
 
 ```bash
 VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"  # 4.6.1: resolve per-invocation
-$PY -c "import json,os,sys; v=sys.argv[1]; f=f'{v}/gate-log.json'; rows=json.load(open(f,encoding='utf-8')).get('entries',[]) if os.path.exists(f) else []; print(json.dumps([e for e in rows if e.get('kind')=='miss'],indent=2))" "$VAULT"
+# slice-089/SC-194: derive-on-missing via read-entries + exit-check (m3), same fail-visible degrade as 1e above.
+rows_json="$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_admin.py" read-entries --vault "$VAULT")" || { echo "critic-calibrate: gate-log unreadable via read-entries (see stderr above) -- proceeding with 'no gate-log data'." >&2; rows_json="[]"; }
+printf '%s' "$rows_json" | $PY -c "import json,sys; rows=json.load(sys.stdin); print(json.dumps([e for e in rows if e.get('kind')=='miss'],indent=2))"
 ```
 
 The agent weighs these alongside the reflection misses when proposing ADD checks (the `>=3-distinct-slices` threshold

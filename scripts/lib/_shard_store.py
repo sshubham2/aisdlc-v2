@@ -185,6 +185,80 @@ def _recent_entries(shard_dir: Path, n: int) -> list:
     return [json.loads((shard_dir / _shard_name(s)).read_text(encoding="utf-8")) for s in seqs[-n:]]
 
 
+# ── read-side derive-on-missing (slice-089 / SC-194 / ADR-107) ────────────────────
+
+def read_entries(vault_root: Path | str, rel_key: str = "gate-log.json",
+                 array: str = "entries") -> list:
+    """THE single derive-on-missing read path for a (possibly sharded) aggregate's array.
+
+    slice-088 demoted the flat ``gate-log.json`` to a git-ignored, node-local, DERIVED cache with
+    the shard log as the source of truth. On a cloned/synced/replica vault the cache is ABSENT (the
+    ``.gitignore`` line keeps it un-synced), so a naive ``json.load(cache).get(array, [])`` silently
+    reads ZERO rows even though the shard log holds them. This composes the EXISTING
+    ``is_sharded()``/``sharded_dir_name()``/``derive()`` — NO second projection path.
+
+    CQRS/read-model recovery, RECOVERY HALF ONLY (ADR-107): read-only + lock-free — the derive
+    branch returns the in-memory projection and NEVER writes the cache back / acquires the lock.
+    Read-repair (Dynamo/Cassandra anti-entropy: persist the rebuilt snapshot) is DELIBERATELY not
+    imported — it would race the single writer's lock-free in-lock cache publish (ADR-106 B2 / the
+    non-reentrant sidecar lock, slice-088 T1). The next writer regenerates the durable cache.
+
+    Resolution — source-of-truth-keyed, fail-visible:
+      * FAST PATH: serve the local cache ONLY when it parses to a dict whose ``array`` is a LIST
+        (M2). A JSON-valid-but-listless cache (``{}`` / ``{"entries": null}``) is NOT served — it
+        falls through to derive, so it can never silently return ``[]`` while shards hold rows.
+      * RECOVERY: cache absent / torn / listless AND the shard dir is present -> ``derive()[array]``
+        (never ``[]``). A torn-or-listless-but-PRESENT cache that heals from shards emits a stderr
+        WARNING (M-add-1 / DR-1) so genuine local cache corruption + the O(N)-derive-per-read cost
+        are visible-but-non-fatal (must_not_defer[3]); a plain cache-ABSENT derive (a fresh
+        clone/replica with no local cache) is the EXPECTED path and does NOT warn.
+      * FAIL: torn cache with NO shard dir -> RAISE; a torn shard -> ``derive()`` RAISES, propagated.
+      * EMPTY: neither a servable cache NOR a shard dir -> ``[]`` (a legitimate empty log; an
+        empty-but-present shard dir also correctly derives to ``[]``).
+
+    m2: ``array`` is guarded to ``'entries'`` — ``derive()`` hardcodes ``doc['entries']`` (see
+    ``derive`` above), so the param only serves the sole ``_SHARDED`` member today; the guard
+    prevents illusory generality until ``derive()`` is parameterized.
+    """
+    if array != "entries":
+        raise ValueError(
+            f"read_entries: array={array!r} is unsupported — derive() hardcodes 'entries', so the "
+            "read path serves only the single sharded aggregate (gate-log/entries) today; "
+            "parameterize derive() before adding a second aggregate array.")
+    vault_root = Path(vault_root)
+    cache_path = vault_root / rel_key
+
+    # FAST PATH — serve the local cache only when its `array` is a LIST (M2).
+    cache_torn = False
+    if cache_path.exists():
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            cache_torn = True  # unparseable -> not servable; try to recover from shards
+        else:
+            if isinstance(cached, dict) and isinstance(cached.get(array), list):
+                return cached[array]
+            cache_torn = True  # JSON-valid but list-less -> not servable; fall through to derive
+
+    # RECOVERY — the aggregate is sharded (allowlisted AND its shard dir exists) -> derive.
+    if is_sharded(vault_root, rel_key, array):
+        doc = derive(vault_root / sharded_dir_name(rel_key, array))  # RAISES on a torn/dup shard
+        if cache_torn:  # a torn/listless-but-PRESENT cache was healed from the shard log (M-add-1)
+            sys.stderr.write(
+                f"_shard_store.read_entries: WARNING — the local cache {cache_path} was "
+                "unreadable/listless; healed from the shard log (read-only, no write-back). Expected "
+                "on a synced/replica vault, but this masks genuine local cache corruption and costs "
+                "an O(N) derive per read until the next writer regenerates the cache.\n")
+        return doc.get(array, [])
+
+    # FAIL / EMPTY — no shard dir to recover from.
+    if cache_torn:  # torn cache AND no shards -> genuine failure, never a silent []
+        raise ValueError(
+            f"read_entries: {cache_path} is present but unreadable/not-a-list and there is no shard "
+            "dir to recover from — refusing to silently return [] (fail-visible).")
+    return []  # neither a servable cache nor a shard dir -> legitimate empty log
+
+
 # ── cache publish (LOCK-FREE — caller already holds the lock) ────────────────────
 
 def _publish_cache_locked(cache_path: Path, doc: Any) -> None:

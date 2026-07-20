@@ -247,3 +247,65 @@ def test_gate_summary_quiet_flag_needs_five_runs_and_zero_raised():
     assert s["gates"][0]["quiet"] is True
     s4 = gate_summary(entries[:4])
     assert s4["gates"][0]["quiet"] is False
+
+
+# ── slice-089 / SC-194: the CLI gate-log reads derive on a synced/cloned vault ────
+
+def _seed_and_shard(vault: Path, rows: list):
+    """Write a flat gate-log, migrate it to shards, then delete the derived cache (a synced vault)."""
+    from scripts.lib import _shard_store as S
+    (vault / "gate-log.json").write_text(json.dumps({"entries": list(rows)}), encoding="utf-8")
+    S.migrate(vault, "gate-log.json", "entries")
+    (vault / "gate-log.json").unlink()
+
+
+def test_gate_precision_cli_derives_on_missing_cache(run_script, vault):
+    """AC3 (transitive, critic-calibrate:84): --gate-precision derives on a cache-absent sharded vault."""
+    rows = [
+        {"gate": "critique", "verdict": "needs-fixes", "findings_count": 2, "findings_real": 2, "findings_noise": 0},
+        {"gate": "critique", "verdict": "clean", "findings_count": 0, "findings_real": 0, "findings_noise": 0},
+    ]
+    (vault / "gate-log.json").write_text(json.dumps({"entries": rows}), encoding="utf-8")
+    gl = str(vault / "gate-log.json")
+    r0 = run_script("scripts/lib/triage_precision.py", ["--gate-precision", "--gate", "critique", "--gate-log", gl])
+    assert r0.returncode == 0, r0.stderr
+    base = json.loads(r0.stdout)
+    assert base["runs"] == 2 and base["catches"] == 2
+
+    _seed_and_shard(vault, rows)
+    r1 = run_script("scripts/lib/triage_precision.py", ["--gate-precision", "--gate", "critique", "--gate-log", gl])
+    assert r1.returncode == 0, r1.stderr
+    assert json.loads(r1.stdout) == base, "gate-precision must derive the same result from shards"
+
+
+def test_summary_cli_derives_on_missing_cache(run_script, vault, tmp_path):
+    """AC4 (/pulse): --summary derives-on-missing so per-gate hit-rate is non-zero on a synced vault;
+    a genuinely-empty log (neither cache nor shards) still returns the {absent} sentinel."""
+    rows = [{"gate": "critique", "verdict": "clean", "findings_count": 0, "reality_contact": "low"},
+            {"gate": "validate-slice", "verdict": "pass", "findings_count": 0, "reality_contact": "high"}]
+    (vault / "gate-log.json").write_text(json.dumps({"entries": rows}), encoding="utf-8")
+    gl = str(vault / "gate-log.json")
+    r0 = run_script("scripts/lib/triage_precision.py", ["--summary", "--gate-log", gl])
+    assert r0.returncode == 0, r0.stderr
+    assert json.loads(r0.stdout)["total_entries"] == 2
+
+    _seed_and_shard(vault, rows)
+    r1 = run_script("scripts/lib/triage_precision.py", ["--summary", "--gate-log", gl])
+    assert r1.returncode == 0, r1.stderr
+    assert json.loads(r1.stdout)["total_entries"] == 2, "summary must derive non-zero rows on a synced vault"
+
+    # genuinely-empty (neither cache nor shards) -> {absent} sentinel preserved.
+    empty = tmp_path / "emptyvault"; empty.mkdir()
+    r2 = run_script("scripts/lib/triage_precision.py", ["--summary", "--gate-log", str(empty / "gate-log.json")])
+    assert r2.returncode == 0, r2.stderr
+    assert json.loads(r2.stdout) == {"absent": True}
+
+
+def test_summary_fails_visible_on_torn_gate_log(run_script, tmp_path):
+    """slice-089/must_not_defer[0]: a torn gate-log with NO shards fails visibly (exit 2 + stderr)
+    rather than degrading to {absent}/[] -- the fail-visible RED path (BC-PROJ-12)."""
+    v = tmp_path / "torn"; v.mkdir()
+    (v / "gate-log.json").write_text('{"entries": [trunc', encoding="utf-8")  # torn, no shard dir
+    r = run_script("scripts/lib/triage_precision.py", ["--summary", "--gate-log", str(v / "gate-log.json")])
+    assert r.returncode == 2, f"a torn gate-log must fail-visibly (exit 2), got {r.returncode}: {r.stderr}"
+    assert "gate-log" in r.stderr

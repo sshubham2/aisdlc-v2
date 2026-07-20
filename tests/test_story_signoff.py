@@ -392,3 +392,17 @@ def test_ac4_malformed_gate_log_injects_unavailable(tmp_path):
     assert ci.returncode == 0, ci.stderr
     block = json.loads(sections.read_text(encoding="utf-8"))["trust_signoff"]
     assert block["state"] == "unavailable" and block["reality_approved"] == []
+
+
+# ── slice-089 / SC-194 (AC5): a 'derived' gate-log availability is AVAILABLE, not dark ──
+
+def test_derived_gate_log_status_is_available_slice089():
+    """slice-089/AC5/DR-1: trust_ledger reports gate-log.json status 'derived' when it rebuilt the
+    rows from shards on a synced vault; _gate_log_unavailable must treat 'derived' as AVAILABLE so
+    the signoff panel renders the real classification (only ok/derived are available)."""
+    def _avail(status):
+        return {"availability": [{"source": "gate-log.json", "status": status}]}
+    assert story_signoff._gate_log_unavailable(_avail("derived")) is False
+    assert story_signoff._gate_log_unavailable(_avail("ok")) is False
+    assert story_signoff._gate_log_unavailable(_avail("missing")) is True
+    assert story_signoff._gate_log_unavailable(_avail("malformed")) is True

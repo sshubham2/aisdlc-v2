@@ -65,7 +65,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]  # <plugin>/scripts/lib/triag
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from scripts.lib import _stdout
+from scripts.lib import _shard_store, _stdout
 
 # The real/noise rule — the SINGLE source of truth, identical to the documented first-Critic
 # emission (/critique Step 4.5): a real issue counts even when deferred/blocking; a user
@@ -308,12 +308,14 @@ def main(argv: list[str] | None = None) -> int:
         if not (args.gate and args.gate_log):
             sys.stderr.write("triage_precision: --gate-precision requires --gate and --gate-log\n")
             return 2
+        # slice-089/SC-194/AC3 (transitive, critic-calibrate:84): derive-on-missing so /pulse +
+        # /critic-calibrate precision compute over the real rows on a synced/cloned vault.
+        gate_log = Path(args.gate_log)
         try:
-            data = _read_json(Path(args.gate_log))
-        except (ValueError, OSError) as exc:
+            entries = _shard_store.read_entries(gate_log.parent, gate_log.name, "entries")
+        except (ValueError, OSError, RuntimeError) as exc:
             sys.stderr.write(f"triage_precision: cannot read --gate-log {args.gate_log}: {exc}\n")
             return 2
-        entries = data.get("entries", []) if isinstance(data, dict) else []
         print(json.dumps(gate_precision_recall(entries, args.gate), ensure_ascii=False))
         return 0
 
@@ -321,18 +323,17 @@ def main(argv: list[str] | None = None) -> int:
         if not args.gate_log:
             sys.stderr.write("triage_precision: --summary requires --gate-log\n")
             return 2
-        log_path = Path(args.gate_log)
-        if not log_path.is_file():
-            print(json.dumps({"absent": True}))  # clean sentinel: consumer omits its section
-            return 0
+        # slice-089/SC-194/AC4: derive-on-missing; the {absent} sentinel now keys on `not entries`
+        # (an absent cache with shards present derives non-zero rows instead of a false-absent /pulse
+        # section), and a genuinely-empty log (neither cache nor shards -> []) still prints {absent}.
+        gate_log = Path(args.gate_log)
         try:
-            data = _read_json(log_path)
-        except (ValueError, OSError) as exc:
+            entries = _shard_store.read_entries(gate_log.parent, gate_log.name, "entries")
+        except (ValueError, OSError, RuntimeError) as exc:
             sys.stderr.write(f"triage_precision: cannot read --gate-log {args.gate_log}: {exc}\n")
             return 2
-        entries = data.get("entries", []) if isinstance(data, dict) else []
         if not entries:
-            print(json.dumps({"absent": True}))
+            print(json.dumps({"absent": True}))  # clean sentinel: consumer omits its section
             return 0
         print(json.dumps(gate_summary(entries, slice_id=args.slice, recent=args.recent),
                          ensure_ascii=False))

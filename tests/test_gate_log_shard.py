@@ -371,6 +371,108 @@ def test_inv3_derive_fail_closed(tmp_path):
         S.derive(sd)
 
 
+# ── slice-089 / SC-194 (AC1): read_entries derive-on-missing ─────────────────────
+
+def _sharded_vault(vault: Path, entries: list) -> Path:
+    """Build a MIGRATED (sharded) vault: flat seed -> migrate -> shard dir + derived cache present."""
+    _seed_flat(vault, entries=list(entries), rows=[{"legacy": True}])
+    assert S.migrate(vault, REL, ARRAY)["action"] == "migrated"
+    return vault
+
+
+def test_ac1a_fast_path_cache_present_returns_cache_rows(tmp_path):
+    # (a) a present, list-valued cache is served on the fast path.
+    v = _sharded_vault(tmp_path, [{"n": 0}, {"n": 1}])
+    assert (v / "gate-log.json").is_file()
+    assert S.read_entries(v) == [{"n": 0}, {"n": 1}]
+
+
+def test_ac1a2_flat_vault_fast_path_does_not_derive(tmp_path, monkeypatch):
+    # (a2 / M3) the DOMINANT real case: a FLAT vault (cache present, NO shard dir) reads via the
+    # fast path and NEVER invokes derive() -- pins ADR-107's 'strict superset' claim (Feathers
+    # characterization test: lock in the existing behaviour at the seam before changing it).
+    v = tmp_path / "flat"; v.mkdir()
+    _seed_flat(v, entries=[{"n": 5}, {"n": 6}])
+    assert not (v / "gate-log").exists()
+
+    def _spy(*a, **k):
+        raise AssertionError("derive() must NOT be called on a flat vault (fast path)")
+    monkeypatch.setattr(S, "derive", _spy)
+
+    assert S.read_entries(v) == [{"n": 5}, {"n": 6}]
+    assert not (v / "gate-log").exists(), "read_entries must not create a shard dir on a flat vault"
+
+
+def test_ac1b_cache_absent_shards_present_derives(tmp_path):
+    # (b) a synced/cloned vault: the git-ignored derived cache is absent, the shard log is present.
+    v = _sharded_vault(tmp_path, [{"n": 0}, {"n": 1}, {"n": 2}])
+    cache_rows = S.read_entries(v)  # fast path (cache present)
+    (v / "gate-log.json").unlink()  # simulate the clone/sync: cache gone, shards remain
+    assert not (v / "gate-log.json").exists()
+    derived = S.read_entries(v)
+    assert derived == cache_rows == [{"n": 0}, {"n": 1}, {"n": 2}]
+    # read-only: the derive path must NOT re-create the cache (no read-repair — ADR-106 B2).
+    assert not (v / "gate-log.json").exists(), "read_entries must not write the cache back"
+
+
+def test_ac1b2_listless_cache_shards_present_derives(tmp_path):
+    # (b2 / M2) a JSON-valid but list-less cache ({} / {entries:null} / {entries:non-list}) with
+    # shards present must DERIVE, never silently return [] on the fast path.
+    v = _sharded_vault(tmp_path, [{"n": 0}, {"n": 1}])
+    for bad in ("{}", '{"entries": null}', '{"entries": {"not": "a list"}}'):
+        (v / "gate-log.json").write_text(bad, encoding="utf-8")
+        assert S.read_entries(v) == [{"n": 0}, {"n": 1}], f"listless cache {bad!r} must derive"
+
+
+def test_ac1b3_torn_cache_heal_emits_warning(tmp_path, capsys):
+    # (b3 / M-add-1) a torn-but-PRESENT cache healed from shards emits a stderr WARNING.
+    v = _sharded_vault(tmp_path, [{"n": 0}, {"n": 1}])
+    (v / "gate-log.json").write_text('{"entries": [trunc', encoding="utf-8")  # invalid JSON
+    assert S.read_entries(v) == [{"n": 0}, {"n": 1}]
+    err = capsys.readouterr().err
+    assert "WARNING" in err and "heal" in err.lower(), "torn-cache heal must warn on stderr (M-add-1)"
+
+
+def test_ac1b3b_plain_absent_cache_does_not_warn(tmp_path, capsys):
+    # a plain cache-ABSENT derive (fresh clone/replica) is the EXPECTED path -> no warning.
+    v = _sharded_vault(tmp_path, [{"n": 0}, {"n": 1}])
+    (v / "gate-log.json").unlink()
+    capsys.readouterr()  # clear anything from migrate
+    assert S.read_entries(v) == [{"n": 0}, {"n": 1}]
+    assert "WARNING" not in capsys.readouterr().err, "a plain cache-absent derive must NOT warn"
+
+
+def test_ac1c_neither_cache_nor_shards_returns_empty(tmp_path):
+    # (c) neither a cache nor a shard dir -> [] (legitimate empty log).
+    v = tmp_path / "empty"; v.mkdir()
+    assert not (v / "gate-log.json").exists() and not (v / "gate-log").exists()
+    assert S.read_entries(v) == []
+
+
+def test_ac1d_torn_without_recovery_raises(tmp_path):
+    # (d) torn cache + NO shard dir -> RAISE (fail-visible; [] is NOT legitimate here).
+    v1 = tmp_path / "tc"; v1.mkdir()
+    (v1 / "gate-log.json").write_text('{"entries": [trunc', encoding="utf-8")
+    assert not (v1 / "gate-log").exists()
+    with pytest.raises((ValueError, OSError)):
+        S.read_entries(v1)
+    # torn shard (cache absent) -> derive() RAISES, propagated.
+    v2 = tmp_path / "ts"; v2.mkdir()
+    _sharded_vault(v2, [{"n": 0}, {"n": 1}])
+    (v2 / "gate-log.json").unlink()
+    shard = next(p for p in (v2 / "gate-log").glob("*.json") if p.name != "_meta.json")
+    shard.write_text('{"truncated": ', encoding="utf-8")
+    with pytest.raises((ValueError, RuntimeError)):
+        S.read_entries(v2)
+
+
+def test_ac1_array_guard_rejects_non_entries(tmp_path):
+    # m2: the `array` param is guarded to 'entries' until derive() is parameterized.
+    v = tmp_path / "g"; v.mkdir()
+    with pytest.raises(ValueError):
+        S.read_entries(v, "gate-log.json", "rows")
+
+
 # ── m3: the sharding route predicate keys on the vault-relative POSIX path (SC-046) ─
 
 def test_m3_routing_keys_on_vault_relative_path(tmp_path):

@@ -161,10 +161,13 @@ def _is_positive_reality(line: dict) -> bool:
 def _gate_log_unavailable(ledger: dict) -> bool:
     """The reality+model columns are derived from gate-log.json; if that primary source is unreadable
     (missing/malformed/empty) the columns would be spuriously empty and indistinguishable from 'no reviews
-    ran yet' — so surface it as unavailable (M-add-2). An empty-but-VALID gate-log stays available."""
+    ran yet' — so surface it as unavailable (M-add-2). An empty-but-VALID gate-log stays available.
+    slice-089/SC-194: status 'derived' (trust_ledger rebuilt the rows from the shard log on a
+    synced/cloned vault whose local cache is absent) is AVAILABLE — the rows are present, just not
+    from the flat cache — so the panel must render, not go dark."""
     for a in (ledger.get("availability") or []):
         if isinstance(a, dict) and a.get("source") == "gate-log.json":
-            return a.get("status") != "ok"
+            return a.get("status") not in ("ok", "derived")
     return True  # no gate-log availability entry at all -> cannot confirm the source -> unavailable
 
 
