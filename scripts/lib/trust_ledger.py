@@ -210,8 +210,12 @@ def _classify_gate_rows(gl: dict | None, canon: str) -> tuple[list, list, list, 
             contact = GATE_CONTACT.get(gate)
         fc_txt = f" ({fc} finding{'s' if fc != 1 else ''})" if isinstance(fc, int) else ""
         txt = f"{gate}: {verdict}{fc_txt}"
+        # slice-086 (M3): carry the STRUCTURED gate id + verdict so a downstream consumer
+        # (story_signoff.project_ledger_for_signoff) translates from structure, never by parsing
+        # the engineer-facing `text` (slice-073 brittle-key lesson). Additive — `text` unchanged.
         line = _line(txt, "gate-log.json", loc, reality_contact=contact, at=at or None,
-                     reality_proxy=row.get("reality_proxy"))
+                     reality_proxy=row.get("reality_proxy"),
+                     gate=gate or None, verdict=str(verdict) if verdict is not None else None)
         if contact in ("high", "medium"):
             reality_confirmed.append(line)
         elif contact == "low":
@@ -361,18 +365,18 @@ def compose(vault: Path, slice_arg: str) -> dict:
                 uncovered_acs.append(acid)
                 not_checked.append(_line(f"{acid}: no validation criterion recorded",
                                          "mission-brief.json", f"acceptance_criteria[{i}]",
-                                         reason="criterion-absent"))
+                                         reason="criterion-absent", ac=acid))
             elif str(c.get("result", "")).lower() != "pass":
                 uncovered_acs.append(acid)
                 not_checked.append(_line(
                     f"{acid}: criterion result={str(c.get('result', '')).lower() or 'unknown'} "
                     "(not a reality-verified pass)", "validation.json", f"criteria[id={acid}]",
-                    reason="criterion-not-pass"))
+                    reason="criterion-not-pass", ac=acid))
             elif slice_contact not in ("high", "medium"):
                 not_checked.append(_line(
                     f"{acid}: criterion passed but slice reality_contact={slice_contact or 'absent'} "
                     "(model-only, not reality-verified)", "validation.json", "reality_contact",
-                    reason="low-contact"))
+                    reason="low-contact", ac=acid))
 
     # reality_surprises = un-eliminated defeaters (M-add-1).
     surprises = val.get("reality_surprises") if val_status == "ok" and isinstance(val, dict) else None

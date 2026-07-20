@@ -207,6 +207,27 @@ renderer surfaces honestly); a non-zero exit is only an io failure (unreadable/u
 which the `|| echo` surfaces. A `no_scope` result injects `{"state":"no_scope"}` and the section is omitted at
 render — that is correct, not a drop.
 
+## Step 3c — inject the ledger-derived signoff panel (slice-086 / [[ADR-102]])
+
+**Deterministically** derive the "Who has signed off" panel from the trust ledger — on the MAIN THREAD, so
+whether something is *proven against reality* vs *only reviewed by a model* is a FACT read from the recorded
+gate outcomes, never a characterization the narrator makes (the narrator no longer authors it — a model can
+never, even accidentally, render a model-only pass as reality-proven). This is a single `story_signoff.py
+inject` invocation (it composes the trust ledger for this slice, projects it into the three trust columns,
+translates gate ids + verdicts into plain English, stamps the block, and writes `trust_signoff` into the
+file); `render_story` (Step 4) renders that stamped block deterministically and NEVER reads the narrator's
+`signoff` key. Fail-visible: an absent/malformed ledger injects a `state:'unavailable'` block the renderer
+shows as an explicit notice with no green column:
+```bash
+VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+$PY "${CLAUDE_SKILL_DIR}/scripts/story_signoff.py" inject \
+    --sections-file "<target-slice>/story-sections.json" --slice "<target-slice>" --vault "$VAULT" \
+  || echo "WARN: signoff injection failed — story renders WITHOUT the trust-signoff panel (fail-visible)." >&2
+```
+The inject prints the derivation source (`trust_signoff derived from trust-ledger (state=…)`) so the
+classification stays auditable; a non-zero exit is only an io failure (unreadable/unwritable
+story-sections.json), which the `|| echo` surfaces.
+
 ## Step 4 — render the ONE combined story.html
 
 `render_story.py` renders **one self-contained page** that carries the plain-language story AND — composed into it
