@@ -10,6 +10,7 @@ meta-first/entries-last while the original is entries-first).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -183,6 +184,121 @@ def test_b1_shard_collision_raises_never_silent_overwrite(tmp_path):
     with pytest.raises(FileExistsError):
         S._write_exclusive(target, {"a": 2})  # a seq collision must RAISE (B1)
     assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}, "the original is never overwritten"
+
+
+# ── slice-090 / ADR-109: shard write is ATOMIC to lock-free readers (SC-196) ──────
+# _write_exclusive now publishes via a same-dir temp + fsync + under-lock exists()-check +
+# os.replace (no O_EXCL create-in-place), so the ADR-107 lock-free reader never sees a partial
+# <seq>.json. These pin AC2 (atomic publish), AC3 (B1 preserved), AC4/must_not_defer[0] (temp
+# cleanup + fail-visibility), and M2 (fsync-before-publish).
+
+def _tmps(d: Path) -> list[str]:
+    return [f for f in os.listdir(d) if f.endswith(".tmp")]
+
+
+def test_slice090_ac2_publish_is_atomic_temp_then_consumed(tmp_path, monkeypatch):
+    """AC2: the shard is staged in a same-dir *.tmp and installed with an atomic rename. At the
+    mid-write instant the target <seq>.json is NOT yet visible (a *.tmp is); after publish the temp
+    is CONSUMED by os.replace and the target holds the complete bytes."""
+    shard_dir = tmp_path
+    target = shard_dir / "000000.json"
+    seen: dict = {}
+    real_open = os.open
+
+    def spy(path, flags, mode=0o777, **kw):
+        fd = real_open(path, flags, mode, **kw)
+        p = Path(os.fspath(path))
+        if "mid" not in seen and p.name.endswith(".tmp") and p.parent == shard_dir:
+            seen["mid"] = True
+            seen["target_exists"] = target.exists()  # the in-flight target must NOT exist yet
+            seen["tmps"] = _tmps(shard_dir)
+        return fd
+
+    monkeypatch.setattr(os, "open", spy)
+    S._write_exclusive(target, {"n": 7})
+    assert seen.get("mid"), "the write did not go through a same-dir *.tmp (no atomic-publish temp)"
+    assert seen["target_exists"] is False, "the target <seq>.json must not be visible mid-write (pre-publish)"
+    assert seen["tmps"], "the bytes must be staged in a *.tmp before the atomic publish"
+    assert _tmps(shard_dir) == [], "the temp must be CONSUMED by the atomic rename (no leftover *.tmp)"
+    assert json.loads(target.read_text(encoding="utf-8")) == {"n": 7}
+
+
+def test_slice090_ac3_b1_collision_raises_via_precheck_and_leaves_no_temp(tmp_path, monkeypatch):
+    """AC3 / B1: a seq collision raises FileExistsError via the under-lock exists()-pre-check on the
+    temp+publish path (ADR-109, NOT O_EXCL), the existing shard's bytes are unchanged, and the
+    collision path cleans its temp (no orphaned *.tmp)."""
+    shard_dir = tmp_path
+    target = shard_dir / "000000.json"
+    S._write_exclusive(target, {"a": 1})
+    tmp_seen: dict = {}
+    real_open = os.open
+
+    def spy(path, flags, mode=0o777, **kw):
+        p = Path(os.fspath(path))
+        if p.name.endswith(".tmp") and p.parent == shard_dir:
+            tmp_seen["yes"] = True  # proves the write went through the temp+publish path
+        return real_open(path, flags, mode, **kw)
+
+    monkeypatch.setattr(os, "open", spy)
+    with pytest.raises(FileExistsError):
+        S._write_exclusive(target, {"a": 2})
+    assert tmp_seen.get("yes"), (
+        "the collision must be caught by the under-lock exists()-pre-check on the temp+publish path "
+        "(ADR-109), not by an O_EXCL create-in-place")
+    assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}, "the existing shard is never clobbered"
+    assert _tmps(shard_dir) == [], "the collision path must clean its temp (no orphaned *.tmp)"
+
+
+def test_slice090_ac4_mid_write_failure_unlinks_temp_and_reraises(tmp_path, monkeypatch):
+    """AC4 / must_not_defer[0]: a mid-write failure BEFORE the atomic publish (here: fsync fails)
+    unlinks the temp and re-raises -- no orphaned *.tmp, and the target is left untouched (never a
+    partial <seq>.json)."""
+    shard_dir = tmp_path
+    target = shard_dir / "000000.json"
+    tmp_path_seen: dict = {}
+    real_open = os.open
+
+    def spy(path, flags, mode=0o777, **kw):
+        p = Path(os.fspath(path))
+        if p.name.endswith(".tmp") and p.parent == shard_dir:
+            tmp_path_seen["path"] = p
+        return real_open(path, flags, mode, **kw)
+
+    def fail_fsync(fd):  # fires AFTER the temp is created + written, BEFORE the atomic publish
+        raise RuntimeError("disk full mid-write")
+
+    monkeypatch.setattr(os, "open", spy)
+    monkeypatch.setattr(os, "fsync", fail_fsync)
+    with pytest.raises(RuntimeError, match="disk full"):
+        S._write_exclusive(target, {"n": 1})
+    assert tmp_path_seen.get("path") is not None, "the fix must stage bytes via a same-dir *.tmp"
+    assert not tmp_path_seen["path"].exists(), "the temp must be unlinked on a mid-write failure (no .tmp leak)"
+    assert _tmps(shard_dir) == [], "no orphaned *.tmp after a mid-write failure"
+    assert not target.exists(), "a mid-write failure must leave the target absent (never a partial shard)"
+
+
+def test_slice090_m2_fsync_precedes_atomic_publish(tmp_path, monkeypatch):
+    """M2: the temp fd is fsync'd BEFORE the atomic os.replace, so a crash leaves a COMPLETE shard
+    or none -- never a present-but-zero-length committed <seq>.json (the SC-196 signature resurrected
+    at crash-recovery, which would then sync to every replica)."""
+    shard_dir = tmp_path
+    target = shard_dir / "000000.json"
+    order: list[str] = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def rec_fsync(fd):
+        order.append("fsync")
+        return real_fsync(fd)
+
+    def rec_replace(src, dst, *a, **k):
+        order.append("replace")
+        return real_replace(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "fsync", rec_fsync)
+    monkeypatch.setattr(os, "replace", rec_replace)
+    S._write_exclusive(target, {"n": 3})
+    assert order == ["fsync", "replace"], f"fsync must precede the atomic publish; got {order}"
+    assert json.loads(target.read_text(encoding="utf-8")) == {"n": 3}
 
 
 # ── B2 / M-add-1: a forward migrate racing concurrent appends loses/dups NOTHING ──
