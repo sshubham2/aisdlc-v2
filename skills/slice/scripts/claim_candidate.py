@@ -16,16 +16,29 @@ reservation). Idempotent (a re-release of an already-released candidate succeeds
 never decremented — a skipped slice number is harmless; reusing it would re-introduce a race).
 
 Vault root: `--vault ROOT` overrides `$AI_SDLC_VAULT_ROOT` / the computed default.
+
+Shared-vault claim coordination (slice-091 / SC-198 / ADR-113): when an OPT-IN shared-remote backend is
+configured (``$AI_SDLC_CLAIM_BACKEND`` / ``<git-common-dir>/aisdlc/claim-backend``), a durable CLAIM gates
+its entry on ``_claim_coord``'s single-key create-if-absent so two developers picking concurrently on a
+shared vault can never both mint the same slice. The DEFAULT (unconfigured) local vault is UNCHANGED and
+byte-identical — no backend probe subprocess, no added latency. Fail-closed: a configured-but-unreachable
+backend REFUSES rather than silently local-minting a duplicate. ``--release`` on the configured path ALSO
+tears down the shared HELD (compare-and-delete) so a failed worktree-create can never orphan it.
+
 Exit 0 success, 1 runtime error (identity unset / git unavailable / candidate not found / not pickable /
-malformed file / write failure / cross-identity release), 2 usage error (bad ``--name`` shape).
+malformed file / write failure / cross-identity release), 2 usage error (bad ``--name`` / ``--candidate``
+shape). Configured-coordination exits: 3 retryable (backend unreachable/transient — fail-closed), 4
+ambiguous (indeterminate read-back — fail-closed), 5 ownership (a foreign developer won the concurrent pick).
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import pathlib
 import re
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,16 +47,64 @@ _REPO = pathlib.Path(__file__).resolve().parents[3]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from scripts.lib import _stdout, id_allocator
+from scripts.lib import _claim_coord, _stdout, id_allocator
 from scripts.lib._git_default_branch import run_git
 from scripts.lib._vault_paths import VAULT_ROOT
 from scripts.lib._vault_write import safe_mutate_text
+from scripts.lib.slice_ownership import EXIT_OWNERSHIP  # 5 — a foreign hold refuses (shared claim collision)
 
 _JSON_DUMP = {"indent": 2, "ensure_ascii": False, "sort_keys": False}
 _PICKABLE = {"candidate", "deferred"}
 # A slice NAME is the verb-object folder suffix (e.g. `fix-thumbnail-orientation`): lowercase
 # tokens joined by single hyphens. The NUMBER is no longer a caller input — it is minted here.
 _NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+# A candidate id shape — validated on the CONFIGURED branch BEFORE composing any shared claims/ path
+# (m3 / ADR-113); the default (unconfigured) path leaves candidate-id handling byte-identical.
+_CAND_RE = re.compile(r"^SC-\d+$")
+# Configured-coordination exit codes (aligned with slice_ownership's taxonomy — m1 / ADR-113):
+# 5 ownership (foreign hold), 3 retryable (transient/unreachable), 4 ambiguous (indeterminate read-back).
+_EXIT_RETRYABLE = 3
+_EXIT_AMBIGUOUS = 4
+
+
+def _norm_email(value: object) -> str:
+    """Stripped + casefolded email compare (a case-different address is the same owner)."""
+    return value.strip().casefold() if isinstance(value, str) else ""
+
+
+def _coordinate_claim(backend, candidate_id: str, git_name: str, git_email: str,
+                      ts: str) -> tuple[int | None, bool]:
+    """CONFIGURED-branch claim gate. Returns ``(exit_code_or_None, created_held)``: ``None`` proceeds to
+    the existing in-lock mint (CREATED, or an own-token EXISTS self-retry — C2), a non-None int
+    short-circuits fail-closed. ``created_held`` is True only when THIS call minted a fresh HELD (so a
+    later mint failure can compensate it — M-add-1)."""
+    body = {"candidate": candidate_id,
+            "actor": {"git_user": git_name, "git_email": git_email},
+            "idempotency_token": uuid.uuid4().hex, "at": ts}
+    res = backend.create_if_absent(_claim_coord.claim_key(candidate_id), body)
+    if res.status == _claim_coord.CREATED:
+        return None, True  # won the atomic create -> proceed to mint
+    if res.status == _claim_coord.EXISTS:
+        owner = ((res.body or {}).get("actor") or {}).get("git_email")
+        if _norm_email(owner) == _norm_email(git_email):
+            return None, False  # C2 self-retry: own HELD (crash-before-mint) -> WON -> proceed to mint
+        who = ((res.body or {}).get("actor") or {}).get("git_user") or "?"
+        sys.stderr.write(
+            f"claim_candidate: SLICE-CLAIM-REFUSED: {candidate_id} is already claimed by {who} "
+            f"<{owner or 'unknown'}> on the shared vault — you are {git_name} <{git_email}>. This is a "
+            f"collision guard: another developer won the concurrent pick. Coordinate with the owner, or "
+            f"pick a different candidate.\n")
+        return EXIT_OWNERSHIP, False
+    # UNVERIFIABLE -> fail closed (never a silent local mint that could double-pick).
+    if res.kind == "transient":
+        sys.stderr.write(
+            f"claim_candidate: claim UNVERIFIABLE ({res.reason or 'backend unreachable/transient'}) — "
+            f"refusing fail-closed (retryable). The claim did NOT commit; retry it.\n")
+        return _EXIT_RETRYABLE, False
+    sys.stderr.write(
+        f"claim_candidate: claim UNVERIFIABLE ({res.reason or 'indeterminate read-back'}) — refusing "
+        f"fail-closed (ambiguous). Do NOT retry blindly; inspect the shared claim state first.\n")
+    return _EXIT_AMBIGUOUS, False
 
 
 class _ClaimError(RuntimeError):
@@ -342,28 +403,77 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     ts = _now_iso()
-    path = _root(args.vault) / "candidates.json"
+    vault_root = _root(args.vault)
+    path = vault_root / "candidates.json"
     result: dict = {}
+
+    # Identity first (every mode needs it; fail-visible on unset/unavailable).
     try:
         git_name, git_email = _git_identity(args.repo_root.resolve())
+    except _ClaimError as exc:
+        sys.stderr.write(f"claim_candidate: {exc}\n")
+        return 1
+
+    # slice-091: resolve the OPT-IN coordination backend (None unless a shared-remote backend is
+    # configured). Unconfigured -> today's path, byte-identical, no added subprocess (AC3, memoized
+    # git_common_dir). A configured-but-unavailable backend fails CLOSED (AC4).
+    try:
+        backend = _claim_coord.coordination_backend(vault_root)
+    except _claim_coord.UnsupportedBackend as exc:
+        sys.stderr.write(f"claim_candidate: {exc}\n")
+        return _EXIT_RETRYABLE  # 3 — configured but this build can't serve it (a SC-197 build could)
+
+    # For a CLAIM, validate --name BEFORE any HELD is created (else a bad name would orphan a HELD).
+    name = (args.name or "").strip()
+    if not args.reserve and not args.release and not _NAME_RE.match(name):
+        sys.stderr.write(
+            f"claim_candidate: --name {args.name!r} is not a verb-object slice name "
+            f"(expected lowercase tokens joined by hyphens, e.g. fix-thumbnail-orientation)\n")
+        return 2
+
+    # m3: on the CONFIGURED branch (claim/release compose a shared claims/<candidate>/ path), validate
+    # the candidate id BEFORE composing it. reserve is candidates.json-only; the default path is
+    # untouched (byte-identical), so the guard never fires there.
+    if backend is not None and not args.reserve and not _CAND_RE.match(candidate_id):
+        sys.stderr.write(
+            f"claim_candidate: --candidate {candidate_id!r} is not a valid candidate id "
+            f"(expected ^SC-\\d+$) — refusing to compose a shared claims/ path\n")
+        return 2
+
+    # CONFIGURED CLAIM: gate entry on the atomic single-key create-if-absent (AC1/AC2/AC4). CREATED /
+    # own-WON fall through to the existing in-lock mint; LOST/UNVERIFIABLE short-circuit fail-closed.
+    created_held = False
+    if backend is not None and not args.reserve and not args.release:
+        rc, created_held = _coordinate_claim(backend, candidate_id, git_name, git_email, ts)
+        if rc is not None:
+            return rc
+
+    try:
         if args.release:
             mutate = _make_release_mutate(path, candidate_id, git_email, ts, result)
         elif args.reserve:
             mutate = _make_reserve_mutate(path, candidate_id, git_name, git_email, ts, result)
         else:
-            name = (args.name or "").strip()
-            if not _NAME_RE.match(name):
-                sys.stderr.write(
-                    f"claim_candidate: --name {args.name!r} is not a verb-object slice name "
-                    f"(expected lowercase tokens joined by hyphens, e.g. fix-thumbnail-orientation)\n")
-                return 2
             mutate = _make_claim_mutate(path, candidate_id, name, git_name, git_email, ts,
-                                        _root(args.vault), result)
+                                        vault_root, result)
         safe_mutate_text(path, mutate)
+        # M-add-1: on the CONFIGURED release path, ALSO tear down the shared HELD (compare-and-delete)
+        # so a failed worktree-create cannot orphan it into a permanent EXISTS->LOST lockout. The
+        # candidates.json release above is identity-checked, so a foreign release already raised.
+        if args.release and backend is not None:
+            with contextlib.suppress(OSError):
+                backend.remove_if_owner(_claim_coord.claim_key(candidate_id), git_email)
     except _ClaimError as exc:
+        # Compensate a HELD this call just minted if the local mint then failed (no orphaned HELD).
+        if created_held and backend is not None:
+            with contextlib.suppress(Exception):
+                backend.remove_if_owner(_claim_coord.claim_key(candidate_id), git_email)
         sys.stderr.write(f"claim_candidate: {exc}\n")
         return 1
     except (OSError, TimeoutError) as exc:
+        if created_held and backend is not None:
+            with contextlib.suppress(Exception):
+                backend.remove_if_owner(_claim_coord.claim_key(candidate_id), git_email)
         sys.stderr.write(f"claim_candidate: write to {path} failed (fail-visible per R-7): {exc}\n")
         return 1
 
