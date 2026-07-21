@@ -145,6 +145,28 @@ def _git_common_dir() -> str | None:
     return raw or None
 
 
+# ── memoized public git-common-dir (slice-091 / M1 / ADR-113) ──────────────────
+# The absolute git-common-dir, resolved via `git rev-parse` EXACTLY ONCE per process (like the
+# VAULT_ROOT seam), then reused. A repeat consumer — the per-claim opt-in coordination probe
+# (`_claim_coord.coordination_backend`) — adds ZERO git subprocess: the one `_resolve_vault_root`
+# already spawns is shared. None (not a git work tree) is a VALID cached value, so a done-flag
+# guards the memo rather than a `None`-sentinel. Stdlib-only leaf invariant preserved.
+_COMMON_DIR: str | None = None
+_COMMON_DIR_DONE: bool = False
+
+
+def git_common_dir() -> str | None:
+    """Public, MEMOIZED absolute git-common-dir (or ``None`` when not a git work tree / git
+    unavailable). Resolves at most ONCE per process; every later call returns the cached value with
+    NO subprocess — so the coordination opt-in probe pays no per-claim git cost (M1). Shared with
+    ``_resolve_vault_root`` (which routes through this same memo), so VAULT_ROOT resolution warms it."""
+    global _COMMON_DIR, _COMMON_DIR_DONE
+    if not _COMMON_DIR_DONE:
+        _COMMON_DIR = _git_common_dir()
+        _COMMON_DIR_DONE = True
+    return _COMMON_DIR
+
+
 def _canonical(path_str: str) -> str:
     """``normcase(resolve(path))`` — the stable hash seed: resolves symlinks and
     folds case (Windows is case-insensitive) so equivalent path spellings map to
@@ -241,7 +263,7 @@ def _resolve_vault_root() -> tuple[Path, str]:
     if env:
         _stderr(f"INFO: AI-SDLC vault root = {env!r} (via {_ENV_VAR} env var).")
         return Path(env), "env"
-    common = _git_common_dir()  # one git call; reused by the default computation
+    common = git_common_dir()  # one git call, MEMOIZED (M1) — shared with the coordination opt-in probe
     cfg = _read_config_at(common)
     if cfg:
         _stderr(f"INFO: AI-SDLC vault root = {cfg!r} (via git-common-dir config).")
