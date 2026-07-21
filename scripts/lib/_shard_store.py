@@ -3,16 +3,19 @@
 The first cut of the vault-sharding program (ADR-105, corrected by ADR-106). A shared-mutable
 append aggregate (gate-log first) becomes an append-only, per-entry immutable shard LOG that is
 the source of truth, with the legacy flat path demoted to a DERIVED, local, git-ignored CACHE.
-Sharding turns each append into a NEW-file write (O_EXCL, no whole-file RMW), which is what makes
+Sharding turns each append into a NEW-file write (atomic same-dir temp publish, no whole-file RMW), which is what makes
 the vault shareable over git/S3 without the ``_vault_write`` whole-file-rewrite machinery.
 
 Design record: event-sourcing / CQRS — an immutable event log (one positional entry per file,
 ordered by a global monotonic ``seq`` minted at append) + a disposable materialized-view cache.
 
 Load-bearing corrections pinned by ADR-106 (each earned by /critique + the DR-1 meta-Critic):
-  * **B1** — the immutable shard is written with ``os.O_EXCL`` (a seq collision raises
-    ``FileExistsError``, NEVER a silent overwrite). ``safe_write_text``/``os.replace`` is scoped
-    ONLY to the whole-file cache publish (which is meant to overwrite).
+  * **B1** — a seq collision raises ``FileExistsError``, NEVER a silent overwrite. slice-090 /
+    ADR-109 REFINES B1's MECHANISM (the invariant is unchanged): the shard is no longer created
+    in place with ``os.O_EXCL`` (which exposed a 0-byte ``<seq>.json`` to the ADR-107 lock-free
+    reader — SC-196) but PUBLISHED atomically — full bytes to a same-dir ``*.tmp`` → ``fsync`` →
+    an under-lock ``if target.exists(): raise`` pre-check → ``os.replace``. So a future implementer
+    must NOT re-derive ``O_EXCL`` from ADR-106 (superseded-in-mechanism-only). See ``_write_exclusive``.
   * **B2 / M-add-1** — the WHOLE gate-log resource serializes on ONE lock, the ``gate-log.json``
     sidecar (``_file_lock`` on the flat cache path). ``append_entry`` (shard write + cache regen)
     AND ``migrate`` both hold it, so the append is atomic and migrate mutually excludes both the
@@ -21,7 +24,7 @@ Load-bearing corrections pinned by ADR-106 (each earned by /critique + the DR-1 
     sidecar deadlocks 15s → ``TimeoutError``, verified). So the in-lock cache publish uses the
     LOCK-FREE ``_atomic_replace_with_retry`` (the exact core of ``safe_write_text`` minus the
     re-lock). The outer append/migrate lock already provides mutual exclusion — this preserves
-    every ADR-106 invariant (O_EXCL shard · os.replace whole-file cache · one lock · atomic).
+    every ADR-106 invariant (immutable per-entry shard · os.replace whole-file cache · one lock · atomic).
   * **M3** — ``migrate`` stages shards INSIDE the vault (same volume) and publishes via a SINGLE
     no-clobber ``os.rename`` (a pre-existing/partial ``gate-log/`` is a loud stop, never clobbered).
   * **M4** — the cache regen is INCREMENTAL on the hot path (append the new entry to the cached
@@ -130,18 +133,42 @@ def _next_seq(shard_dir: Path) -> int:
 
 
 def _write_exclusive(target: Path, element: Any) -> None:
-    """Write ONE immutable shard via ``O_CREAT | O_EXCL``: a pre-existing target (a seq collision)
-    raises ``FileExistsError`` → fail-visible, NEVER a silent overwrite (B1). UTF-8, LF (binary
-    write — no CRLF drift). ``json.dumps`` runs BEFORE the create so a non-serializable element
-    never leaves a torn husk; a failure AFTER the create is cleaned up (a retry isn't blocked)."""
+    """Publish ONE immutable shard ATOMICALLY-to-lock-free-readers (slice-090 / ADR-109, supersedes
+    ADR-106's O_EXCL mechanism; the B1 invariant is UNCHANGED).
+
+    The old ``O_EXCL`` idiom created a 0-byte ``<seq>.json`` and THEN wrote its bytes as a separate
+    step, so the ADR-107 lock-free reader could observe a partial ``<seq>.json`` and raise false
+    corruption (SC-196). Instead, fully construct the shard in a same-dir reader-excluded temp, then
+    install it with a single atomic rename (RCU-style safe publication): a lock-free listdir+read
+    sees either the OLD state or the fully-committed new shard, never a half-built one.
+
+    Steps: ``json.dumps`` (BEFORE any disk write — a non-serializable element never leaves a husk)
+    → write the FULL bytes to ``<name>.<pid>.tmp`` (``O_CREAT|O_TRUNC`` private scratch; reader- and
+    git-excluded via ``*.tmp``) → ``fsync`` the temp fd (M2: a crash then leaves a COMPLETE shard or
+    none — never a present-but-zero-length ``<seq>.json`` that ``derive`` would raise on and that
+    would sync to every replica) → B1 pre-check ``if target.exists(): raise FileExistsError`` (a seq
+    collision is a loud stop, NEVER a silent overwrite; TOCTOU-safe — both callers hold
+    ``gate-log.json.lock`` and the only concurrent actor is a lock-free reader that never creates a
+    shard) → ``os.replace`` via ``_atomic_replace_with_retry`` (same-dir temp ⇒ same filesystem ⇒
+    atomic on Windows + POSIX; reuses the Windows held-handle EPERM retry). ``os.replace`` CONSUMES
+    the temp via the rename, so there is no post-publish unlink; ANY failure BEFORE the range (write
+    / fsync / the B1 raise) unlinks the temp and re-raises — no orphaned ``*.tmp`` (must_not_defer)."""
     data = json.dumps(element, ensure_ascii=False).encode("utf-8")
-    fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_BIN, 0o644)
+    tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")  # same-dir, reader/git-excluded (*.tmp)
     try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _O_BIN, 0o644)
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())  # M2: durable temp bytes BEFORE the atomic install (no 0-byte commit)
+        if target.exists():  # B1 pre-check under the caller's lock — fail-visible, never a clobber
+            raise FileExistsError(
+                f"shard seq collision: {target} already exists — refusing to overwrite an "
+                "existing shard (B1 fail-visible)")
+        _atomic_replace_with_retry(tmp, target)  # atomic same-dir publish; CONSUMES the temp
     except BaseException:
         with contextlib.suppress(OSError):
-            os.unlink(str(target))
+            os.unlink(str(tmp))  # clean the scratch on any pre-publish failure (no orphaned .tmp)
         raise
 
 
@@ -330,7 +357,7 @@ def append_entry(
         prior = len(_shard_files(shard_dir))
         seq = _next_seq(shard_dir)
         for it in items:
-            _write_exclusive(shard_dir / _shard_name(seq), it)  # O_EXCL — collision fails-visible
+            _write_exclusive(shard_dir / _shard_name(seq), it)  # atomic publish — seq collision fails-visible (B1)
             seq += 1
         _regenerate_cache_locked(shard_dir, cache_path, items, prior)
         return len(items)
