@@ -10,3 +10,9 @@ PyYAML>=6.0
 # must have them installed or those tests report TOOL-MISSING and fail.
 bandit>=1.7
 pip-audit>=2.7
+# boto3 + moto drive the slice-095 (SC-197 / ADR-119) S3/MinIO vault-sync backend
+# tests. moto's @mock_aws round-trip RUNS in CI (a labeled SIMULATION, not the
+# reality anchor — the env-gated real-MinIO run is); listing them here is what
+# makes AC5 actually execute instead of importorskip-ing to green (critique M3).
+boto3>=1.34
+moto>=5.0

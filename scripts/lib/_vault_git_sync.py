@@ -66,7 +66,9 @@ from scripts.lib import _shard_store  # noqa: E402 — after the sys.path bootst
 # folding those here would let a --reverse'd, then re-pushed, vault wrongly ignore its now-truth flat
 # file. `*.lock`/`*.tmp` are no-slash globs -> match at ANY depth (subsuming the shard-dir cruft +
 # the 11 root sidecars).
-_SYNC_IGNORE = ["*.lock", "*.tmp", ".source-repo"]
+_SYNC_IGNORE = ["*.lock", "*.tmp", ".source-repo", ".s3-sync-state.json"]  # +slice-095: the S3 backend's
+# node-local last-synced-hash baseline (`_vault_s3_sync.BASELINE_NAME`) is per-NODE state and must
+# never propagate via ANY backend — a git-synced baseline would give a peer node a wrong 3-way merge.
 _GITATTRIBUTES_RULE = "* -text"  # m1: disable autocrlf normalization -> byte-faithful WAL
 
 _SSH_CONNECT_TIMEOUT = 10  # seconds (M2: bound the SSH connect so a dead host fails fast)

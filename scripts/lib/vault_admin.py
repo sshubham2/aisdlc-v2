@@ -357,21 +357,35 @@ def cmd_read_entries(args: argparse.Namespace) -> int:
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
-    """`vault_admin sync push|pull` — git-native vault sync (slice-092 / ADR-114). Thin CLI wrapper
-    that resolves the vault, dispatches to the ``_vault_git_sync`` engine, and maps its typed
-    exceptions onto the 0-ok / 2-usage / 3-genuine-failure taxonomy (mirroring cmd_migrate): a
-    ``SyncUsageError`` (not-a-git-tree / unconfigured-or-ambiguous remote / detached-HEAD /
-    no-upstream / missing-identity) is exit 2 with a hint; a ``SyncFailure`` (missing remote / auth /
-    network / push-reject / refused data-loss pull / fail-visible cache-invalidation) is exit 3; the
-    engine's log lines (auditable ref old->new + file count, the m3 unredacted note) go to stdout."""
+    """`vault_admin sync push|pull [--backend git|s3]` — vault sync over a git remote (slice-092 /
+    ADR-114) OR an S3/MinIO object store (slice-095 / ADR-119). Thin CLI wrapper that resolves the
+    vault, dispatches to the selected engine, and maps its typed exceptions onto the 0-ok / 2-usage /
+    3-genuine-failure taxonomy (mirroring cmd_migrate). Both engines RAISE the SAME
+    ``_vault_git_sync.SyncUsageError`` / ``SyncFailure`` classes (the S3 engine imports them), so the
+    single except surface covers both: a ``SyncUsageError`` (bad setup / config / optional-dep / an
+    unresolvable S3 prefix) is exit 2 with a hint; a ``SyncFailure`` (network / auth / push-reject /
+    a refused data-loss pull / a fork / an S3-slip key / a gapped shard set) is exit 3; the engine's
+    log lines (auditable summary, the unredacted-transmission note) go to stdout."""
     vault = _this_repo_vault(args.vault)
     if vault is None:
         return 2
     if not vault.is_dir():
         sys.stderr.write(f"vault_admin sync: no vault at {vault}.\n")
         return 2
+    backend = getattr(args, "backend", "git")
     try:
-        if args.direction == "push":
+        if backend == "s3":
+            from scripts.lib import _vault_s3_sync
+            cfg = _vault_s3_sync.resolve_config(
+                vault, bucket=args.s3_bucket, endpoint_url=args.s3_endpoint_url, prefix=args.s3_prefix)
+            client = _vault_s3_sync.build_client(cfg)  # SyncUsageError (exit 2) if boto3 is absent
+            if args.direction == "push":
+                result = _vault_s3_sync.sync_push(vault, cfg=cfg, client=client, force=args.force,
+                                                  log=lambda m: print(m))
+            else:
+                result = _vault_s3_sync.sync_pull(vault, cfg=cfg, client=client, force=args.force,
+                                                  log=lambda m: print(m))
+        elif args.direction == "push":
             result = _vault_git_sync.sync_push(vault, remote_arg=args.remote, log=lambda m: print(m))
         else:
             result = _vault_git_sync.sync_pull(
@@ -422,19 +436,31 @@ def main(argv: list[str] | None = None) -> int:
                      help="the aggregate's vault-relative cache file (default: gate-log.json)")
     re_.add_argument("--array", default="entries",
                      help="the array key to read (only 'entries' is supported today)")
-    sy = sub.add_parser("sync", help="git push|pull the vault sync-set (slice-092; transmits the "
-                                     "WHOLE vault UNREDACTED — use a PRIVATE remote)")
+    sy = sub.add_parser("sync", help="push|pull the vault sync-set over a git remote or an S3/MinIO "
+                                     "bucket (slice-092/095; transmits the WHOLE vault UNREDACTED — "
+                                     "use a PRIVATE remote / a Block-Public-Access bucket)")
     sy.add_argument("direction", choices=["push", "pull"], help="push or pull the vault")
     sy.add_argument("--vault", default=None, help="vault path (default: computed for this repo)")
+    sy.add_argument("--backend", choices=["git", "s3"], default="git",
+                    help="sync transport: 'git' (default, back-compat) or 's3' (S3/MinIO object "
+                         "store, slice-095)")
     sy.add_argument("--remote", default=None,
-                    help="remote name (default: 'origin' / the sole remote for push, the branch "
-                         "upstream's remote for pull; ambiguity is an error)")
+                    help="git backend: remote name (default: 'origin' / the sole remote for push, "
+                         "the branch upstream's remote for pull; ambiguity is an error)")
     sy.add_argument("--force", action="store_true",
-                    help="pull: mirror-reset to <remote>/<branch>, discarding uncommitted working-"
-                         "tree edits (still refuses to silently drop unpushed local commits)")
+                    help="pull: mirror-reset (git) / overwrite a conflicting local artifact (s3), "
+                         "discarding local edits (git still refuses to drop unpushed local commits)")
     sy.add_argument("--force-drop-local", action="store_true",
-                    help="pull: additionally DISCARD unpushed local commits (enumerated before the "
-                         "reset); implies --force")
+                    help="git pull: additionally DISCARD unpushed local commits (enumerated before "
+                         "the reset); implies --force")
+    sy.add_argument("--s3-bucket", default=None,
+                    help="s3 backend: target bucket (default: env AISDLC_S3_BUCKET)")
+    sy.add_argument("--s3-endpoint-url", default=None,
+                    help="s3 backend: endpoint URL (default: env AISDLC_S3_ENDPOINT; unset = AWS S3, "
+                         "set = MinIO / S3-compatible)")
+    sy.add_argument("--s3-prefix", default=None,
+                    help="s3 backend: object-key prefix (default: env AISDLC_S3_PREFIX, else a "
+                         "machine-invariant hash of the git remote URL / AISDLC_S3_PROJECT)")
     args = p.parse_args(argv)
     return {"write-pin": cmd_write_pin, "git-init": cmd_git_init, "list": cmd_list,
             "uninstall": cmd_uninstall, "export": cmd_export, "import": cmd_import,
