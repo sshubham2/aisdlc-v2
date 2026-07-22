@@ -718,6 +718,47 @@ def _cmd_update(args: argparse.Namespace) -> int:
                     f"{rec.get('id', '?')!r} — {_p['message']}. The update is rejected and "
                     f"{target.name} is left unchanged; fix the `applies_when` shape and retry."
                 )
+        # slice-093 / SC-170 + M-add-2 ([[ADR-118]]): `update` is the LAST open managed write leg
+        # (append/remove/set --path already refuse a managed kind). Mirror the kind=='bc' precedent
+        # above: validate the RESULTING product-scope record and raise (-> _run_mutate exit 2, file
+        # byte-untouched) if it ends up (a) with no blocking assumption -- SC-170: an assumptionless
+        # capability mints a candidate that SKIPS /risk-spike step-0 (ADR-067 §5) -- or (b) with a
+        # SUPPLIED present area that fails the typed recognizer -- M-add-2: the fourth area seam,
+        # symmetric with persist/revise/set-area. Lazy import: product_scope does not import vault_edit,
+        # so the cross-module import is acyclic (mirrors the bc guard importing validate_rule_shape).
+        if kind == "ps":
+            from scripts.lib import product_scope as _ps
+            if not _ps.has_blocking_assumption(rec):
+                raise ValueError(
+                    f"vault_edit update: refusing to write product-scope item {rec.get('id', '?')!r} "
+                    f"with no BLOCKING assumption — an assumptionless capability mints a candidate that "
+                    f"SKIPS /risk-spike step-0 (ADR-067 section 5, the pipeline's reality gate). "
+                    f"{target.name} is left unchanged; keep at least one `blocking: true` assumption "
+                    f"and retry."
+                )
+            # M-add-2: mediate ONLY a SUPPLIED present area (area/component supplied by THIS update, and
+            # not a --assumption sub-record edit) via the same _valid_area the typed seams use, so a
+            # pre-existing legacy area on an unrelated update is NOT re-judged (no over-tightening — the
+            # honest mirror of _load_items' "only re-SUPPLIED malformed refuses"). Absent/None stays legal.
+            # "Supplied" spans BOTH write verbs: `--set area=<v>` AND `--append area <elem>` (code-review
+            # slice-093/m1) — the append leg makes rec['area'] a list, which _valid_area's type-guard
+            # refuses; without it, `update --append area '"junk"'` wrote an unvalidated non-string area at
+            # rc=0, the same fourth-seam differential this guard exists to close, one verb over.
+            _area_supplied = (any(k in ("area", "component") for k, _ in sets)
+                              or any(f in ("area", "component") for f, _ in appends))
+            if not args.assumption and _area_supplied:
+                _area = rec.get("area")
+                if _area is None:
+                    _area = rec.get("component")
+                if _area is not None:
+                    try:
+                        _ps._valid_area(_area)
+                    except _ps._Refuse as exc:
+                        raise ValueError(
+                            f"vault_edit update: refusing to write product-scope item "
+                            f"{rec.get('id', '?')!r} with an invalid area — {exc}. {target.name} is "
+                            f"left unchanged."
+                        ) from exc
         return _dump(data)
 
     return _run_mutate(target, mutate)
