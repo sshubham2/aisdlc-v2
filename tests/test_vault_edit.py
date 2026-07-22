@@ -353,3 +353,111 @@ def test_append_build_checks_mints_bc_id(run_script, vault):
              "--json", '{"id": "BC-PROJ-99", "title": "x", "applies_when": {"always": true}}')
     assert r2.returncode == 2
     assert "minted in-lock" in r2.stderr
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# slice-093 / SC-170 + M-add-2 / [[ADR-118]] — the kind=='ps' post-mutation guard on the update leg.
+#
+# `update` is the LAST open managed write leg (append/remove/set are already refused for a managed kind).
+# The guard mirrors the reviewed kind=='bc' precedent (:711-720): it validates the RESULTING record and
+# refuses (exit 2, file byte-untouched) if the product-scope item ends up with (a) no blocking assumption
+# (SC-170) or (b) a SUPPLIED present area that fails _valid_area (M-add-2, the fourth area seam). The
+# guard is kind-isolated from the candidates.json 'sc' hot path (AC4 / A1 must-not-defer).
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+
+def _write_ps(vault, item):
+    (vault / "product-scope.json").write_text(
+        json.dumps({"_schema": "aisdlc/product-scope@1", "items": [item]}, indent=2) + "\n",
+        encoding="utf-8")
+
+
+def _ps_item(**over):
+    it = {"id": "PS-001", "label": "a", "title": "build-a",
+          "assumptions": [{"id": "A1", "statement": "x", "blocking": True, "spike_status": "unproven"}]}
+    it.update(over)
+    return it
+
+
+def test_ps_update_refuses_assumptions_strip(run_script, vault):
+    """SC-170 / AC2: `vault_edit update --file product-scope.json --set assumptions=[]` REFUSES (exit 2)
+    and leaves the file byte-untouched. An assumptionless item would mint a candidate that SKIPS
+    /risk-spike step-0 (ADR-067 §5)."""
+    _write_ps(vault, _ps_item())
+    before = (vault / "product-scope.json").read_bytes()
+    r = _ve(run_script, vault, "update", "--file", "product-scope.json", "--array", "items",
+            "--id", "PS-001", "--set", "assumptions=[]")
+    assert r.returncode == 2, f"strip must be refused (exit 2), got {r.returncode}: {r.stderr}"
+    assert "blocking" in r.stderr.lower(), r.stderr
+    assert (vault / "product-scope.json").read_bytes() == before, "file must be byte-untouched on refusal"
+
+
+def test_ps_update_refuses_last_blocking_cleared(run_script, vault):
+    """SC-170 / AC2: the guard validates the RESULTING record, so clearing the last blocking flag via
+    `--assumption A1 --set blocking=false` is also refused (exit 2) — not just a wholesale strip."""
+    _write_ps(vault, _ps_item())
+    r = _ve(run_script, vault, "update", "--file", "product-scope.json", "--array", "items",
+            "--id", "PS-001", "--assumption", "A1", "--set", "blocking=false")
+    assert r.returncode == 2, f"clearing the last blocking flag must refuse, got {r.returncode}: {r.stderr}"
+
+
+def test_ps_update_refuses_junk_area(run_script, vault):
+    """M-add-2: the kind=='ps' guard also mediates a SUPPLIED present area via _valid_area — the FOURTH
+    area write-seam. `update --set area=<empty>` refuses (exit 2), symmetric with the typed
+    persist/revise/set-area seams. Absent/None stays legal."""
+    _write_ps(vault, _ps_item())
+    before = (vault / "product-scope.json").read_bytes()
+    r = _ve(run_script, vault, "update", "--file", "product-scope.json", "--array", "items",
+            "--id", "PS-001", "--set", "area=")
+    assert r.returncode == 2, f"junk area must refuse (exit 2), got {r.returncode}: {r.stderr}"
+    assert (vault / "product-scope.json").read_bytes() == before
+
+
+def test_ps_update_allows_valid_area(run_script, vault):
+    """AC4: a legitimate area update SUCCEEDS — the guard mediates, it does not block valid writes."""
+    _write_ps(vault, _ps_item())
+    r = _ve(run_script, vault, "update", "--file", "product-scope.json", "--array", "items",
+            "--id", "PS-001", "--set", "area=payments")
+    assert r.returncode == 0, r.stderr
+    data = json.loads((vault / "product-scope.json").read_text(encoding="utf-8"))
+    assert data["items"][0]["area"] == "payments"
+
+
+def test_ps_update_allows_nonassumption_and_reblocking_updates(run_script, vault):
+    """AC4: updating a non-assumptions field, and replacing assumptions with a still-blocking set, both
+    SUCCEED — the guard refuses only the state with ZERO blocking assumptions."""
+    _write_ps(vault, _ps_item())
+    r = _ve(run_script, vault, "update", "--file", "product-scope.json", "--array", "items",
+            "--id", "PS-001", "--set", "title=renamed")
+    assert r.returncode == 0, r.stderr
+    r2 = _ve(run_script, vault, "update", "--file", "product-scope.json", "--array", "items",
+             "--id", "PS-001", "--set",
+             'assumptions=[{"id":"A2","statement":"y","blocking":true}]')
+    assert r2.returncode == 0, r2.stderr
+
+
+def test_ps_guard_does_not_touch_candidates_hot_path(run_script, vault):
+    """AC4 / A1 (must-not-defer): the kind=='ps' guard is structurally isolated from the candidates.json
+    status/progress/slice hot path — _managed_kind_for resolves 'sc' there, never 'ps', so a candidate
+    update carrying no assumptions field is unaffected."""
+    r = _ve(run_script, vault, "append", "--file", "candidates.json", "--array", "candidates",
+            "--json", '{"title": "t", "status": "candidate"}')
+    assert r.returncode == 0, r.stderr
+    cid = json.loads((vault / "candidates.json").read_text(encoding="utf-8"))["candidates"][0]["id"]
+    for kv in ("status=in-progress", "progress=building", "slice=slice-999"):
+        rr = _ve(run_script, vault, "update", "--file", "candidates.json", "--array", "candidates",
+                 "--id", cid, "--set", kv)
+        assert rr.returncode == 0, f"candidates hot-path update {kv} must succeed: {rr.stderr}"
+
+
+def test_ps_update_refuses_junk_area_via_append(run_script, vault):
+    """slice-093 / code-review m1: the M-add-2 area guard covers the --APPEND write leg too, not just
+    --set. `update --append area '"junk"'` makes rec['area'] a list, which _valid_area's type-guard
+    refuses (exit 2, file byte-untouched) -- without this the fourth-seam differential stayed open one
+    verb over. The blocking-assumption contract is unaffected (rec keeps A1)."""
+    _write_ps(vault, _ps_item())
+    before = (vault / "product-scope.json").read_bytes()
+    r = _ve(run_script, vault, "update", "--file", "product-scope.json", "--array", "items",
+            "--id", "PS-001", "--append", "area", '"junk"')
+    assert r.returncode == 2, f"append junk area must refuse (exit 2), got {r.returncode}: {r.stderr}"
+    assert (vault / "product-scope.json").read_bytes() == before, "file must be byte-untouched on refusal"

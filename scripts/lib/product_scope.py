@@ -498,20 +498,27 @@ def _load_items(path: str, *, allow_empty: bool = False) -> list[dict]:
     for it in items:
         if not isinstance(it, dict):
             raise _Refuse(2, "usage", f"{p}: every item must be a JSON object; got {type(it).__name__}")
-        # SC-182 / ADR-096 (slice-084: `component` renamed to `area`): recognize the one untrusted
-        # write-seam field at the shared boundary. This loop is _load_items' single choke point for all
-        # THREE callers -- persist, revise, and the read-only --scope-file replay -- so routing a SUPPLIED
-        # grouping label through the single-sourced _valid_area here closes every write seam at once (the
-        # set-area parity SC-182 is about). `area` is canonical; `component` is accepted as a back-compat
-        # alias and normalized into `area`. RAW truthiness (isinstance-str + value, NOT .strip()) mirrors
-        # the persist/revise `... or ...` short-circuit exactly, so this check == the persisted value with
-        # no differential (m2/M2); _valid_area then strips + rejects the reserved sentinel. Blank / absent /
-        # non-string is LEFT UNTOUCHED (a description-only revise grandfathers a legacy value; no new
-        # .strip() crash path). Sits AFTER the non-dict guard above so it.get() only runs on a dict (m2).
+        # SC-182 / ADR-096; SC-185 / [[ADR-118]] (slice-084: `component` renamed to `area`): recognize the
+        # one untrusted write-seam field at the shared boundary. This loop is _load_items' single choke
+        # point for all THREE callers -- persist, revise, and the read-only --scope-file replay -- so
+        # routing a SUPPLIED grouping label through the single-sourced _valid_area here closes every write
+        # seam at once (the set-area parity SC-182/SC-185 is about). `area` is canonical; `component` is a
+        # back-compat INPUT alias normalized into `area`.
+        #
+        # PRESENCE-GATE (SC-185 / m4), not raw truthiness: the gate keys on `grp is None`, NEVER on a
+        # `.strip()`/truthiness pre-check. A PRESENT (non-None) grouping label is routed through the
+        # type-guarded _valid_area UNCONDITIONALLY, so an empty-string / whitespace / non-string / reserved
+        # value REFUSES on every seam (identical to set-area) instead of being written verbatim -- the
+        # SC-185 differential the old raw-truthiness gate left open on persist/revise/replay. The alias is
+        # resolved ONLY when `area` is absent/None; an explicit empty/junk `area` refuses even when a valid
+        # `component` is present (reject-don't-repair -- borrowing the alias would reopen the differential
+        # one level over). Absent/None on BOTH keys stays LEFT UNTOUCHED (a legal un-annotated item; a
+        # description-only revise grandfathers a legacy value -- it is not re-supplied). Sits AFTER the
+        # non-dict guard above so it.get() only runs on a dict (m2).
         grp = it.get("area")
-        if not (isinstance(grp, str) and grp):
+        if grp is None:
             grp = it.get("component")
-        if isinstance(grp, str) and grp:
+        if grp is not None:
             it["area"] = _valid_area(grp)
     _check_identities(items, p)
     return items
@@ -682,6 +689,26 @@ def _nonempty_contract_str(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def has_blocking_assumption(item: dict) -> bool:
+    """Single-sourced recognizer: does this scope item carry >=1 dict assumption marked `blocking`?
+
+    The ONE contract invariant a generic vault write could break (ADR-067 §5: a candidate with no
+    blocking assumption SKIPS /risk-spike step-0, the pipeline's reality gate). Extracted from
+    _check_contract Phase-1's `blocking` test and consumed by THREE enforcement boundaries so they cannot
+    drift (BC-PROJ-6, slice-093 / [[ADR-118]]):
+      * _check_contract Phase-1 (the write-time crossing contract),
+      * vault_edit._cmd_update's kind=='ps' guard (the generic-update leg; lazy import, acyclic),
+      * _candidate_from (the irreversible MINT belt -- M-add-1, closing the harm for ALL routes).
+
+    isinstance-guarded on BOTH the list and each element, so a non-list `assumptions` or a non-dict entry
+    is decisively False (never a crash, never a silent pass). Semantics match _check_contract exactly:
+    `a.get('blocking')` truthiness with no default -- a blocking assumption must be EXPLICITLY marked."""
+    assumptions = item.get("assumptions")
+    if not isinstance(assumptions, list):
+        return False
+    return any(isinstance(a, dict) and a.get("blocking") for a in assumptions)
+
+
 def _check_contract(
     items: list[dict],
     *,
@@ -742,11 +769,16 @@ def _check_contract(
 
         iid = str(it.get("id") or "").strip()
         named = f"{_label(it)!r}" + (f" ({iid})" if iid else "")
+        # `assumptions` / `blocking` are the message-distinguishing locals ONLY (RPCD-1, slice-093/m2):
+        # the Phase-1 ENFORCEMENT decision routes through the single-sourced has_blocking_assumption so the
+        # three boundaries (this contract, the vault_edit ps guard, the _candidate_from mint belt) cannot
+        # drift; these locals stay to branch the refusal message (genuinely-empty vs none-blocking, both
+        # test-pinned) and to size the Phase-2 message. Same computation the predicate performs.
         assumptions = [a for a in it.get("assumptions") or [] if isinstance(a, dict)]
         blocking = [a for a in assumptions if a.get("blocking")]
 
         # Phase 1 — a BLOCKING assumption must EXIST. Never waived, on either verb.
-        if not blocking:
+        if not has_blocking_assumption(it):
             if not assumptions:
                 cause = ("carries `assumptions: []`")            # the genuinely-empty case
             else:
@@ -855,7 +887,28 @@ def _require_contract_field(item: dict, field: str) -> str:
 
 def _candidate_from(item: dict, sc_id: str, dep_sc: list[str], ts: str) -> dict:
     """The FULL candidate record (M-add-4), mirroring build_backlog._candidate_from field-for-field."""
-    blocking = [a for a in item.get("assumptions") or [] if a.get("blocking")]
+    # M-add-1 (slice-093 / [[ADR-118]]): the ADR-067 §5 harm is realized HERE, at the irreversible mint.
+    # cmd_materialize's WRITE path reads PERSISTED items and reaches this function WITHOUT re-running
+    # _check_contract, and _require_contract_field already belts 2 of the 3 Phase-1 invariants
+    # (user_visible_outcome, verification_plan below) -- the blocking assumption, the one most directly
+    # tied to a step-0 skip, was the omitted third. Re-check it via the SAME single-sourced predicate the
+    # write seams use, so an assumptionless item introduced by ANY route (the vault_edit update leg now
+    # closed, the out-of-scope `rewrite` verb, a hand-edit, a legacy pre-enforcement persist) cannot mint
+    # a step-0-skipping candidate. This is NOT over-tightening a legacy item (the false rationale ADR-115
+    # gave, corrected by ADR-118): _require_contract_field ALREADY refuses a Phase-1-incomplete item at
+    # this same boundary, so refusing the assumptionless one is the SAME contract, not a new hazard.
+    if not has_blocking_assumption(item):
+        raise _Refuse(
+            2, "usage",
+            f"materialize reached scope item {(item.get('id') or _label(item))!r} with no BLOCKING "
+            f"assumption -- minting it would put a candidate that SKIPS /risk-spike step-0 (ADR-067 "
+            f"section 5, the pipeline's reality gate) into an append-only, non-revocable backlog. The "
+            f"contract recognizer (_check_contract) should have refused it upstream; refusing to mint "
+            f"from an unrecognized item. Add a `blocking: true` assumption to the scope item and re-run.",
+        )
+    # m2: isinstance-guarded to match has_blocking_assumption exactly (was an unguarded count that would
+    # AttributeError on a non-dict raw assumption). Count-only, for the rationale string below.
+    blocking = [a for a in item.get("assumptions") or [] if isinstance(a, dict) and a.get("blocking")]
     return {
         "id": sc_id,
         "title": item["title"],
@@ -1659,15 +1712,22 @@ def _valid_area(name: str) -> str:
     Called by set-area (and its set-component alias) AND (via _load_items) by persist / revise / the
     --scope-file replay, so the _Refuse message stays verb-neutral.
 
-    Two rejects, and only two (the field stays OPTIONAL — absent/None is a legal un-annotated item, set
-    only by persist/revise, never by this verb):
+    Three rejects (the field stays OPTIONAL — absent/None is a legal un-annotated item, handled by the
+    caller BEFORE reaching here; this recognizer decides only a PRESENT value):
+      * non-string                -> SC-185 / [[ADR-118]]: the type-guard fires BEFORE `.strip()`, so a
+        non-string (int/list/object) refuses cleanly instead of crashing with AttributeError (the old
+        `(name or '').strip()` raised on a non-empty non-string). Totality: decisive for EVERY value.
       * empty / whitespace-only  -> an area name must be a real label
       * the reserved sentinel     -> casefold-match of UNASSIGNED. 'unassigned' is a RESIDUAL the rollup
         buckets un-annotated capabilities into (a suspense account you never post INTO); writing it would
         merge a genuinely-annotated capability with the truly-unassigned. Compared against
         UNASSIGNED.casefold() (m1), never a re-hardcoded literal, so the sentinel stays single-sourced.
     """
-    s = (name or "").strip()
+    if not isinstance(name, str):
+        raise _Refuse(2, "usage",
+                      f"area must be a string; got {type(name).__name__}. An area name is a single "
+                      f"scalar label. To leave a capability un-annotated, simply do not annotate it.")
+    s = name.strip()
     if not s:
         raise _Refuse(2, "usage",
                       "area must be a non-empty name (an empty/whitespace value is not an area). "
