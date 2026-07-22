@@ -26,10 +26,22 @@ Subcommands:
                           Fail-closed, reversible, idempotent (a re-run is a no-op); holds the single
                           gate-log.json.lock across the whole read->build->verify->publish, so a
                           parallel-slice append can never be lost or duplicated. Actions are logged.
+  sync push|pull [--vault P] [--remote R] [--force] [--force-drop-local]
+                          Git-native vault sync (slice-092 / ADR-114): "sync the log, never the
+                          view". push = ensure sync hygiene -> git add -A -> commit -> push; a fresh
+                          clone reconstructs the vault via the derive-on-missing readers (the derived
+                          gate-log cache + *.lock/*.tmp/.source-repo + .git/ are excluded). pull =
+                          fetch + fast-forward-only by default (REFUSES a dirty tree or divergent
+                          history), --force mirror-resets (still guarding unpushed local commits;
+                          --force-drop-local overrides), then invalidates the derived cache.
+                          NOTE: `sync push` transmits the WHOLE vault UNREDACTED — use a PRIVATE
+                          remote (a secret committed once persists in the pushed history).
 
-Exit: 0 ok · 2 usage (not a git tree / unknown vault / unconfirmed delete / bad archive)
+Exit: 0 ok · 2 usage (not a git tree / unknown vault / unconfirmed delete / bad archive / sync:
+        unconfigured-or-ambiguous remote / detached-HEAD / no-upstream / missing committer identity)
       · 3 genuine failure (slice-058/ADR-055: a fail-visible pin-write / git-init-actuator
-        failure, DISTINCT from the benign exit-2 so a skill exit-check can tell them apart).
+        failure, DISTINCT from the benign exit-2 so a skill exit-check can tell them apart; sync:
+        missing remote / auth / network / push-reject / refused data-loss pull / cache-invalidation).
 """
 from __future__ import annotations
 
@@ -48,7 +60,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from scripts.lib import _shard_store, _stdout
+from scripts.lib import _shard_store, _stdout, _vault_git_sync
 from scripts.lib._vault_paths import (
     _CONFIG_REL, _canonical, _git_common_dir, external_store_path, resolve_base,
 )
@@ -344,6 +356,40 @@ def cmd_read_entries(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sync(args: argparse.Namespace) -> int:
+    """`vault_admin sync push|pull` — git-native vault sync (slice-092 / ADR-114). Thin CLI wrapper
+    that resolves the vault, dispatches to the ``_vault_git_sync`` engine, and maps its typed
+    exceptions onto the 0-ok / 2-usage / 3-genuine-failure taxonomy (mirroring cmd_migrate): a
+    ``SyncUsageError`` (not-a-git-tree / unconfigured-or-ambiguous remote / detached-HEAD /
+    no-upstream / missing-identity) is exit 2 with a hint; a ``SyncFailure`` (missing remote / auth /
+    network / push-reject / refused data-loss pull / fail-visible cache-invalidation) is exit 3; the
+    engine's log lines (auditable ref old->new + file count, the m3 unredacted note) go to stdout."""
+    vault = _this_repo_vault(args.vault)
+    if vault is None:
+        return 2
+    if not vault.is_dir():
+        sys.stderr.write(f"vault_admin sync: no vault at {vault}.\n")
+        return 2
+    try:
+        if args.direction == "push":
+            result = _vault_git_sync.sync_push(vault, remote_arg=args.remote, log=lambda m: print(m))
+        else:
+            result = _vault_git_sync.sync_pull(
+                vault, remote_arg=args.remote, force=args.force,
+                force_drop_local=args.force_drop_local, log=lambda m: print(m))
+    except _vault_git_sync.SyncUsageError as exc:
+        sys.stderr.write(f"vault_admin sync: {exc}\n")
+        return 2
+    except _vault_git_sync.SyncFailure as exc:
+        sys.stderr.write(f"vault_admin sync: {exc}\n")
+        return 3
+    except Exception as exc:  # noqa: BLE001 — fail-closed actuator: any unexpected failure -> exit 3
+        sys.stderr.write(f"vault_admin sync: FAILED ({type(exc).__name__}: {exc}) — fail-closed.\n")
+        return 3
+    print(f"sync: {result}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     p = argparse.ArgumentParser(prog="vault_admin", description="Vault lifecycle admin (4.7).")
@@ -376,10 +422,23 @@ def main(argv: list[str] | None = None) -> int:
                      help="the aggregate's vault-relative cache file (default: gate-log.json)")
     re_.add_argument("--array", default="entries",
                      help="the array key to read (only 'entries' is supported today)")
+    sy = sub.add_parser("sync", help="git push|pull the vault sync-set (slice-092; transmits the "
+                                     "WHOLE vault UNREDACTED — use a PRIVATE remote)")
+    sy.add_argument("direction", choices=["push", "pull"], help="push or pull the vault")
+    sy.add_argument("--vault", default=None, help="vault path (default: computed for this repo)")
+    sy.add_argument("--remote", default=None,
+                    help="remote name (default: 'origin' / the sole remote for push, the branch "
+                         "upstream's remote for pull; ambiguity is an error)")
+    sy.add_argument("--force", action="store_true",
+                    help="pull: mirror-reset to <remote>/<branch>, discarding uncommitted working-"
+                         "tree edits (still refuses to silently drop unpushed local commits)")
+    sy.add_argument("--force-drop-local", action="store_true",
+                    help="pull: additionally DISCARD unpushed local commits (enumerated before the "
+                         "reset); implies --force")
     args = p.parse_args(argv)
     return {"write-pin": cmd_write_pin, "git-init": cmd_git_init, "list": cmd_list,
             "uninstall": cmd_uninstall, "export": cmd_export, "import": cmd_import,
-            "migrate": cmd_migrate, "read-entries": cmd_read_entries}[args.cmd](args)
+            "migrate": cmd_migrate, "read-entries": cmd_read_entries, "sync": cmd_sync}[args.cmd](args)
 
 
 if __name__ == "__main__":
