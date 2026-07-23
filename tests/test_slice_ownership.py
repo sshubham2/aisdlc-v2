@@ -133,6 +133,19 @@ def test_foreign_identity_is_refused(tmp_path: Path) -> None:
     assert OVERRIDE_ENV in res["message"]
 
 
+def test_refusal_message_names_the_real_transfer_verb(tmp_path: Path) -> None:
+    """slice-096 AC4 / M4: the take-over remedy in the refusal message must name the real,
+    logged, append-only `transfer` verb — NOT the retired 'does not exist yet -- filed follow-up'
+    placeholder. (test_slice_ownership.py previously asserted NOTHING about this sentence — the
+    wiring_matrix 'already covered' claim was false.)"""
+    v = _vault(tmp_path, [_cand("SC-900", "slice-101", OWNER)])
+    r = _repo(tmp_path, "Bob Other", "bob@example.com")
+    msg = check_ownership(v, "slice-101", repo_root=r)["message"]
+    assert "does not exist yet" not in msg
+    assert "filed follow-up" not in msg
+    assert "transfer" in msg.lower(), "the message must name the transfer verb as the take-over remedy"
+
+
 def test_no_candidate_row_allows_with_a_warning(tmp_path: Path) -> None:
     """Every existing resolver fixture builds a vault with NO candidates.json -- this disposition is
     what keeps the whole existing suite green, and it is a DELIBERATE fail-open: there is no
