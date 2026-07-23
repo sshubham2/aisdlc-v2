@@ -150,6 +150,48 @@ def hook_health() -> tuple[bool, list[str]]:
     return (not issues, issues)
 
 
+def _vault_surface() -> None:
+    """READ-ONLY surface of the resolved vault base + this-repo vault path + the persisted sync
+    backend (slice-097 AC1/AC5). Writes NOTHING — every call here reads (resolve_base / git-common-dir
+    / config-read), so `--check` stays side-effect-free. The base-location + backend PICKERS live in
+    SKILL.md (consented AskUserQuestion); this only reports current state so a re-run is informed."""
+    try:
+        from scripts.lib import _sync_config
+        from scripts.lib._vault_paths import (
+            _read_config_at, external_store_path, git_common_dir, resolve_base,
+        )
+    except Exception as exc:  # pre-install / import failure: never crash the doctor
+        print(f"vault       : (surface unavailable: {exc})")
+        return
+    print(f"vault base  : {resolve_base()}")
+    common = git_common_dir()
+    if common:
+        pinned = _read_config_at(common)
+        print(f"vault (repo): {pinned or external_store_path(common)}"
+              f"{'  [pinned]' if pinned else '  [computed default]'}")
+    else:
+        print("vault (repo): (not a git tree — set AI_SDLC_VAULT_ROOT or run `git init` to pin)")
+    try:
+        cfg = _sync_config.load(common)
+    except _sync_config.SyncConfigError as exc:
+        print(f"sync backend: INVALID config — {exc}")
+        return
+    if not cfg:
+        print("sync backend: not configured (sync defaults to git for back-compat; "
+              "run /setup's backend picker to set local|git|s3)")
+    elif cfg["backend"] == "s3":
+        s3 = cfg.get("s3", {})
+        endpoint = s3.get("endpoint") or "AWS S3"
+        print(f"sync backend: s3 (bucket={s3.get('bucket', '?')}, endpoint={endpoint}, "
+              f"region={s3.get('region', 'us-east-1')}, project={s3.get('project', '?')}; "
+              f"credentials via boto3 default chain)")
+    elif cfg["backend"] == "git":
+        remote = cfg.get("git", {}).get("remote")
+        print(f"sync backend: git{f' (remote={remote})' if remote else ''}")
+    else:
+        print("sync backend: local (no remote sync configured)")
+
+
 def do_check(repo: str) -> int:
     print(f"interpreter : {PY}")
     print(f"python      : {sys.version.split()[0]}")
@@ -161,6 +203,7 @@ def do_check(repo: str) -> int:
     print(f"mcp         : {'registered (./.mcp.json)' if registered else 'NOT registered'}")
     print(f"graph       : {'built (./.code-review-graph)' if (Path(repo) / '.code-review-graph').is_dir() else 'NOT built'}")
     print(f"git         : {'repo' if _is_git(repo) else 'NOT a git repo'}")
+    _vault_surface()
     ok, issues = hook_health()
     print(f"hook env    : {'OK (hook fired: PY + CRG set; vault resolves per-invocation by design)' if ok else 'DEGRADED'}")
     for i in issues:
