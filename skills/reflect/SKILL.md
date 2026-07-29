@@ -135,6 +135,13 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file candidat
 rm -rf "$T"
 ```
 
+The item body MAY carry an optional `area` (slice-098 / [[ADR-125]]) when the residue plainly belongs to a known
+product area — a candidate's own area is what makes it reachable by the `/slice --area` lens. It is **validated at
+the mint leg**: an empty/whitespace/non-string value, the reserved `unassigned` sentinel, or a `component` key
+(candidates carry `area`, never `component`) is **REFUSED at exit 2** with `candidates.json` byte-identical, and a
+LIST payload is validated **element by element**. Omitting `area` entirely is the norm and always legal — annotate
+later through the seam in `/slice-candidates` (product-6) rather than guessing here.
+
 ---
 
 ## Step 3 — Critic calibration (TRI-1)

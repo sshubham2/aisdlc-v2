@@ -370,6 +370,51 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" set-area --item PS-
 - Un-annotated capabilities stay in `unassigned` (backward-compatible; a zero-annotation rollup is byte-identical).
   After annotating ≥1 capability, re-run `/slice --area <NAME>` (or `product_scope done`) to see the lens.
 
+### product-6 — annotate a CANDIDATE's own area (slice-098 / [[ADR-124]] + [[ADR-125]])
+
+`set-area` above annotates a **capability** (a PS-NNN item). A candidate that is **not product-scope-sourced** —
+which on a real backlog is most of it — has no capability to inherit from, so before slice-098 it could never
+appear in the `/slice --area` lens under any value. A candidate may now carry its **own** optional `area`.
+
+**The sanctioned annotation seam is the guarded generic verb** — there is deliberately **no typed producer verb**
+this cut ([[ADR-125]] section 2; it is to be re-filed as its own candidate at `/reflect`, to be justified on ergonomics once a data
+pass proves the need):
+
+```bash
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update \
+    --file candidates.json --array candidates --id SC-NNN \
+    --set area="<NAME>" \
+    --append history '{"event":"area-set","by":"<who>","at":"<ts>","ref":"<NAME>"}'
+rc=$?; [ "$rc" = 0 ] || { echo "STOP: area annotation refused (rc=$rc) -- see stderr for the offending value; candidates.json is unchanged" >&2; exit "$rc"; }
+```
+
+- **Both flags land in ONE mutate closure**, so the annotation and its witness are written atomically under the
+  same SVW-1 lock — there is no window where the area exists without its history event.
+- **The witness is CONVENTIONAL, not enforced** ([[ADR-125]] section 3 — stated plainly rather than papered over):
+  a caller who omits the `--append history` writes an **unwitnessed** area and *nothing refuses that*. Enforcing it
+  was considered and rejected for this cut (it would make a generic verb's contract conditional on a second flag,
+  with no precedent in the repo). Write the event.
+- **Validation** is the SAME `_valid_area` recognizer product-scope items use — never re-implemented. An
+  **empty/whitespace** name, a **non-string**, or the reserved sentinel **`unassigned`** (case-insensitive) is
+  **REFUSED at exit 2** and leaves `candidates.json` **byte-identical**. A supplied **`component`** on a candidate
+  is refused outright: a candidate carries `area`, and `component` is the slice-084 back-compat alias for PS items
+  only ([[ADR-125]] section 4).
+- **Un-annotate** with `--set area=null` (the sanctioned seam, [[ADR-125]] section 6). Note the key **remains
+  present with value `null`** — `--set` cannot delete a key; readers treat that as absent.
+- **A case/spacing variant of an existing area is written with a WARN**, not refused (`'Verification-Gates'` vs
+  `'verification-gates'` are two buckets that both read as *known*, splitting one area's picks). The `/slice --area`
+  surface repeats the warning as `near_matches`. Use a **small, stable** set of coarse area names.
+- **Coverage, stated honestly**: the field is validated at **every `vault_edit` leg except `rewrite`**. `rewrite`
+  is a NAMED-OPEN bypass (SC-168) and `/commit-slice` runs it on **every ship**, so never claim the field *cannot*
+  be written invalid. The compensating control is on the read side: an invalid stored area **degrades to absent**
+  rather than surfacing in the lens. `product_scope materialize` and `build_backlog` write `candidates.json`
+  through their own locked path and are not reachable by this guard at all.
+- **Precedence** ([[ADR-124]] section 1): a candidate's own valid area **beats** the area derived from its
+  product-scope parent, including the multi-parent ambiguity fallback. That can **mask a mis-parenting** — the
+  `/slice --area` surface renders `via candidate` vs `via product-scope` so it is at least visible.
+- The **capability-progress rollup never reads this field.** A candidate is not a capability; per-area capability
+  counts are unmoved by any amount of candidate annotation.
+
 ## --demote mode — 'good enough for now' (slice-077 / [[ADR-088]])
 
 Lower a genuinely-low-value **off-path** candidate's backlog rank by a bounded score-space term
