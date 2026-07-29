@@ -331,7 +331,7 @@ The Haiku agent fills the template and returns the summary text. Main thread pri
 - Backlog: <N not-started + in-flight>  (blocked-on-spike: <N>)
 - Top priority: <SC-NNN — description>
 - Product shape: <the rollup envelope's `pulse_line` verbatim>   [omit this whole line when scope_present is false; WARN: product shape unavailable — <error> when the rollup envelope carries an error]
-- Per component (least-complete first): <name done/total, ...>   [omit when the components array is empty (e.g. an un-annotated scope — everything is unassigned)]
+- Per area (least-complete first): <name done/total, ...>   [omit when the areas array is empty (e.g. an un-annotated scope — everything is unassigned)]
 - Out-of-scope (parent capability cut): <SC-NNN (was PS-NNN), ...>   [omit this whole line when the orphaned set is empty]
 [If the orphan envelope carries an error: WARN: out-of-scope surface unavailable — <error>]
 
