@@ -40,9 +40,16 @@ plus the mandatory `unassigned / cross-cutting` bucket — a **priority-ranked p
 pick. **If the user invoked `/slice --area <NAME>`** (or otherwise wants the pick surface scoped to ONE product
 area), re-run the candidate digest filtered to it and recommend from that filtered set:
 `$PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5 --area <NAME>` (use `unassigned` for PRODUCT
-capabilities not yet grouped into an area — the lens shows product capabilities ONLY, never pipeline-exhaust
-chores). This is a **LENS, not a lock** — it filters the PICKABLE list only (blocked/in-flight stay global),
-takes no lock, mints no id, writes no status/ownership. `--component <NAME>` stays as a back-compat alias.
+capabilities not yet grouped into an area). The population is every candidate with an **area SOURCE** (slice-098 /
+[[ADR-125]] section 1): one that **asserts** the area itself via its own `area` field, or a product capability
+bound to it through `owner_refs`. An **un-annotated** pipeline chore has no area source and stays out entirely,
+so slice-084 A1's anti-conflation still holds; and an annotated candidate can never land in `unassigned` (the
+write seams refuse the sentinel). Each pick renders its provenance — `area: <NAME> (via candidate)` vs
+`(via product-scope)` — because a candidate's own area **overrides** the one derived from its parent and can
+therefore mask a mis-parenting ([[ADR-124]] section 1). A `near_matches` WARN means the area name is split across
+two spellings. To annotate a candidate, use the seam documented in `/slice-candidates` (product-6). This is a
+**LENS, not a lock** — it filters the PICKABLE list only (blocked/in-flight stay global), takes no lock, mints no
+id, writes no status/ownership. `--component <NAME>` stays as a back-compat alias.
 Default-OFF (no `--area`) is byte-identical to the digest above. **If the rollup envelope carries a non-empty
 `governor` string** (the product's scope is decomposed but 0 of its capabilities are built — slice-084 B4),
 surface it as a WARN and **bias the recommendation toward a product-sourced capability** (`/slice --area

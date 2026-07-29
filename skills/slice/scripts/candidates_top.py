@@ -205,15 +205,24 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
     )
     if area_lens is not None:
         # slice-080/ADR-091 (slice-084 renamed component→area): the lens filters ONLY pickable (m2);
-        # blocked/in-flight stay global.
+        # blocked/in-flight stay global. slice-098/ADR-125: the population is now every candidate with an
+        # AREA SOURCE — its own asserted `area` or a product-scope parent — not product-sourced only.
         name = area_lens["area"]
         if area_lens["known"]:
-            lines.append(f"  [area lens: {name} — pickable filtered to this product area; "
-                         f"blocked/in-flight shown globally]")
+            lines.append(f"  [area lens: {name} — pickable filtered to this area (candidates that "
+                         f"assert it, plus product capabilities bound to it); blocked/in-flight "
+                         f"shown globally]")
         else:
             known = ", ".join(area_lens.get("areas") or []) or "none"
             lines.append(f"  [area lens: {name} — UNKNOWN area, 0 pickable. "
                          f"Known: {known}]")
+        near = area_lens.get("near_matches") or []
+        if near:
+            # critique m2: a case/spacing variant of a REAL area splits one area's picks across two
+            # buckets, both of which read as known. Surfaced at the pick surface, never silently filtered.
+            lines.append(f"       WARN: {name!r} case-matches known area(s) "
+                         f"{', '.join(repr(n) for n in near)} but is not byte-equal — the picks for "
+                         f"this area are SPLIT across both spellings. Re-annotate to one spelling.")
 
     lines.append("")
     if ranked:
@@ -232,6 +241,15 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
                 meta += f"  blast: {_blast(cand)}"
             if unmet:
                 meta += f"  [deps-unmet: {', '.join(unmet)}]"
+            if area_lens is not None:
+                # M6 — render the resolved area SOURCE on the TEXT path. Every production invocation of
+                # this digest is text-mode (the /slice `!`-injection), so a provenance that exists only
+                # in --json is a provenance the pick surface never shows. `candidate` = the candidate
+                # asserted this area itself and it OVERRODE any derived value ([[ADR-124]] section 1);
+                # `product-scope` = derived through its single PS parent.
+                src = (area_lens.get("sources") or {}).get(str(cid))
+                if src:
+                    meta += f"  area: {area_lens['area']} (via {src})"
             lines.append(f"  {i}. {cid}  {title}")
             lines.append(f"       {meta}")
             if cand.get("description"):
@@ -357,11 +375,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true",
                    help="emit JSON (default: human-readable text for prompt injection)")
     p.add_argument("--area", dest="area", default=None, metavar="NAME",
-                   help="OPTIONAL area lens (slice-080/ADR-091; slice-084 renamed from --component): "
-                        "filter the PICKABLE list to PRODUCT capabilities bound to this area (use "
-                        "'unassigned' for product capabilities with no area yet — NOT pipeline chores, "
-                        "which the lens excludes). Blocked/in-flight stay global context. Read-only — "
-                        "takes no lock, mints no id, writes no status; default-OFF is byte-identical.")
+                   help="OPTIONAL area lens (slice-080/ADR-091; slice-084 renamed from --component; "
+                        "slice-098/ADR-125 widened the population): filter the PICKABLE list to every "
+                        "candidate with an AREA SOURCE resolving to this area — one that ASSERTS the "
+                        "area itself (its own `area` field, which OVERRIDES any derived value) or a "
+                        "PRODUCT capability bound to it via owner_refs. Use 'unassigned' for product "
+                        "capabilities with no area yet; an annotated candidate can never land there "
+                        "(the write seams refuse the sentinel), and an UN-annotated chore has no area "
+                        "source and stays out entirely. Blocked/in-flight stay global context. "
+                        "Read-only — takes no lock, mints no id, writes no status; default-OFF is "
+                        "byte-identical.")
     p.add_argument("--component", dest="area", default=None, metavar="NAME",
                    help="deprecated alias of --area (slice-084)")
     return p
@@ -440,16 +463,41 @@ def main(argv: list[str] | None = None) -> int:
     # exhaust chores too — every one of which maps to 'unassigned' because it carries no product-scope
     # source — conflating the declared product capabilities with ~88 chores. The lens now answers "which
     # product capability comes next in area X", never "everything the pipeline happens to have queued".
+    # slice-098 / SC-212 ([[ADR-125]] section 1): the admission predicate widens from `owner_refs`
+    # non-empty to `has_area_source` — an own valid `area` OR a product-scope parent. slice-084 A1's
+    # anti-conflation rationale SURVIVES: `owner_refs`-non-empty was only ever a PROXY for "has a real
+    # area source", and `_valid_area` REFUSES the reserved `unassigned` sentinel at every write seam, so
+    # an annotated candidate can never resolve into the residual bucket the ~88-chore leak flowed through.
+    # An un-annotated chore still has no source and still stays out. ALL area logic is delegated to
+    # area_resolve so no second precedence rule can appear here (spike-A1 constraint 4).
     area_lens = None
     if args.area is not None:
-        from scripts.lib import product_rollup, product_scope
+        from scripts.lib import area_resolve, product_rollup
         area_map = product_rollup.read_area_map(_root(args.vault))
-        known = set(area_map.values()) | {product_rollup.UNASSIGNED}
-        pickable = [c for c in pickable
-                    if product_scope.owner_refs(c)
-                    and product_rollup.candidate_area(c, area_map) == args.area]
+        # `known` unions the PS areas with the areas candidates ASSERT for themselves — without the
+        # widening a freshly-annotated area reads `known: false` and the surface says "UNKNOWN area"
+        # about an area that demonstrably exists.
+        known = (set(area_map.values()) | {product_rollup.UNASSIGNED}
+                 | area_resolve.asserted_areas(all_live))
+        resolved = {}
+        kept = []
+        for c in pickable:
+            if not area_resolve.has_area_source(c):
+                continue
+            area, source = area_resolve.resolve(c, area_map)
+            if area == args.area:
+                kept.append(c)
+                resolved[str(c.get("id"))] = source
+        pickable = kept
         area_lens = {"area": args.area, "known": args.area in known,
-                     "areas": sorted(known)}
+                     "areas": sorted(known),
+                     # critique m2 — the read-time half of the split-bucket signal: a known area that
+                     # casefold-matches the request without being byte-equal. Advisory, never a filter.
+                     "near_matches": area_resolve.near_matches(args.area, known),
+                     # M6 — per-pick provenance {id: candidate|product-scope}. The ONLY thing that
+                     # distinguishes a candidate whose asserted area SHADOWS its capability's, which is
+                     # ADR-124 section 1's accepted masking cost mitigated "by visibility, not refusal".
+                     "sources": resolved}
 
     # Rank pickable: highest EFFECTIVE score (severity + product-priority term, slice-077) first,
     # then smaller effort, then id (stable). A demote co-constraint violation raises here and is

@@ -290,6 +290,30 @@ def _managed_kind_for(root: Path, target: Path, array: str) -> str | None:
     return _MANAGED_KIND.get((_vault_rel_key(root, target), array))
 
 
+def _candidate_area_near_matches(arr: list, rec: Any, value: str) -> list[str]:
+    """Areas OTHER live candidates already assert that casefold-match ``value`` without being byte-equal
+    (slice-098, critique m2). Advisory input only — the caller WARNs, never refuses.
+
+    ``_valid_area`` normalizes solely by ``.strip()``, so 'Verification-Gates' and 'verification-gates'
+    are two DISTINCT buckets that both read ``known: true`` at the ``/slice --area`` lens, silently
+    splitting one area's picks in two with no signal. Today that is contained (4 areas set by one
+    deliberate verb); once every candidate can be annotated it is a free-text surface.
+
+    DELEGATES to ``area_resolve`` (code-review CR4) rather than re-deriving the rule: one function owns
+    "is this the same bucket?", exactly as the reject set is single-sourced from ``_valid_area``
+    (re-deriving either is the SC-185 area-parity hazard). The import is acyclic — ``area_resolve``
+    imports ``product_rollup``/``product_scope`` and neither imports this module — and adds no new
+    resolution cost, since this CLI already resolves the vault root.
+
+    POPULATION, deliberately candidates-only: this runs entirely on the IN-LOCK array, taking no
+    cross-file ``product-scope.json`` read inside the lock for an advisory line. A candidate whose area
+    near-matches a PRODUCT-SCOPE area is therefore not flagged here — that half of the signal is
+    reported at the read surface, where the lens compares against PS ∪ candidate-asserted areas."""
+    from scripts.lib import area_resolve
+    siblings = [o for o in arr if isinstance(o, dict) and o is not rec]
+    return area_resolve.near_matches(value, area_resolve.asserted_areas(siblings))
+
+
 def _load_json(target: Path) -> Any:
     """Parse ``target`` as JSON (``{}`` when absent/empty). Raises ValueError on
     malformed JSON (mapped to exit 2)."""
@@ -601,6 +625,59 @@ def _cmd_append(args: argparse.Namespace) -> int:
                         f"(an object, e.g. {{\"glob\": \"**/*.py\"}} or {{\"always\": true}}) "
                         f"and re-append; nothing was written."
                     )
+        # slice-098 / SC-212 ([[ADR-125]] sections 4 + 5): the MINT leg of the candidate area guard —
+        # `_APPEND_REFUSED_KINDS` is {"ps"}, so `sc` MINTS on append and a payload carrying an invalid
+        # `area` would have landed a real allocator-minted SC id at rc=0, a leg the A2 spike never covered.
+        #
+        # ITERATES list payloads, byte-for-byte mirroring the bc precedent above (:593) — `_element_source`
+        # json-loads ANY shape and the leg does `arr.extend(element)` for a list, minting one id per
+        # element (:611-617). A guard written to inspect `element.get('area')` alone would silently pass
+        # `append --json '[{...},{"title":"x","area":""}]'` (M2: a first-element-only test passes too,
+        # which is why the enforcing test puts the bad value in the SECOND element).
+        #
+        # Placed AFTER the bc guard and BEFORE the --stdin duplicate-suppressor + id allocation, for the
+        # same reason the bc guard is: no path may return a false success, and nothing is written on a
+        # raise (safe_mutate_text leaves the target untouched, so counters.sc is not bumped either).
+        if kind == "sc":
+            from scripts.lib import product_scope as _ps
+            # The near-match population grows as the payload is walked, so element N is compared against
+            # the existing rows AND the earlier elements of this same append (code-review CR1).
+            _seen_rows = list(arr)
+            for _off, _cand in enumerate(element if isinstance(element, list) else [element]):
+                if not isinstance(_cand, dict):
+                    continue                  # a non-dict element is the allocator's problem, not the area's
+                if "component" in _cand:
+                    raise ValueError(
+                        f"vault_edit append: refusing to mint candidate at candidates[{len(arr) + _off}] "
+                        f"carrying `component` — a candidate carries `area`, never `component` "
+                        f"([[ADR-125]] section 4; `component` is the slice-084 back-compat alias for "
+                        f"product-scope ITEMS only, and would be read by nothing here). Use `area` "
+                        f"instead; nothing was written."
+                    )
+                _area = _cand.get("area")
+                if _area is None:
+                    continue                  # absent/null = a legal un-annotated candidate (the norm)
+                try:
+                    _valid = _ps._valid_area(_area)
+                except _ps._Refuse as exc:
+                    raise ValueError(
+                        f"vault_edit append: refusing to mint candidate at "
+                        f"candidates[{len(arr) + _off}] with an invalid area {_area!r} — {exc} "
+                        f"Nothing was written."
+                    ) from exc
+                _cand["area"] = _valid        # persist the NORMALIZED value (CR2), as the PS seam does
+                # The m2 split-bucket advisory belongs on EVERY leg that can create the split, and this
+                # diff newly invites the mint path to carry an area (/reflect's residue capture). A WARN
+                # only on the update leg would leave the mint path silently minting the second bucket
+                # (code-review CR1). Advisory: rc unchanged, the row still mints.
+                _near = _candidate_area_near_matches(_seen_rows, None, _valid)
+                if _near:
+                    _err(f"WARN vault_edit append: minted candidate area {_valid!r} case-matches "
+                         f"existing candidate area(s) {', '.join(repr(n) for n in _near)} but is not "
+                         f"byte-equal — this mints a SECOND bucket the `/slice --area` lens reports as "
+                         f"known, splitting the area's picks in two. Minted anyway (advisory); "
+                         f"re-annotate to the existing spelling if that was a typo.")
+                _seen_rows.append(_cand)
         # slice-050 / SC-041 (ADR-040 + ADR-043): bounded, --stdin-scoped duplicate guard. Runs
         # BEFORE the id-mint so the PRE-mint element compares against the id-stripped existing
         # records. On a hit, raise DuplicateAppendSuppressed — safe_mutate_text leaves the target
@@ -759,6 +836,71 @@ def _cmd_update(args: argparse.Namespace) -> int:
                             f"{rec.get('id', '?')!r} with an invalid area — {exc}. {target.name} is "
                             f"left unchanged."
                         ) from exc
+        # slice-098 / SC-212 ([[ADR-125]] section 4): the CANDIDATE twin of the ps guard above. `update` is
+        # the SANCTIONED annotation seam for a candidate's own `area` (ADR-125 section 2 dropped the typed
+        # producer verb), so this IS the mediation point AC1 names — there is no other typed door to guard.
+        #
+        # It JUDGES THE SUPPLIED KEY, deliberately NOT the ps guard's area-then-component fallback: DR-1
+        # proved BY EXECUTION that the shipped ps guard accepts `--set component=<anything>` at rc=0,
+        # because it detects a supplied area OR component and then judges `rec['area']` first — so a
+        # supplied component is detected and never judged. That hole is PRE-EXISTING and out of scope here
+        # (to be filed as its own candidate at /reflect), but this slice must not inherit it, and the ps
+        # guard above must stop being
+        # cited as a proven-complete precedent.
+        #
+        # SUPPLIED-ONLY, like the ps pragma: fire only when THIS update writes the key, never re-judging a
+        # pre-existing value on an unrelated edit, and never on an `--assumption` sub-record edit (which
+        # writes into the assumption dict, not the candidate record). "Supplied" spans BOTH write verbs —
+        # `--append area` makes the field a list, which _valid_area's type-guard refuses (the slice-093
+        # one-verb-over differential).
+        if kind == "sc" and not args.assumption:
+            from scripts.lib import product_scope as _ps
+            _supplied = {k for k, _ in sets} | {f for f, _ in appends}
+            # CHOSEN COMPONENT CONTRACT for kind=='sc' (ADR-125 section 4): a supplied `component` on a
+            # candidate is REFUSED OUTRIGHT. Candidates carry `area`; `component` is the slice-084
+            # back-compat alias for PS ITEMS only, so accepting it here would store a key nothing ever
+            # reads — the silently-inert JOIN twin slice-080's M-add-1 caught. ADR-092 section 2's
+            # "candidates carry no component" survives this slice verbatim on that key.
+            if "component" in _supplied:
+                raise ValueError(
+                    f"vault_edit update: refusing to write `component` on candidate "
+                    f"{rec.get('id', '?')!r} — a candidate carries `area`, never `component` "
+                    f"([[ADR-125]] section 4; `component` is the slice-084 back-compat alias for "
+                    f"product-scope ITEMS only). A `component` stored here would be read by nothing. "
+                    f"Use `--set area=<NAME>` instead; {target.name} is left unchanged."
+                )
+            if "area" in _supplied:
+                _area = rec.get("area")
+                # `--set area=null` is the SANCTIONED un-annotate seam (ADR-125 section 6 / critique M3):
+                # _set_value json-parses `null` to None, and None is a legal un-annotated state, so it
+                # passes at rc=0. CONTRACT: the key REMAINS PRESENT with value null (`--set` cannot delete
+                # a key) — own_area's totality reads that as absent, but a reader comparing `'area' in
+                # cand` would see it differently, so the seam is DOCUMENTED, not merely allowed.
+                if _area is not None:
+                    try:
+                        _valid = _ps._valid_area(_area)
+                    except _ps._Refuse as exc:
+                        raise ValueError(
+                            f"vault_edit update: refusing to write candidate {rec.get('id', '?')!r} "
+                            f"with an invalid area {_area!r} — {exc}. {target.name} is left unchanged."
+                        ) from exc
+                    # PERSIST THE NORMALIZED value, not the raw one (code-review CR2). `_valid_area`'s
+                    # contract is check == persisted-value (slice-076) and the PS seam honours it
+                    # (product_scope.py `it["area"] = _valid_area(grp)`); storing the raw string would
+                    # leave a check/write differential that only the read side collapses, so a reader
+                    # comparing `cand['area']` directly would disagree with the lens.
+                    rec["area"] = _valid
+                    _near = _candidate_area_near_matches(arr, rec, _valid)
+                    if _near:
+                        # critique m2 — SPLIT-BUCKET advisory, never a refusal (ADR-124 section 6's
+                        # visibility-not-refusal stance). Warn at ANNOTATION time so the split never
+                        # accumulates; the lens carries the read-time half of the same signal.
+                        _err(f"WARN vault_edit update: candidate {rec.get('id', '?')!r} area "
+                             f"{_valid!r} case-matches existing candidate area(s) "
+                             f"{', '.join(repr(n) for n in _near)} but is not byte-equal — this mints a "
+                             f"SECOND bucket the `/slice --area` lens reports as known, splitting the "
+                             f"area's picks in two. Written anyway (advisory); re-annotate to the "
+                             f"existing spelling if that was a typo.")
         return _dump(data)
 
     return _run_mutate(target, mutate)

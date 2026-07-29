@@ -59,6 +59,7 @@
       "rationale": "Deferred out of its owning slice as an out-of-scope cut, recorded on capture.",
       "dependencies": [], "assumptions": [],
       "priority": { "score": 3, "effort": "S", "blast_radius": "shared/lib" },
+      "area": "resilience",
       "ejected_from": "slice-072",
       "ejection_reason": "out of budget for slice-072; deliberate out-of-scope cut recorded on capture (residue provenance)",
       "history": [{ "event": "created", "by": "reflect", "at": "<ts>" }]
