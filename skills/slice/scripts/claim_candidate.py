@@ -61,6 +61,10 @@ _NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # A candidate id shape — validated on the CONFIGURED branch BEFORE composing any shared claims/ path
 # (m3 / ADR-113); the default (unconfigured) path leaves candidate-id handling byte-identical.
 _CAND_RE = re.compile(r"^SC-\d+$")
+# slice-096 / m4: `transfer --slice` must be the EXACT stored zero-padded 3-digit form (matching
+# owner_of's exact string compare at slice_ownership.py:119) — an unpadded `slice-96` is a usage
+# refusal that echoes the expected shape, never a silent false 'unknown slice' first-match.
+_SLICE_RE = re.compile(r"^slice-\d{3,}$")
 # Configured-coordination exit codes (aligned with slice_ownership's taxonomy — m1 / ADR-113):
 # 5 ownership (foreign hold), 3 retryable (transient/unreachable), 4 ambiguous (indeterminate read-back).
 _EXIT_RETRYABLE = 3
@@ -364,6 +368,257 @@ def _make_release_mutate(path: Path, candidate_id: str, git_email: str, ts: str,
     return mutate
 
 
+# ── transfer (slice-096 / SC-146 / ADR-122): re-mint claimed_by of an ALREADY-CLAIMED candidate ───
+
+def _valid_email(email: str) -> bool:
+    """A minimally well-formed `local@domain`: exactly one @, both parts non-empty, no whitespace or
+    angle brackets. Deliberately does NOT require a dot in the domain (existing claims use `a@test`)."""
+    if not email or any(c in email for c in "<> \t"):
+        return False
+    if email.count("@") != 1:
+        return False
+    local, _, domain = email.partition("@")
+    return bool(local) and bool(domain)
+
+
+def _parse_to(raw: str) -> dict:
+    """Parse a `--to` identity — the git-ident angle-bracket form `Name <email>` OR a
+    last-whitespace-token `Name email` — into ``{git_user, git_email}`` under a STRICT grammar
+    (M1). Raises ``ValueError`` (-> usage exit 2) on anything malformed.
+
+    Deliberately NOT ``email.utils.parseaddr`` / ``getaddresses`` — they NEVER fail and silently
+    mis-attribute (CVE-2019-16056 / CVE-2023-27043), which on a twin-reader field like ``claimed_by``
+    could persist a blank-email owner that ``owner_of`` reads as de-owned (slice_ownership.py:126)
+    while ``stranded_slice_audit`` reads as live. The persisted email MUST be non-blank so a transfer
+    can never silently de-own the slice."""
+    s = (raw or "").strip()
+    if not s:
+        raise ValueError('--to is empty (expected "<Name> <email>")')
+    if any(ord(ch) < 0x20 for ch in s):
+        raise ValueError("--to contains control characters")
+    if "<" in s or ">" in s:
+        # exactly one, well-formed, TRAILING <...> group; name is everything before it.
+        if (s.count("<") != 1 or s.count(">") != 1 or not s.endswith(">")
+                or s.index("<") > s.index(">")):
+            raise ValueError('--to angle-bracket form must be `Name <email>` (one trailing <email>)')
+        lt = s.index("<")
+        email = s[lt + 1:-1].strip()
+        name = s[:lt].strip()
+    else:
+        parts = s.split()
+        if len(parts) < 2:
+            raise ValueError('--to must be "<Name> <email>" (a non-blank name AND an email)')
+        email = parts[-1]
+        name = " ".join(parts[:-1]).strip()
+    if not name:
+        raise ValueError("--to has a blank name")
+    if any(c in name for c in "@<>"):
+        raise ValueError("--to name may not contain '@', '<' or '>' (ambiguous / two-address form)")
+    if not _valid_email(email):
+        raise ValueError(f"--to email {email!r} is not a well-formed local@domain address")
+    return {"git_user": name, "git_email": email}
+
+
+def _make_transfer_mutate(path: Path, *, slice_id: str | None, candidate_id: str | None,
+                          to_identity: dict, performer: dict, ts: str, result: dict):
+    """SVW-1 in-lock mutate: re-mint ONLY ``claimed_by`` of the target candidate to ``to_identity``,
+    set ``data['updated']``, and append an append-only ``pick_log`` + candidate-``history``
+    ``transferred`` memorial. Leaves status/progress/slice/started_at + counters byte-identical
+    (never calls ``id_allocator``). Fail-visible + ZERO-write on every refusal (the mutate raises
+    ``_ClaimError`` before returning, so ``safe_mutate_text`` never writes).
+
+    Target resolution: ``--candidate`` keys by the unique id (deterministic; rescues a RESERVED
+    slice==None candidate — M-add-2). ``--slice`` keys by the ``slice`` field and REFUSES fail-visible
+    if >1 LIVE candidate carries it (R-5 collision safety — M-add-1), never first-match-write."""
+
+    def mutate(text: str) -> str:
+        if not text.strip():
+            raise _ClaimError(f"{path} is empty or missing — no candidates to transfer")
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise _ClaimError(f"{path} is not valid JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise _ClaimError(f"{path} top-level is not a JSON object")
+        cands = data.get("candidates")
+        if not isinstance(cands, list):
+            raise _ClaimError(f"{path} has no candidates[] array")
+
+        if candidate_id is not None:
+            rec = next((c for c in cands
+                        if isinstance(c, dict) and str(c.get("id")) == candidate_id), None)
+            if rec is None:
+                raise _ClaimError(
+                    f"{candidate_id} is not in the live backlog — already shipped or unknown")
+        else:
+            matches = [c for c in cands if isinstance(c, dict) and c.get("slice") == slice_id]
+            if not matches:
+                raise _ClaimError(
+                    f"{slice_id} is not in the live backlog — already shipped or unknown "
+                    f"(expected the exact stored zero-padded form, e.g. slice-096)")
+            if len(matches) > 1:  # R-5 collision — never first-match-write (M-add-1)
+                ids = ", ".join(str(c.get("id")) for c in matches)
+                raise _ClaimError(
+                    f"{slice_id} matches >1 live candidate ({ids}) — ambiguous; disambiguate with "
+                    f"`transfer --candidate SC-NNN`. Refusing to first-match-write.")
+            rec = matches[0]
+
+        prior = rec.get("claimed_by")
+        if not isinstance(prior, dict) or not _norm_email(prior.get("git_email")):
+            raise _ClaimError(
+                f"candidate {rec.get('id')} carries no current owner (status={rec.get('status')!r}) — "
+                f"use `claim`, not `transfer`")
+
+        prior_owner = {"git_user": prior.get("git_user"), "git_email": prior.get("git_email")}
+        new_owner = {"git_user": to_identity["git_user"], "git_email": to_identity["git_email"]}
+        rec["claimed_by"] = dict(new_owner)
+
+        # BB-20: a present-but-non-list history/pick_log must never silently drop the audit entry.
+        hist = rec.get("history")
+        if not isinstance(hist, list):
+            hist = rec["history"] = []
+        hist.append({"event": "transferred", "from": dict(prior_owner), "to": dict(new_owner),
+                     "by": dict(performer), "at": ts})
+
+        plog = data.get("pick_log")
+        if not isinstance(plog, list):
+            plog = data["pick_log"] = []
+        plog.append({"event": "transferred", "candidate": rec.get("id"), "slice": rec.get("slice"),
+                     "from": dict(prior_owner), "to": dict(new_owner), "by": dict(performer), "at": ts})
+        data["updated"] = ts
+
+        result["from"] = prior_owner
+        result["to"] = new_owner
+        result["candidate"] = rec.get("id")
+        result["slice"] = rec.get("slice")
+        return json.dumps(data, **_JSON_DUMP) + "\n"
+
+    return mutate
+
+
+def _transfer_main(argv: list[str]) -> int:
+    """The `transfer` verb — re-mint claimed_by of an already-claimed candidate to a new owner in one
+    SVW-1 in-lock RMW (ADR-122). Open to ANY identified caller (anonymous refused); a third-party
+    transfer proceeds with a LOUD owner-naming warning. Exit 0 ok / 1 runtime / 2 usage.
+
+    Intercepted at the TOP of main() BEFORE _build_arg_parser (M2), so reserve/claim/release parsing
+    stays byte-identical (this verb has its OWN parser; the sibling --candidate-required parser never
+    sees it)."""
+    p = argparse.ArgumentParser(
+        prog="claim_candidate transfer",
+        description="Re-mint claimed_by of an ALREADY-CLAIMED candidate to a new owner (logged, "
+                    "append-only, allocator-free). Open to any identified caller; a third-party "
+                    "transfer proceeds with a loud owner-naming warning (ADR-122).")
+    p.add_argument("--vault", default=None,
+                   help="vault root (overrides $AI_SDLC_VAULT_ROOT / the computed default)")
+    key = p.add_mutually_exclusive_group(required=True)
+    key.add_argument("--slice", dest="slice_id", metavar="slice-NNN",
+                     help="the target slice id (exact stored zero-padded 3-digit form)")
+    key.add_argument("--candidate", dest="candidate_id", metavar="SC-NNN",
+                     help="the target candidate id (unique key; also rescues a reserved slice==None candidate)")
+    p.add_argument("--to", required=True, metavar='"<Name> <email>"', help="the new owner identity")
+    p.add_argument("--repo-root", "--root", dest="repo_root", type=Path, default=Path("."),
+                   help="repo root for the caller git identity (default: cwd)")
+    p.add_argument("--json", action="store_true", help="emit JSON confirmation")
+    args = p.parse_args(argv)  # exit 2 on neither/both key or missing --to
+
+    # Shape-gate the key BEFORE any work (malformed shape -> usage exit 2; m4).
+    slice_id = (args.slice_id or "").strip() or None
+    candidate_id = (args.candidate_id or "").strip() or None
+    # CR1 (code-review): argparse's one-of-required guard checks PRESENCE only, so an empty/whitespace
+    # `--slice ""` / `--candidate ""` (e.g. `--slice "$unset_var"` in automation) both normalize to
+    # None here and would fall into the --slice `c.get("slice") == None` match -> a WRONG-TARGET
+    # re-mint of a reserved (slice==None) candidate. Refuse fail-visible BEFORE the shape gate.
+    if slice_id is None and candidate_id is None:
+        sys.stderr.write(
+            "claim_candidate: transfer requires a non-empty --slice slice-NNN OR --candidate SC-NNN "
+            "(an empty/whitespace value is not a valid target)\n")
+        return 2
+    if slice_id is not None and not _SLICE_RE.match(slice_id):
+        sys.stderr.write(
+            f"claim_candidate: --slice {slice_id!r} is not the exact stored zero-padded slice id "
+            f"(expected ^slice-\\d{{3,}}$, e.g. slice-096)\n")
+        return 2
+    if candidate_id is not None and not _CAND_RE.match(candidate_id):
+        sys.stderr.write(
+            f"claim_candidate: --candidate {candidate_id!r} is not a valid candidate id "
+            f"(expected ^SC-\\d+$)\n")
+        return 2
+
+    try:
+        to_identity = _parse_to(args.to)
+    except ValueError as exc:
+        sys.stderr.write(f"claim_candidate: {exc}\n")
+        return 2
+
+    ts = _now_iso()
+    vault_root = _root(args.vault)
+    path = vault_root / "candidates.json"
+    result: dict = {}
+
+    # Performer identity (attribution); fail-visible on unset/unavailable -> runtime exit 1.
+    try:
+        git_name, git_email = _git_identity(args.repo_root.resolve())
+    except _ClaimError as exc:
+        sys.stderr.write(f"claim_candidate: {exc}\n")
+        return 1
+    performer = {"git_user": git_name, "git_email": git_email}
+
+    # M6: is a shared _claim_coord backend configured? (read-only — no backend mutation). If so, a
+    # successful transfer leaves the durable HELD naming the PRIOR owner -> warn loudly post-write.
+    backend_configured = False
+    try:
+        backend_configured = _claim_coord.coordination_backend(vault_root) is not None
+    except _claim_coord.UnsupportedBackend:
+        backend_configured = True  # a backend IS configured (this build can't serve it) -> still warn
+
+    try:
+        mutate = _make_transfer_mutate(path, slice_id=slice_id, candidate_id=candidate_id,
+                                       to_identity=to_identity, performer=performer, ts=ts,
+                                       result=result)
+        safe_mutate_text(path, mutate)
+    except _ClaimError as exc:
+        sys.stderr.write(f"claim_candidate: {exc}\n")
+        return 1
+    except (OSError, TimeoutError) as exc:
+        sys.stderr.write(f"claim_candidate: write to {path} failed (fail-visible per R-7): {exc}\n")
+        return 1
+
+    prior = result["from"]
+    # ADR-122: a third-party transfer (caller != current owner) proceeds over a LIVE collision -> emit
+    # a warning as LOUD + OWNER-NAMING as the AI_SDLC_ALLOW_FOREIGN_SLICE override warning.
+    if _norm_email(prior.get("git_email")) != _norm_email(git_email):
+        sys.stderr.write(
+            f"claim_candidate: TRANSFER-THIRD-PARTY: {result['candidate']} "
+            f"({result.get('slice') or 'reserved'}) was claimed by "
+            f"{prior.get('git_user') or '?'} <{prior.get('git_email')}> and you are "
+            f"{git_name} <{git_email}> — you recorded a transfer of a LIVE claim you do not own to "
+            f"{to_identity['git_user']} <{to_identity['git_email']}>. This is a collision guard, not "
+            f"a permission wall (ADR-068/122): the transfer PROCEEDED and is recorded in the "
+            f"append-only pick_log with your identity as the performer.\n")
+    # M6: the shared durable HELD still names the prior owner -> must be reconciled (fail-VISIBLE).
+    if backend_configured:
+        sys.stderr.write(
+            f"claim_candidate: TRANSFER-HELD-STALE: a shared claim-coordination backend is "
+            f"configured, and this transfer updated candidates.json ONLY — the durable HELD for "
+            f"{result['candidate']} still names the PRIOR owner <{prior.get('git_email')}>. The new "
+            f"owner's later `--release` will NOT tear it down (remove_if_owner is owner-checked), "
+            f"which can orphan the HELD into a fail-closed lockout. Reconcile the shared HELD "
+            f"manually.\n")
+
+    payload = {"action": "transfer-candidate", "candidate": result["candidate"],
+               "slice": result.get("slice"), "from": prior, "to": to_identity,
+               "by": performer, "at": ts}
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(f"transferred {result['candidate']} ({result.get('slice') or 'reserved'}) from "
+              f"{prior.get('git_user') or '?'} <{prior.get('git_email')}> to "
+              f"{to_identity['git_user']} <{to_identity['git_email']}> "
+              f"(recorded by {git_name} <{git_email}>)")
+    return 0
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="claim_candidate",
@@ -395,6 +650,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Exit 0 success, 1 runtime error, 2 usage error."""
     _stdout.reconfigure_stdout_utf8()
+    # slice-096 / M2: intercept the `transfer` verb at the TOP, BEFORE _build_arg_parser, so the
+    # sibling --candidate-required parser never sees it and reserve/claim/release parsing stays
+    # byte-identical. `transfer` has its own isolated parser in _transfer_main.
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "transfer":
+        return _transfer_main(argv[1:])
     args = _build_arg_parser().parse_args(argv)
 
     candidate_id = args.candidate.strip()
