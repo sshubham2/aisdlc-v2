@@ -2,7 +2,10 @@
 
 The engine behind `vault_admin sync push|pull`. SYNC model (a local working copy that is explicitly
 pushed to / pulled from a git remote), NOT a live-mounted backend and NOT a multi-writer merge/CRDT
-engine (deferred to SC-197/198). "Sync the log, never the view": the append-only shard log
+engine. Concurrent CLAIMING on a shared vault is coordinated elsewhere, in the ``_claim_coord`` seam
+(slice-091 / ADR-113) and its git backend ``_claim_git`` (slice-100 / SC-216 / ADR-131); a
+multi-writer merge engine for whole-file artifacts remains unbuilt. "Sync the log, never the view":
+the append-only shard log
 (slice-088) + `_meta.json` + whole-file artifacts are shipped; the git-ignored derived `gate-log.json`
 cache + all coordination cruft are excluded and rebuilt on the far side by the EXISTING
 `_shard_store.read_entries` derive-on-missing (no new reconstruct code). `.git/` is structurally never

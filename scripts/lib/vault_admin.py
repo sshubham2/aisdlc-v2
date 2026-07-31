@@ -62,7 +62,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from scripts.lib import _shard_store, _stdout, _sync_config, _vault_git_sync
+from scripts.lib import _claim_coord, _shard_store, _stdout, _sync_config, _vault_git_sync
 from scripts.lib._vault_paths import (
     _BASE_CONFIG_FILE, _CONFIG_REL, _canonical, _git_common_dir, external_store_path, resolve_base,
 )
@@ -479,7 +479,106 @@ def cmd_set_backend(args: argparse.Namespace) -> int:
                          f"{backend!r}, read {got!r}) — config NOT trustworthy; fail-visible.\n")
         return 3
     print(f"sync backend set: {backend} -> {p}")
+    if backend == "git":
+        _enable_git_claim_backend(common, _this_repo_vault(args.vault))
+    else:
+        _disable_git_claim_backend(common)
     return 0
+
+
+def _claim_signal_path(common: str) -> Path:
+    return Path(common) / _claim_coord._CONFIG_REL
+
+
+def _claim_backend_precondition(vault: Path | None) -> str | None:
+    """``None`` when this vault can actually serve a git claim register, else the reason it cannot.
+
+    CR1 (code-review blocker). The register needs the VAULT to be a git work tree with a resolvable
+    remote — but the vault lives OUTSIDE the repo at ``~/.aisdlc/<slug>-<hash>/`` and is NOT a git
+    repo by default, while ``set-backend``'s own precondition check only covers the PROJECT repo's
+    common-dir. Arming the signal without this check hard-blocks ``/slice``: every claim then builds a
+    GitClaimBackend whose first act is ``_require_git_tree`` and refuses. This mirrors what the ``s3``
+    branch already does — validate BEFORE record."""
+    if vault is None:
+        return "the vault path could not be resolved"
+    try:
+        _vault_git_sync._require_git_tree(vault)
+        _vault_git_sync._resolve_remote(vault, None)
+    except (_vault_git_sync.SyncUsageError, _vault_git_sync.SyncFailure) as exc:
+        return str(exc)
+    return None
+
+
+def _enable_git_claim_backend(common: str, vault: Path | None) -> None:
+    """slice-100 / M5 / [[ADR-131]] addition 3 — GIVE THE CLAIM REGISTER A PRODUCER.
+
+    ``set-backend`` writes ``<git-common-dir>/aisdlc/sync-backend.json``, but the claim backend reads
+    a DIFFERENT file with a different schema — ``<git-common-dir>/aisdlc/claim-backend``
+    (``_claim_coord._CONFIG_REL``). Before this, ZERO writers of that file existed outside a test
+    fixture, so the register's mitigation for its own weakest joint ("a team that ran /setup once
+    shares one register by construction") was simply FALSE: nobody was ever opted in, and every peer
+    silently took the uncoordinated ``backend is None`` path at ``claim_candidate.py``.
+
+    VALIDATE-BEFORE-RECORD (CR1): the signal is written ONLY when the vault can actually serve the
+    register. An armed-but-unservable register is worse than no register — it fails every claim
+    closed, which is correct but hard-blocks ``/slice`` — so an unmet precondition SKIPS the write and
+    prints the exact recovery instead. Choosing a NON-git backend REMOVES the signal
+    (``_disable_git_claim_backend``), which is what makes this reversible from the same verb.
+
+    Fail-VISIBLE but NON-fatal to the sync-backend choice that already succeeded and read back clean:
+    an unannounced failure here is precisely the silent double-pick this slice exists to prevent."""
+    signal = _claim_signal_path(common)
+    blocked = _claim_backend_precondition(vault)
+    if blocked:
+        sys.stderr.write(
+            f"vault_admin set-backend: claim coordination NOT enabled — {blocked}\n"
+            f"  The git claim register needs the VAULT itself to be a git work tree with a remote. "
+            f"Set it up, then re-run this command:\n"
+            f"    git -C \"{vault or '<vault>'}\" init\n"
+            f"    git -C \"{vault or '<vault>'}\" remote add origin <url>\n"
+            f"  (`vault_admin sync push` will do the rest.) The sync backend itself IS recorded; only "
+            f"the concurrent-claim register is off, so claiming stays local-only and uncoordinated.\n")
+        return
+    err: BaseException | None = None
+    readback = ""
+    try:
+        signal.parent.mkdir(parents=True, exist_ok=True)
+        safe_write_text(signal, "git\n")
+        readback = signal.read_text(encoding="utf-8-sig").strip()
+    except (OSError, ValueError, UnicodeError) as exc:
+        err = exc
+    if readback != "git":
+        detail = f" ({err})" if err else f" (read back {readback!r})"
+        sys.stderr.write(
+            f"vault_admin set-backend: WARNING — the sync backend was recorded, but the CLAIM "
+            f"coordination signal at {signal} could not be written{detail}. Concurrent slice "
+            f"claiming on this clone is therefore NOT coordinated — two developers can both mint the "
+            f"same slice. Fix it by hand: write the single word `git` into that file, or export "
+            f"AI_SDLC_CLAIM_BACKEND=git.\n")
+        return
+    print(f"claim coordination enabled: git -> {signal}")
+    print("  concurrent slice claiming on this clone is now coordinated through "
+          "refs/aisdlc-claims/* on the vault's remote; `set-backend --backend local` turns it off.")
+
+
+def _disable_git_claim_backend(common: str) -> None:
+    """The symmetric OFF switch (CR1). Picking a non-git sync backend removes the claim signal, so the
+    picker that armed the register is also the verb that disarms it — without this there is no way to
+    turn coordination off short of hand-deleting a file under ``.git/``. A no-op when nothing is
+    armed; announced when it actually changes state, because silently disabling a collision guard
+    would be its own hazard."""
+    signal = _claim_signal_path(common)
+    try:
+        if not signal.exists():
+            return
+        signal.unlink()
+    except OSError as exc:
+        sys.stderr.write(
+            f"vault_admin set-backend: WARNING — could not remove the claim coordination signal at "
+            f"{signal} ({exc}); claims on this clone will keep using the git register. Delete that "
+            f"file by hand to disable it.\n")
+        return
+    print(f"claim coordination disabled: removed {signal}")
 
 
 def cmd_set_base(args: argparse.Namespace) -> int:

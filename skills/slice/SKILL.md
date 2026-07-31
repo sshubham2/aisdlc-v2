@@ -105,7 +105,8 @@ someone else needs coordination, never a force-release.
 
 ### Step 1.5 — reserve the pick (close the selection->claim window; ADR-016)
 The instant the candidate is settled (the Step-1 pick gate resolved), RESERVE it — a soft HOLD a parallel `/slice`
-immediately sees as in-flight, so it can never re-pick the candidate you are about to spend Steps 2-4 defining
+**reading the same `candidates.json`** immediately sees as in-flight, so it can never re-pick the candidate you are
+about to spend Steps 2-4 defining.
 The reservation mints NO slice number and bumps NO counter (the number is issued only at
 the Step-5.1 claim), so a later cancel costs nothing:
 ```bash
@@ -117,6 +118,16 @@ call in this skill.)
 It sets `status: reserved` / `progress: reserved` / `claimed_by` / `started_at`, is idempotent (a same-owner
 re-reserve is a no-op) and identity-checked (a candidate already reserved by someone else refuses — coordinate or
 pick another). Fail-visible on unset git identity (exit 1).
+
+> **SCOPE of the reserve promise (slice-100 / [[ADR-131]] decision 4).** The hold lives in
+> `candidates.json` ONLY — `--reserve` never touches the shared claim register. So the promise above holds
+> for pickers sharing ONE `candidates.json` (a local vault, or the `local` claim backend on one filesystem)
+> and does NOT hold ACROSS MACHINES on a git-synced vault, where each peer works from its own copy between
+> explicit `vault_admin sync` calls: two developers can both reserve and both spend the whole define phase,
+> and only one loses at the Step-5.1 claim, which IS cross-machine safe. Extending the register to
+> `--reserve` was deliberately rejected — an immortal team-global ref for a soft, abandonable hold turns
+> every abandoned pre-claim pick into a permanent lockout, strictly worse than the gap. A shared soft-hold
+> needs a releasable, EXPIRING register: a separate cut.
 
 **`--release` the reservation on EVERY pre-claim abandon** — the hold is live from here until the Step-5.1 claim
 upgrades it, so any exit before the claim must revert it (else it lingers `reserved`, invisible to other pickers):

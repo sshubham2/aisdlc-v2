@@ -25,6 +25,14 @@ byte-identical — no backend probe subprocess, no added latency. Fail-closed: a
 backend REFUSES rather than silently local-minting a duplicate. ``--release`` on the configured path ALSO
 tears down the shared HELD (compare-and-delete) so a failed worktree-create can never orphan it.
 
+C2 (the crash-before-mint self-retry) is TOKEN-EXACT (slice-100 / SC-216 / [[ADR-131]] addition 2): the
+idempotency token is PERSISTED machine-locally at HELD-create time (per-OWNER, under the VAULT REPO'S OWN
+GIT DIR — ``<vault-git-common-dir>/aisdlc/claim-tokens/`` — which git never tracks, so it can never travel
+to a peer) and compared EXACTLY against the read-back HELD. Keying C2 on
+``actor.git_email`` instead — with the token re-minted per invocation, so it could never match — silently
+ADMITTED the SAME git identity on a SECOND machine as a winner, minting a duplicate slice from that
+machine's un-pulled candidates.json. On a solo-maintainer project that is the PRIMARY configuration.
+
 Exit 0 success, 1 runtime error (identity unset / git unavailable / candidate not found / not pickable /
 malformed file / write failure / cross-identity release), 2 usage error (bad ``--name`` / ``--candidate``
 shape). Configured-coordination exits: 3 retryable (backend unreachable/transient — fail-closed), 4
@@ -34,7 +42,9 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
+import os
 import pathlib
 import re
 import sys
@@ -76,28 +86,149 @@ def _norm_email(value: object) -> str:
     return value.strip().casefold() if isinstance(value, str) else ""
 
 
+# The C2 self-retry key (slice-100 / M9 / [[ADR-131]] addition 2). The idempotency token is PERSISTED
+# machine-locally, so a crash-and-retry can compare it EXACTLY.
+#
+# LOCATION (code-review CR2). The token must be per-WORKING-COPY by construction — if it can ever
+# reach a peer, that peer is admitted as a false self-retry and mints a duplicate slice, re-opening
+# precisely the hole AC2 leg 2 closes. It therefore lives under the VAULT REPO'S OWN GIT DIR, which
+# git never tracks, rather than in the vault working tree behind a `.gitignore` line. The first design
+# leaned on `_vault_git_sync._SYNC_IGNORE`'s `*.tmp` entry — but that entry only reaches
+# `<vault>/.gitignore` via `ensure_sync_gitignore`, whose ONLY caller is `sync_push`. On a vault that
+# has been git-init'd and remoted but not yet pushed (exactly the state `_require_git_tree`'s own
+# instructions leave you in) a hand-driven `git add -A && git push` would have carried the token.
+# A vault that is NOT a git work tree has no sync path at all, so the vault-root fallback is safe.
+#
+# NAME: keyed by a digest of the OWNER's email. On a SHARED-filesystem vault (the LocalDir backend's
+# whole scenario) two developers share one directory, so a single per-candidate name would let the
+# second READ the first's token and be admitted as a false self-retry, and would CLOBBER the first's
+# C2 evidence on write. A digest, not the address, keeps a colleague's email out of a shared listing.
+_TOKEN_DIR_REL = "aisdlc/claim-tokens"
+_TOKEN_FALLBACK_REL = ".aisdlc-claim-tokens"
+_TOKEN_SIDECAR = "{}-{}.token"
+
+
+def _token_dir(vault_root: Path) -> Path:
+    """The claim-token directory for this vault WORKING COPY: the vault repo's own git common-dir
+    (never tracked, never synced, and identical across the vault's own worktrees), else the vault root
+    itself when the vault is not a git work tree (nothing can sync it, so nothing can carry it)."""
+    try:
+        r = run_git(Path(vault_root), "rev-parse", "--git-common-dir")
+        raw = r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, ValueError):  # git unavailable -> fall back rather than fail the claim here
+        raw = ""
+    if not raw:
+        return Path(vault_root) / _TOKEN_FALLBACK_REL
+    common = Path(raw)
+    if not common.is_absolute():  # git prints a vault-relative path (e.g. `.git`) for a plain repo
+        common = Path(vault_root) / common
+    return common / _TOKEN_DIR_REL
+
+
+def _token_path(vault_root: Path, candidate_id: str, git_email: str) -> Path:
+    """This OWNER's token sidecar for a candidate. Only ever composed AFTER the caller validated the
+    candidate id against ``_CAND_RE`` (the same guard that gates ``claim_key``)."""
+    digest = hashlib.sha256(_norm_email(git_email).encode("utf-8")).hexdigest()[:16]
+    return _token_dir(vault_root) / _TOKEN_SIDECAR.format(candidate_id, digest)
+
+
+def _own_token(vault_root: Path, candidate_id: str, git_email: str) -> str:
+    """This working copy's stable claim token for ``candidate_id`` — read if already persisted, else
+    minted and published NOW, BEFORE the create is attempted.
+
+    Stability across invocations is what makes C2 work: a retry after a crash must present the SAME
+    token the HELD carries. Re-minting per invocation (the pre-fix behaviour) made a token-keyed C2
+    unable to match cross-process, which is why the shipped predicate fell back to actor.git_email —
+    and an email-keyed predicate silently ADMITS the same identity on a SECOND machine and mints a
+    duplicate slice from that machine's un-pulled candidates.json.
+
+    The publish is an atomic no-clobber ``os.link`` (CR6), mirroring ``LocalDirClaimBackend``: two
+    concurrent claims by the SAME owner (parallel slices are routine here) both find no sidecar and
+    both mint, and a plain write would let the loser's token REPLACE the token the winner just put on
+    the register — after which the winner's own crash-retry would be refused as LOST. The FIRST token
+    published wins, and both processes then use it.
+
+    Uniqueness of the REGISTER VALUE (the ABA property) is preserved because the sidecar is dropped
+    when this actor's HELD is CONFIRMED torn down, so a released-then-reclaimed candidate presents a
+    fresh token. A sidecar that cannot be published is fail-VISIBLE: a claim whose C2 evidence was
+    silently lost would strand its own owner on the next retry."""
+    path = _token_path(vault_root, candidate_id, git_email)
+    existing = _read_token(path)
+    if existing:
+        return existing
+    token = uuid.uuid4().hex
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{token}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(token + "\n", encoding="utf-8")
+        try:
+            os.link(str(tmp), str(path))  # raises FileExistsError iff a sibling published first
+        except FileExistsError:
+            published = _read_token(path)
+            if published:
+                return published  # a concurrent sibling won: adopt ITS token, never replace it
+    except OSError as exc:
+        raise _ClaimError(
+            f"could not persist the claim idempotency token at {path} ({exc}) — refusing to claim "
+            f"without it: a crash before the mint would leave a HELD this machine could no longer "
+            f"prove it owns (fail-visible per R-7)") from exc
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+    return token
+
+
+def _read_token(path: Path) -> str:
+    with contextlib.suppress(OSError):
+        return path.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def _drop_own_token(vault_root: Path, candidate_id: str, git_email: str) -> None:
+    """Forget this working copy's token once its HELD is CONFIRMED torn down, so the next claim of the
+    same candidate presents a NEW register value (ABA-freedom).
+
+    Only ever called on a CONFIRMED teardown (CR7): dropping it after a teardown that could not reach
+    the register would throw away this machine's proof of ownership while the HELD survives remotely,
+    and the next claim would then mis-diagnose its own orphan as another machine's claim."""
+    with contextlib.suppress(OSError):
+        _token_path(vault_root, candidate_id, git_email).unlink()
+
+
 def _coordinate_claim(backend, candidate_id: str, git_name: str, git_email: str,
-                      ts: str) -> tuple[int | None, bool]:
+                      ts: str, vault_root: Path) -> tuple[int | None, bool]:
     """CONFIGURED-branch claim gate. Returns ``(exit_code_or_None, created_held)``: ``None`` proceeds to
-    the existing in-lock mint (CREATED, or an own-token EXISTS self-retry — C2), a non-None int
+    the existing in-lock mint (CREATED, or a TOKEN-EXACT EXISTS self-retry — C2), a non-None int
     short-circuits fail-closed. ``created_held`` is True only when THIS call minted a fresh HELD (so a
     later mint failure can compensate it — M-add-1)."""
+    token = _own_token(vault_root, candidate_id, git_email)  # persisted BEFORE the create -- a crash keeps it
     body = {"candidate": candidate_id,
             "actor": {"git_user": git_name, "git_email": git_email},
-            "idempotency_token": uuid.uuid4().hex, "at": ts}
+            "idempotency_token": token, "at": ts}
     res = backend.create_if_absent(_claim_coord.claim_key(candidate_id), body)
     if res.status == _claim_coord.CREATED:
         return None, True  # won the atomic create -> proceed to mint
     if res.status == _claim_coord.EXISTS:
         owner = ((res.body or {}).get("actor") or {}).get("git_email")
-        if _norm_email(owner) == _norm_email(git_email):
-            return None, False  # C2 self-retry: own HELD (crash-before-mint) -> WON -> proceed to mint
+        held_token = str((res.body or {}).get("idempotency_token") or "").strip()
+        if held_token and held_token == token:
+            # C2 self-retry: THIS machine created that HELD and died before minting -> WON.
+            return None, False
         who = ((res.body or {}).get("actor") or {}).get("git_user") or "?"
+        same_identity = (
+            "\n  NOTE: the holder's git identity is YOURS, but this working copy has no persisted "
+            "token for that claim. Either it was created from a DIFFERENT working copy (another "
+            "machine, or a second vault clone), OR this copy's token was dropped by a `--release` "
+            "whose REMOTE teardown failed (that release printed a WARNING carrying the manual "
+            "`git push <remote> :<ref>` command). Minting here would duplicate the slice from this "
+            "copy's un-pulled candidates.json, so it is refused either way: release it from the "
+            "machine that holds it, run that manual teardown, or pull that copy's state."
+            if _norm_email(owner) == _norm_email(git_email) else "")
         sys.stderr.write(
             f"claim_candidate: SLICE-CLAIM-REFUSED: {candidate_id} is already claimed by {who} "
             f"<{owner or 'unknown'}> on the shared vault — you are {git_name} <{git_email}>. This is a "
             f"collision guard: another developer won the concurrent pick. Coordinate with the owner, or "
-            f"pick a different candidate.\n")
+            f"pick a different candidate.{same_identity}\n")
         return EXIT_OWNERSHIP, False
     # UNVERIFIABLE -> fail closed (never a silent local mint that could double-pick).
     if res.kind == "transient":
@@ -683,7 +814,8 @@ def main(argv: list[str] | None = None) -> int:
         backend = _claim_coord.coordination_backend(vault_root)
     except _claim_coord.UnsupportedBackend as exc:
         sys.stderr.write(f"claim_candidate: {exc}\n")
-        return _EXIT_RETRYABLE  # 3 — configured but this build can't serve it (a SC-197 build could)
+        return _EXIT_RETRYABLE  # 3 — configured but this build can't serve it (e.g. s3/minio; `git`
+        # IS servable since SC-216/slice-100, and `local` always was)
 
     # For a CLAIM, validate --name BEFORE any HELD is created (else a bad name would orphan a HELD).
     name = (args.name or "").strip()
@@ -706,7 +838,12 @@ def main(argv: list[str] | None = None) -> int:
     # own-WON fall through to the existing in-lock mint; LOST/UNVERIFIABLE short-circuit fail-closed.
     created_held = False
     if backend is not None and not args.reserve and not args.release:
-        rc, created_held = _coordinate_claim(backend, candidate_id, git_name, git_email, ts)
+        try:
+            rc, created_held = _coordinate_claim(backend, candidate_id, git_name, git_email, ts,
+                                                 vault_root)
+        except _ClaimError as exc:
+            sys.stderr.write(f"claim_candidate: {exc}\n")
+            return 1
         if rc is not None:
             return rc
 
@@ -722,20 +859,34 @@ def main(argv: list[str] | None = None) -> int:
         # M-add-1: on the CONFIGURED release path, ALSO tear down the shared HELD (compare-and-delete)
         # so a failed worktree-create cannot orphan it into a permanent EXISTS->LOST lockout. The
         # candidates.json release above is identity-checked, so a foreign release already raised.
+        # M7(b) / slice-100: suppress the FULL backend taxonomy, not just OSError — a remote backend
+        # raises SyncFailure / SyncUsageError / SyncConfigError (all plain Exceptions), and a leak
+        # here would crash `--release` with a traceback AFTER candidates.json was already mutated.
+        # The backend itself warns (naming the remote, the ref and the teardown command) before it
+        # returns False, so this suppression can never be a SILENT swallow.
         if args.release and backend is not None:
-            with contextlib.suppress(OSError):
-                backend.remove_if_owner(_claim_coord.claim_key(candidate_id), git_email)
+            removed = False
+            with contextlib.suppress(Exception):
+                removed = backend.remove_if_owner(_claim_coord.claim_key(candidate_id), git_email)
+            if removed:
+                # CR7: drop the C2 evidence ONLY on a CONFIRMED teardown, so a re-claim mints a NEW
+                # register value (ABA). When the teardown could NOT reach the register the HELD is
+                # still live remotely -- keeping the token is what lets THIS copy still prove it owns
+                # it (the backend has already warned, naming the manual teardown command).
+                _drop_own_token(vault_root, candidate_id, git_email)
     except _ClaimError as exc:
         # Compensate a HELD this call just minted if the local mint then failed (no orphaned HELD).
         if created_held and backend is not None:
             with contextlib.suppress(Exception):
                 backend.remove_if_owner(_claim_coord.claim_key(candidate_id), git_email)
+            _drop_own_token(vault_root, candidate_id, git_email)
         sys.stderr.write(f"claim_candidate: {exc}\n")
         return 1
     except (OSError, TimeoutError) as exc:
         if created_held and backend is not None:
             with contextlib.suppress(Exception):
                 backend.remove_if_owner(_claim_coord.claim_key(candidate_id), git_email)
+            _drop_own_token(vault_root, candidate_id, git_email)
         sys.stderr.write(f"claim_candidate: write to {path} failed (fail-visible per R-7): {exc}\n")
         return 1
 
