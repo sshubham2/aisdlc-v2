@@ -2,8 +2,9 @@
 
 Makes candidate CLAIMING safe on a shared vault: an OPT-IN, shared-remote-only coordination
 primitive so the SECOND concurrent claim is REFUSED, never a silent duplicate. THIN scope (ADR-112/113):
-the seam + single-key create-if-absent + the reference ``LocalDirClaimBackend`` ship here; the git +
-S3/MinIO PRODUCTION backends are SC-197.
+the seam + single-key create-if-absent + the reference ``LocalDirClaimBackend`` ship here. The GIT
+production backend landed in SC-216 / slice-100 (see ``tests/test_claim_coord_git.py``); the S3/MinIO
+production backend is still unbuilt.
 
 Load-bearing (B1 / ADR-113): the reference backend's create-if-absent is a GENUINE atomic no-clobber
 ``os.link`` publish (NOT ``_shard_store._write_exclusive``, which slice-090/ADR-109 stripped of O_EXCL and
@@ -223,18 +224,21 @@ def test_configured_via_common_dir_config_file(tmp_path, monkeypatch):
     assert isinstance(be, _claim_coord.LocalDirClaimBackend)
 
 
-def test_unsupported_backend_name_fails_closed(tmp_path, monkeypatch):
-    """AC4: a backend configured but NOT built this slice (git / s3 = SC-197) must FAIL CLOSED
-    (UnsupportedBackend), never silently fall back to a local-only claim that could double-pick."""
+@pytest.mark.parametrize("unbuilt", ["s3", "minio"])
+def test_unsupported_backend_name_fails_closed(tmp_path, monkeypatch, unbuilt):
+    """AC4: a backend configured but NOT built must FAIL CLOSED (UnsupportedBackend), never silently
+    fall back to a local-only claim that could double-pick. Re-pointed from `git` to `s3`/`minio` by
+    slice-100 -- `git` now RESOLVES (to `_claim_git.GitClaimBackend`), so leaving this row on `git`
+    would ship red the moment the production backend landed."""
     from scripts.lib import _claim_coord
-    monkeypatch.setenv("AI_SDLC_CLAIM_BACKEND", "git")
+    monkeypatch.setenv("AI_SDLC_CLAIM_BACKEND", unbuilt)
     with pytest.raises(_claim_coord.UnsupportedBackend):
         _claim_coord.coordination_backend(tmp_path)
 
 
 def test_local_fs_precondition_documented():
     """m5: the reference backend documents the local-FS-only precondition (O_EXCL/os.link is
-    unreliable over NFS/SMB; SC-197 remote uses If-None-Match/a dedicated ref)."""
+    unreliable over NFS/SMB; a REMOTE backend uses a dedicated git ref / If-None-Match instead)."""
     from scripts.lib import _claim_coord
     doc = (_claim_coord.__doc__ or "") + (_claim_coord.LocalDirClaimBackend.__doc__ or "")
     assert "NFS" in doc or "SMB" in doc, "the local-FS precondition (m5) must be documented"
@@ -348,9 +352,16 @@ def test_gate_created_proceeds_to_mint(monkeypatch, tmp_path):
 
 
 def test_gate_own_token_exists_self_retry_mints(monkeypatch, tmp_path):
-    """C2: an own-token EXISTS (a crash-before-mint retry by the SAME actor) -> WON -> proceed to mint."""
+    """C2: an own-token EXISTS (a crash-before-mint retry by the SAME actor) -> WON -> proceed to mint.
+
+    slice-100 / M9: the predicate is TOKEN-EXACT, so the retry must present the token PERSISTED at
+    HELD-create time -- planted here as the crashed first attempt would have left it."""
     from scripts.lib import _claim_coord
+    import claim_candidate
     vault = _prime_vault(tmp_path)
+    sidecar = claim_candidate._token_path(vault, "SC-198", A[1])
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("tokA\n", encoding="utf-8")
     own = _claim_coord.ClaimResult(status=_claim_coord.EXISTS,
                                    body={"candidate": "SC-198",
                                          "actor": {"git_user": "Owner A", "git_email": "a@test"},
@@ -359,6 +370,64 @@ def test_gate_own_token_exists_self_retry_mints(monkeypatch, tmp_path):
                                 _id_git_env(tmp_path, *A),
                                 ["--candidate", "SC-198", "--name", "do-thing"])
     assert rc == 0, "own-token EXISTS is a WON self-retry -> mint proceeds"
+
+
+def test_gate_same_identity_foreign_token_exists_is_lost(monkeypatch, tmp_path):
+    """slice-100 / M9 (the SAFETY hole the email-keyed predicate left open): the SAME git identity
+    presenting a HELD whose token this machine did NOT mint is NOT a self-retry. It is refused as
+    LOST -- otherwise a second machine mints a duplicate slice from its own un-pulled
+    candidates.json, which on a solo-maintainer project is the PRIMARY configuration."""
+    from scripts.lib import _claim_coord
+    vault = _prime_vault(tmp_path)
+    before = (vault / "candidates.json").read_text(encoding="utf-8")
+    foreign_token = _claim_coord.ClaimResult(
+        status=_claim_coord.EXISTS,
+        body={"candidate": "SC-198", "actor": {"git_user": "Owner A", "git_email": "a@test"},
+              "idempotency_token": "minted-on-another-machine"})
+    rc = _run_main_with_backend(monkeypatch, tmp_path, vault, _StubBackend(foreign_token),
+                                _id_git_env(tmp_path, *A),
+                                ["--candidate", "SC-198", "--name", "do-thing"])
+    assert rc == 5, "a token this machine never minted must be LOST, even under the same identity"
+    assert (vault / "candidates.json").read_text(encoding="utf-8") == before, "no duplicate mint"
+
+
+def test_token_sidecar_is_per_owner_on_a_shared_vault(tmp_path):
+    """slice-100 regression guard: the C2 token sidecar is keyed by OWNER, not just by candidate.
+
+    On a SHARED-filesystem vault (this backend's whole scenario) both developers reach the same
+    token directory. A single per-candidate name would let the SECOND developer read the FIRST's
+    token and be admitted as a false self-retry -- and would clobber the first's C2 evidence on
+    write, stranding the true owner on their own retry. Caught by
+    ``test_e2e_configured_second_claim_exits_5`` when this was first built the naive way."""
+    import claim_candidate
+    a_path = claim_candidate._token_path(tmp_path, "SC-198", "a@test")
+    b_path = claim_candidate._token_path(tmp_path, "SC-198", "b@test")
+    assert a_path != b_path, "two owners must not share one token sidecar"
+    assert a_path.parent == b_path.parent, "same vault + same candidate -> one token directory"
+    # the email itself never appears in the name (it would land in a shared directory listing).
+    assert "a@test" not in a_path.name and a_path.name.endswith(".token")
+    # case-insensitive, whitespace-tolerant: the same owner always resolves to the same sidecar.
+    assert claim_candidate._token_path(tmp_path, "SC-198", " A@TEST ") == a_path
+
+
+def test_token_sidecar_lives_under_the_vault_git_dir_when_it_is_a_repo(tmp_path):
+    """CR2: on a git vault the token lives under the vault repo's OWN git dir -- untrackable by
+    construction, so it can never travel to a peer through ANY sync path (the `.gitignore` route it
+    used to depend on is only written by `sync_push`). A non-git vault has no sync path at all, so
+    the vault-root fallback is safe -- and both must be per-VAULT-COPY, never shared."""
+    import subprocess
+
+    import claim_candidate
+    plain, repo = tmp_path / "plain", tmp_path / "repo"
+    plain.mkdir()
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+
+    in_repo = claim_candidate._token_path(repo, "SC-198", "a@test")
+    assert (repo / ".git") in in_repo.parents, f"a git vault must store the token under .git: {in_repo}"
+    in_plain = claim_candidate._token_path(plain, "SC-198", "a@test")
+    assert (plain / ".git") not in in_plain.parents and plain in in_plain.parents, in_plain
+    assert in_repo.parent != in_plain.parent, "two vault copies must never share a token directory"
 
 
 def test_gate_configured_rejects_bad_candidate_id(monkeypatch, tmp_path):

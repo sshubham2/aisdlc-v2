@@ -6,13 +6,24 @@ both mint the same slice (a git non-fast-forward reject at push, or a silent las
 object storage). This module is the OPT-IN, shared-remote-only coordination PRIMITIVE + SEAM that makes
 the SECOND concurrent claim be REFUSED, never a silent duplicate.
 
-THIN scope (ADR-112, corrected by ADR-113): ship the ``ClaimBackend`` seam + the single-shared-key
-create-if-absent logic + a REFERENCE local backend only. The git + S3/MinIO PRODUCTION backends (and their
-live double-pick regressions) are **SC-197**, implemented behind the SAME frozen seam.
+THIN scope (ADR-112, corrected by ADR-113): slice-091 shipped the ``ClaimBackend`` seam + the
+single-shared-key create-if-absent logic + a REFERENCE local backend only. The GIT production backend
+(``_claim_git.GitClaimBackend``, one remote ref per candidate) landed in **SC-216** / slice-100 behind
+the SAME frozen seam; the S3/MinIO production backend is still unbuilt (a separate cut). NOTE: these
+production backends were long mislabelled "SC-197" here — SC-197 in fact shipped as
+`enhance-setup-with-configurable-vault-storage-backend`, so that pointer sent the reader to a
+candidate that was something else entirely.
 
-The model — ONE authoritative object per candidate (``<vault>/claims/<candidate>/HELD.json``) whose ATOMIC
-create IS the winner-decision (doorway-free: the winner mints immediately, no read-all). A losing create is
-disambiguated by a read-back of the token (own token => WON self-retry / C2; a foreign token => LOST). The
+The model — ONE authoritative object per candidate (``<vault>/claims/<candidate>/HELD.json`` locally,
+``refs/aisdlc-claims/<candidate>`` on the git backend) whose ATOMIC create IS the winner-decision
+(doorway-free: the winner mints immediately, no read-all). A losing create is disambiguated by a
+read-back: the consumer compares the HELD's ``idempotency_token`` against the token it PERSISTED
+locally at HELD-create time — an exact match is a WON self-retry (C2, a crash-before-mint owner),
+anything else is LOST. The compare is TOKEN-exact, never actor-email-approximate: the same git
+identity on a SECOND machine has no persisted token for that HELD and must NOT be admitted as a
+self-retry (ADR-131 addition 2 — otherwise it silently mints a duplicate from its own un-pulled
+candidates.json). The token's other role is ABA-freedom: a fresh uuid4 per claim makes every register
+VALUE unique, so a stale release can never remove a successor's claim. The
 seam is symmetric — ``create_if_absent`` + ``get`` + ``remove_if_owner`` (compare-and-delete) — so a
 ``--release`` compensation can tear a HELD down without orphaning it (M-add-1).
 
@@ -48,7 +59,8 @@ _O_BIN = getattr(os, "O_BINARY", 0)  # POSIX no-op; Windows: binary mode (no \n-
 
 # Result statuses of create_if_absent (the frozen seam contract).
 CREATED = "CREATED"          # this actor's atomic create won -> mint immediately
-EXISTS = "EXISTS"            # a HELD already existed -> read-back its body (own token => WON, else LOST)
+EXISTS = "EXISTS"            # a HELD already existed -> read back its body; the token matches the one
+                             # PERSISTED locally at HELD-create => WON self-retry, anything else => LOST
 UNVERIFIABLE = "UNVERIFIABLE"  # cannot decide WON/LOST -> the caller REFUSES fail-closed
 
 # The opt-in signal (mirrors the _vault_paths precedence: env override -> git-common-dir config -> None).
@@ -56,11 +68,13 @@ UNVERIFIABLE = "UNVERIFIABLE"  # cannot decide WON/LOST -> the caller REFUSES fa
 _ENV_BACKEND = "AI_SDLC_CLAIM_BACKEND"
 _CONFIG_REL = "aisdlc/claim-backend"
 _LOCAL_ALIASES = frozenset({"local", "localdir", "local-dir"})
+_GIT_ALIASES = frozenset({"git"})
 
 
 class UnsupportedBackend(RuntimeError):
-    """The claim-backend is CONFIGURED but not available in this build (git / S3 / MinIO = SC-197). The
-    caller must FAIL CLOSED (never fall back to a local-only claim that could double-pick — AC4)."""
+    """The claim-backend is CONFIGURED but not available in this build (the S3 / MinIO backends are
+    still unbuilt; ``local`` and ``git`` both resolve). The caller must FAIL CLOSED (never fall back to
+    a local-only claim that could double-pick — AC4)."""
 
 
 @dataclass(frozen=True)
@@ -90,10 +104,11 @@ def _norm(value: object) -> str:
 
 
 class ClaimBackend(ABC):
-    """The FROZEN shared-claim seam (reversibility=expensive). SC-197's git + S3/MinIO backends
-    implement this same interface — ``create_if_absent`` (atomic, authoritative), ``get`` (read-back),
-    and ``remove_if_owner`` (compare-and-delete teardown) — so no expensive contract change is
-    foreseeable there."""
+    """The FROZEN shared-claim seam (reversibility=expensive). The production backends implement this
+    same interface — ``create_if_absent`` (atomic, authoritative), ``get`` (read-back), and
+    ``remove_if_owner`` (compare-and-delete teardown). SC-216's ``_claim_git.GitClaimBackend`` was
+    built against it UNCHANGED (no signature or semantic change, no new ``ClaimResult`` field), which
+    is the evidence that no expensive contract change is foreseeable for the S3/MinIO cut either."""
 
     @abstractmethod
     def create_if_absent(self, key: str, body: dict) -> ClaimResult:
@@ -119,8 +134,9 @@ class LocalDirClaimBackend(ClaimBackend):
     **Local-filesystem precondition (m5).** ``os.link`` create-if-absent is atomic on a LOCAL filesystem
     only; over NFS/SMB it is historically UNRELIABLE (NFSv3+ / recent kernels). The vault base is
     user-configurable (``~/.claude/ai-sdlc-vault-base``) and CAN point at a network share, which would
-    silently weaken this guarantee — so cross-machine safety on a shared mount is a SC-197 concern, where
-    the remote path uses S3 ``If-None-Match:*`` / a dedicated git ref, never O_EXCL/``os.link`` on a mount.
+    silently weaken this guarantee — so cross-machine safety belongs to a REMOTE backend, never to
+    O_EXCL/``os.link`` on a mount: ``_claim_git`` (SC-216) uses a dedicated git ref whose create is
+    enforced server-side, and the unbuilt S3/MinIO cut will use ``If-None-Match: *``.
     """
 
     def __init__(self, vault_root: Path | str):
@@ -217,15 +233,22 @@ def coordination_backend(vault_root: Path | str) -> ClaimBackend | None:
     """Resolve the OPT-IN coordination backend for ``vault_root``, or ``None`` when unconfigured
     (→ today's local-only claim, byte-identical, zero added latency — AC3/AC4).
 
-    ``local`` / ``localdir`` / ``local-dir`` → the reference ``LocalDirClaimBackend``. A backend named but
-    NOT built this slice (``git`` / ``s3`` / ``minio`` = SC-197) raises ``UnsupportedBackend`` so the
-    caller FAILS CLOSED — never a silent fall-back to a local-only claim that could double-pick (AC4)."""
+    ``local`` / ``localdir`` / ``local-dir`` → the reference ``LocalDirClaimBackend``. ``git`` → the
+    production ``_claim_git.GitClaimBackend`` (SC-216), imported FUNCTION-LOCALLY so the unconfigured
+    default path never even imports it — AC4 proves that in a fresh child interpreter. A backend that
+    is still unbuilt (``s3`` / ``minio``) raises ``UnsupportedBackend`` so the caller FAILS CLOSED —
+    never a silent fall-back to a local-only claim that could double-pick (AC4)."""
     signal = _read_signal()
     if not signal:
         return None
-    if signal.strip().lower() in _LOCAL_ALIASES:
+    name = signal.strip().lower()
+    if name in _LOCAL_ALIASES:
         return LocalDirClaimBackend(Path(vault_root))
+    if name in _GIT_ALIASES:
+        from scripts.lib import _claim_git  # function-local: the default path must never import it
+        return _claim_git.GitClaimBackend(Path(vault_root))
     raise UnsupportedBackend(
-        f"claim-backend {signal!r} is configured but not available in this build — the git / S3 / MinIO "
-        f"backends are SC-197. Refusing to fall back to a local-only claim that could double-pick "
-        f"(fail-closed). Unset {_ENV_BACKEND} / the aisdlc/claim-backend config, or set it to 'local'.")
+        f"claim-backend {signal!r} is configured but not available in this build — the S3 / MinIO "
+        f"backends are not built yet (`local` and `git` are). Refusing to fall back to a local-only "
+        f"claim that could double-pick (fail-closed). Unset {_ENV_BACKEND} / the aisdlc/claim-backend "
+        f"config, or set it to 'local' or 'git'.")
