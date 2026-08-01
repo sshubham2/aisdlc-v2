@@ -171,6 +171,16 @@ OPTIONAL_KEYS: dict[str, frozenset[str]] = {
     # so this is the only mechanism. (`signoff`/`trust_signoff` are object-valued and already
     # optional via their own `_note` marker.)
     "story-sections": frozenset({"product_shape_framing"}),
+    # slice-101 (ADR-138): `missed_by_critic` is the OPTIONAL structured home for /reflect
+    # Step-3 `MISSED` verdicts — /critic-calibrate has always read it, but no producer prose and
+    # no canonical example ever defined it. Publishing it in the reflection example closes the
+    # no-producer half; this entry is what keeps the 93 live reflections that legitimately lack
+    # it green (array-shaped, so it cannot carry the dict-with-`_note` optional marker). It MUST
+    # ship in the SAME change as the example edit.
+    # PUBLISHED, NOT ENFORCED, and deliberately absent from ROW_ARRAY_KEYS: its live shapes still
+    # diverge (slice-081 `[]`, slice-088 list-of-str, slice-100 list-of-dict), so any row rule
+    # reds slice-088 on contact. Shape normalization is filed as residue, not attempted here.
+    "reflection": frozenset({"missed_by_critic"}),
 }
 
 # ── slice-013 (ADR-009): documented-enum coverage ════════════════════════════════════
@@ -325,6 +335,48 @@ def enum_path_resolves() -> list[str]:
     return bad
 
 
+def row_array_keys_resolve() -> list[str]:
+    """slice-101 dead-row guard for ROW_ARRAY_KEYS: every registered (artifact, field) must
+    resolve to a real top-level field in that artifact's canonical example, so a rename cannot
+    silently retire the shape rule.
+
+    Honest scope (critique m2 — the original justification was wrong and is corrected here): a
+    rename of the SOLE current entry is ALREADY caught today by `enum_path_resolves()`, because
+    ("reflection", "critic_calibration[].verdict") is a DOCUMENTED_ENUMS row and
+    `_path_in_example` descends THROUGH `critic_calibration`. This guard is therefore not what
+    stands between the rule and a silent rename. Its real value: it makes the registry
+    self-guarding INDEPENDENTLY of that enum row (which a later slice could legitimately
+    delete), and it covers future entries that carry no enum path at all."""
+    examples = _load_examples()
+    bad: list[str] = []
+    for (art, field) in sorted(ROW_ARRAY_KEYS):
+        ex = examples.get(art)
+        if ex is None:
+            bad.append(f"row-array row ({art}, {field}): unknown artifact type "
+                       f"(no canonical example)")
+        elif not _path_in_example(ex, field, OPTIONAL_KEYS.get(art, frozenset())):
+            bad.append(f"dead row-array row ({art}, {field}): field not in the {art} "
+                       f"canonical example")
+        # ENTRY-CONTRACT half (code-review CR2): validating only the FIELD NAME leaves the spec
+        # keys `_row_array_violations` reads unguarded, so a registry entry omitting `consumer`
+        # would surface as a KeyError inside /build-slice's pre-finish gate instead of here.
+        spec = ROW_ARRAY_KEYS[(art, field)]
+        if not isinstance(spec, dict):
+            bad.append(f"malformed row-array spec ({art}, {field}): expected a dict "
+                       f"(got {type(spec).__name__})")
+            continue
+        if not str(spec.get("consumer") or "").strip():
+            bad.append(f"malformed row-array spec ({art}, {field}): `consumer` is required and "
+                       f"must be a non-empty string — it names who reads the field in every "
+                       f"violation this entry emits")
+        for tup in ("row_required", "aliases"):
+            val = spec.get(tup, ())
+            if not isinstance(val, (tuple, list)) or any(not isinstance(x, str) for x in val):
+                bad.append(f"malformed row-array spec ({art}, {field}): `{tup}` must be a "
+                           f"sequence of strings (got {val!r})")
+    return bad
+
+
 def _load_examples() -> dict:
     with open(_EXAMPLES_PATH, encoding="utf-8") as fh:
         return {k: v for k, v in json.load(fh).items() if not k.startswith("_")}
@@ -407,6 +459,51 @@ _PRESENCE_KIND: dict[tuple[str, str], str] = {
     ("demoted_at", "demote_reason"): "demote",
 }
 
+# slice-101 (ADR-134 -> ADR-137 -> ADR-139): consumer-read ROW-ARRAY fields — the fifth
+# family. `_required_keys` checks key PRESENCE only, so a reflection satisfying
+# `critic_calibration` with a prose STRING while parking the real rows under a non-canonical
+# `calibration` key lints CLEAN, and /critic-calibrate text-mines a paragraph. (The registered
+# `critic_calibration[].verdict` enum never fires either: `_walk`'s list hop returns [] over a
+# non-list — which is why presence-only checking is the root cause, not a symptom.)
+# NOTE on citations: the comments in this family name SYMBOLS, not line numbers. Six line-anchored
+# citations shipped here in slice-101 were stale within the same commit (code-review CR1) because
+# inserting this block shifted every line it pointed at. A symbol name is greppable and survives
+# the next edit; a line number is a hand-maintained declaration nothing checks, which is the exact
+# defect class this family exists to close.
+# This family turns (presence) into (presence, SHAPE) for a CURATED set of fields and RESERVES
+# the historical misspellings BY NAME. Curated, never inferred: example-TYPE inference over
+# every canonical key was measured at 331 newly-red live artifacts, of which exactly one is
+# this bug, and closed-world unknown-key rejection is the brittleness JSON Schema itself walked
+# back (ADR-134).
+#   row_required — per-row fields that must hold a non-empty value. MEASURED, never guessed:
+#     ("verdict",) ONLY. `finding` was REFUTED at the design spike — a foreign vault
+#     legitimately spells it `finding_id` (10 rows), while 0 of 2044 rows across six vaults
+#     lack `verdict` (ADR-137).
+#   aliases — reserved NON-canonical spellings. Keyed on KEY-PRESENCE (`alias in data`),
+#     DELIBERATELY unlike the PRESENCE_SYMMETRIC family above, whose comment records
+#     the opposite choice for its own good reason: a reserved NAME is about the name existing,
+#     not about its value. Truthiness-keying would pass a half-repair that leaves
+#     `calibration: null` behind at rc=0 — the same silent-half-repair mode that ruled out
+#     `vault_edit set` for the record repair (critique m1).
+# The canonical key being ABSENT is NOT this family's business: `_required_keys` already
+# reports it, and double-reporting would flip the pure-prose regression pin.
+#
+# ENTRY CONTRACT — every entry MUST carry `consumer` (a non-empty str naming who reads the field;
+# it appears in the violation text). `row_required` / `aliases` default to empty. The contract is
+# enforced by `row_array_keys_resolve()` at --self-check, and `_row_array_violations` ALSO reads
+# `consumer` defensively, because that helper runs inside /build-slice's pre-finish gate where a
+# KeyError is a hard stop rather than a finding (code-review CR2).
+_CONSUMER_UNKNOWN = "the artifact's declared consumer"
+
+ROW_ARRAY_KEYS: dict[tuple[str, str], dict] = {
+    ("reflection", "critic_calibration"): {
+        "row_required": ("verdict",),
+        "aliases": ("calibration",),
+        "consumer": "/critic-calibrate (skills/critic-calibrate/SKILL.md, the Step-1a extraction)",
+        "rationale": "slice-101/SC-227 — the producer prose named a key the consumer does not read",
+    },
+}
+
 
 def _presence_symmetric_violations(data: dict, key: str, label: str) -> list[str]:
     v: list[str] = []
@@ -440,6 +537,56 @@ def _row_required_violations(data: dict, key: str, label: str) -> list[str]:
                 v.append(f"{label}: {parent} row {rid!r} must carry a non-empty `{fld}` "
                          f"— 'it worked' without evidence is not a PASS (the evidence "
                          f"discipline is mechanical, not prose)")
+    return v
+
+
+def _row_array_violations(data: dict, key: str, label: str) -> list[str]:
+    """slice-101: shape-check a curated consumer-read row-array field, and refuse its reserved
+    non-canonical aliases by NAME.
+
+    DIAGNOSTIC ONLY. Every branch is isinstance-guarded and this returns violation STRINGS and
+    never raises — artifact_lint runs inside /build-slice's pre-finish gate, where a traceback
+    is a hard stop rather than a finding (spiked over a 17-case malformed matrix: 0 raised).
+
+    Reads `data[field]` DIRECTLY rather than through `_walk`: `_walk`'s non-list early-return on a
+    list hop is precisely why the registered `critic_calibration[].verdict` path never fired on a
+    prose string.
+
+    CARRIED RESIDUAL (ADR-137, confirmed by execution — do not mistake this for a type
+    guarantee): the non-empty test is `str(row.get(f) or "").strip()`, so a nested dict or list
+    under a required field reads as non-empty and passes. It is a PRESENCE check.
+    """
+    v: list[str] = []
+    if not isinstance(data, dict):
+        return v
+    for (ak, field), spec in ROW_ARRAY_KEYS.items():
+        if ak != key:
+            continue
+        if not isinstance(spec, dict):
+            continue
+        # Read EVERY spec field defensively. A malformed registry entry is a bug for
+        # `row_array_keys_resolve()` to report at --self-check, never a traceback here.
+        consumer = str(spec.get("consumer") or "").strip() or _CONSUMER_UNKNOWN
+        for alias in spec.get("aliases", ()):
+            if alias in data:   # PRESENCE-keyed, never truthiness — see the registry comment
+                v.append(f"{label}: reserved non-canonical key `{alias}` — the rows belong under "
+                         f"`{field}`, the key {consumer} actually reads")
+        if field not in data:
+            # `_required_keys` already reports the absent key; never double-report it here.
+            continue
+        rows = data[field]
+        if not isinstance(rows, list):
+            v.append(f"{label}: `{field}` must be a list of rows (got {type(rows).__name__}) — "
+                     f"{consumer} parses rows, never prose")
+            continue
+        for i, row in enumerate(rows):
+            if not isinstance(row, dict):
+                v.append(f"{label}: `{field}`[{i}] must be an object (got {type(row).__name__})")
+                continue
+            for fld in spec.get("row_required", ()):
+                if not str(row.get(fld) or "").strip():
+                    v.append(f"{label}: `{field}`[{i}] must carry a non-empty `{fld}` — that is "
+                             f"the field which makes a row countable by {consumer}")
     return v
 
 
@@ -505,6 +652,7 @@ def lint_artifact(data: dict, key: str, example: dict, label: str) -> list[str]:
     v.extend(_co_constraint_violations(data, key, label))
     v.extend(_row_required_violations(data, key, label))
     v.extend(_presence_symmetric_violations(data, key, label))
+    v.extend(_row_array_violations(data, key, label))
     return v
 
 
@@ -615,6 +763,9 @@ def main(argv: list[str] | None = None) -> int:
         # existing CI self-check (no separate flag) — this is their CI home.
         violations.extend(coverage_gaps())
         violations.extend(enum_path_resolves())
+        # slice-101: the ROW_ARRAY_KEYS registry gets the same dead-row treatment, in the
+        # same CI home.
+        violations.extend(row_array_keys_resolve())
     else:
         targets = list(args.files)
         if args.dir is not None:

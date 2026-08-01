@@ -227,6 +227,7 @@
     "discovered": [{ "item": "Safari retry header", "becomes": "candidate", "ref": "SC-024" }],
     "deferred": [{ "item": "cursor positions", "why": "out of scope", "becomes_candidate": "SC-025" }],
     "critic_calibration": [{ "finding": "WS scale risk", "verdict": "VALIDATED" }],
+    "missed_by_critic": [{ "id": "MISSED-1", "gate": "critique", "severity": "major", "caught_by": "build", "note": "Safari retry header — absent from the Critic findings entirely, surfaced at build." }],
     "lessons": ["Prove transport limits with a spike before designing realtime features."],
     "supersession": null, "at": "<ts>"
   },
