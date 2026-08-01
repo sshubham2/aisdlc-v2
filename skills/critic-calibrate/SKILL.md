@@ -43,6 +43,14 @@ ls -t "${VAULT}/slices/archive/" | head -n <N>
 
 For each folder, read `<vault>/slices/archive/<folder>/reflection.json`. Extract the `critic_calibration` and `missed_by_critic` fields. Concatenate into one block tagged by slice id.
 
+> **[aisdlc:reflection-read-set -- doc-guarded: this consumer reads exactly two top-level reflection
+> keys, `critic_calibration` and `missed_by_critic`. Every name here must (a) match the Extract sentence
+> above one-for-one and (b) be published in the reflection example in
+> `schemas/artifact-examples.json` — a consumer must never read a key no producer defines. The guard in
+> `tests/bugs/test_reflection_calibration_key_drift.py` DERIVES the read-set from that sentence and
+> asserts set-equality with this marker, so adding a third key to the sentence alone fails the build
+> (slice-101/SC-227). ]**
+
 **1b. Base Critic prompt**
 
 Read the plugin's base Critic prompt at `${CLAUDE_SKILL_DIR}/../../agents/critique.md` in full — for **context only**,
