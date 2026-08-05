@@ -14,15 +14,17 @@ ship user-visible value. You pick a candidate from the unified backlog, claim it
 risks / diagnose findings / reflections, and — once `/slice-candidates --product` has run — the **product's own
 scope**) — you do NOT re-run a multi-source fan-out.
 
-**`/slice` is a READ-ONLY pick path** (slice-068 / [[ADR-067]]). It takes no lock, mutates no vault file, and
-cannot be bricked by a parallel writer. Product scope is materialized in the ONCE-ACT — `/slice-candidates
---product` — not by a per-pick reconciler tick.
+**`/slice`'s PICK PHASE is READ-ONLY** ([[ADR-067]] section 1, as scoped by [[ADR-080]] + [[ADR-152]]). It takes
+no lock, mutates no vault file, and cannot be bricked by a parallel writer. The scope is honest about where the
+claim ends: the POST-CLAIM writes at Steps 5.1 / 5.5 / 5.7 are unchanged and out of that section's scope. Product
+scope is materialized in the ONCE-ACT — `/slice-candidates --product` — not by a per-pick reconciler tick, and the
+completion gate below ROUTES rather than writing.
 
 ## Live state — injected
 
-Top live candidates (ranked; blocked-on-spike flagged):
+Top live candidates (ranked; blocked-on-spike flagged) + the app-completion verdict:
 ```!
-$PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5
+$PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5 --completion-gap
 ```
 
 Product-scope presence (read-only backstop — slice-068):
@@ -39,8 +41,11 @@ The rollup envelope carries an `areas` array ranked **least-complete-first** (`{
 plus the mandatory `unassigned / cross-cutting` bucket — a **priority-ranked product-area list** for orienting the
 pick. **If the user invoked `/slice --area <NAME>`** (or otherwise wants the pick surface scoped to ONE product
 area), re-run the candidate digest filtered to it and recommend from that filtered set:
-`$PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5 --area <NAME>` (use `unassigned` for PRODUCT
-capabilities not yet grouped into an area). The population is every candidate with an **area SOURCE** (slice-098 /
+`$PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5 --area <NAME> --completion-gap` (use `unassigned`
+for PRODUCT capabilities not yet grouped into an area). The flag rides the filtered re-run too, and the WHOLE
+completion population — `pickable_product[]`, `unbuilt[]`, `done`, `total` and the headline — is then computed
+over that SAME filtered set, with the headline labelled area-scoped, so `done/total` legitimately differ between
+`/slice` and `/slice --area <NAME>` on one vault. The population is every candidate with an **area SOURCE** (slice-098 /
 [[ADR-125]] section 1): one that **asserts** the area itself via its own `area` field, or a product capability
 bound to it through `owner_refs`. An **un-annotated** pipeline chore has no area source and stays out entirely,
 so slice-084 A1's anti-conflation still holds; and an annotated candidate can never land in `unassigned` (the
@@ -54,8 +59,11 @@ Default-OFF (no `--area`) is byte-identical to the digest above. **If the rollup
 `governor` string** (the product's scope is decomposed but 0 of its capabilities are built — slice-084 B4),
 surface it as a WARN and **bias the recommendation toward a product-sourced capability** (`/slice --area
 <NAME>`, or any candidate whose `source.type == product-scope`) over more pipeline instrumentation. The governor
-is descriptive: it changes no ranking and blocks no pick. Omit the product-area surface entirely when
-`scope_present` is false (an un-decomposed product).
+is descriptive: it changes no ranking and blocks no pick. **OMIT the governor WARN entirely when the completion
+gate returned `suppress_governor: true`** (slice-102 / SC-232): at `done == 0` with no pickable product candidate
+BOTH computations fire, and two contradictory instructions at one surface is how a user learns to ignore the
+surface. The gate's route is the specific one, so the descriptive governor yields — exactly ONE instruction
+reaches the pick. Omit the product-area surface entirely when `scope_present` is false (an un-decomposed product).
 
 Stranded-slice consult (R-26 — never define a slice on top of genuinely-stranded prior work):
 ```!
@@ -81,6 +89,64 @@ BACKSTOP — the primary path is `/discover`'s hand-off. Print it once, only whe
 block a pick (a non-zero exit from the census is advisory: note it and proceed).
 
 ## Step 1 — recommend (don't just list)
+
+### Step 1.0 — the completion gate: RENDER the returned decision, derive nothing (slice-102 / SC-232)
+
+The injected digest carries a `COMPLETION GAP` block (and `completion_gap` in `--json`). **Read `recommendation`
+and render it. Do NOT re-derive the verdict, and NEVER re-rank to find the pick** — a score-5 product mint
+measures ~11th of 117 on a real vault, so re-ranking silently loses it.
+
+Why this gate exists: `/slice-candidates --product` decomposes the product's scope **exactly once** by design, so
+an EXHAUSTED scope is the steady state of every project past its initial capability list. In that state the
+backlog is pure pipeline exhaust and nothing tells you. Measured on a real vault: 61 of 64 pickable candidates
+were exhaust while the product sat at 12/14 — and every existing backstop stayed silent (the `PRODUCT == 0`
+census notice does not fire when PRODUCT is non-zero; the completeness governor fires only at 0-built).
+
+| `recommendation.mode` | what you do |
+|---|---|
+| `product-pick` | Recommend `pick_id` **by identity** as the 🏆 top pick, using the hoisted `Completion pick` row (it carries the row's REAL rank and any `[deps-unmet: …]`). Alternatives come from the ordinary ranked list. |
+| `route-add-item` | **HALT.** Every declared capability is built, so there is no app-completion work left to pick. Render the headline + the honest `done_definition` + the unbuilt list, then tell the user to run **`/slice-candidates --add-item`** (it elicits, previews and confirms before anything is minted). Do not elicit the capability here, do not stage a payload, do not print a command, and write nothing. |
+| `route-discover` | **HALT.** No product scope exists at all → run `/discover` (if `concept.json` is missing), then `/slice-candidates --product`. Never the one-item route: the bulk decomposition is what this project is missing. |
+| `route-materialize` | **HALT.** A capability has no children at all → render the returned `rationale`, which names the idempotent remedy. |
+| `route-coordinate` | **HALT.** Every unbuilt capability is already in flight → coordinate with its owner rather than starting a parallel cut on the same capability. |
+| `route-repair` | **HALT.** A capability is in an UNKNOWN state (a child claims two parents, or its provenance is torn) → render the returned `rationale`; repair the provenance, then re-run `/slice`. |
+| `route-rescope` | **HALT.** A capability was KILLED (archived children all rejected) → it needs a re-decision, not a materialize. Render the returned `rationale`. |
+| `headline-only` | Render the headline; raise no question. |
+
+**The decline is ALWAYS offered and always returns the ordinary ranked pick** (`recommendation.offer_decline` is
+`true` on every halting mode). Say so at the halt, in the same breath as the route. A gate that cannot be
+declined is a lock on the user's own backlog, and this one is deliberately not that.
+
+**If the block reports `UNDECIDABLE`** (a verdict-less payload carrying `error` + `cause_kind`): surface the
+named cause and proceed with the ordinary ranked pick. The digest below it is still correct — only the
+completeness verdict is withheld. Never read an undecidable result as "this project has no product".
+
+**Explicit intent.** When `/slice "<description>"` supplied intent, re-run the digest with `--explicit-intent` so
+the gate renders its headline and raises no question. The Step-1 injection above runs at skill-LOAD and cannot
+see arguments (SC-064 / [[ADR-022]]), so this is a bash BODY block.
+
+**The trigger is a NON-FLAG argument, never "any argument".** `/slice --area <NAME>` is a documented invocation
+of this same skill, so `${ARGUMENTS[0]}` is routinely the literal `--area` — a bare `[ -n "$ARG" ]` would fire on
+it, silently return `headline-only`, and disable the routing on the whole area-scoped pick path. The scan below
+is the Step-0 non-flag idiom `/slice-candidates` already uses, extended to SKIP the value token of a
+value-taking flag (`--area payments` must not read `payments` as a description):
+```bash
+HAS_INTENT=0; SKIP=0
+for a in ${ARGUMENTS[@]}; do
+  if [ "$SKIP" = 1 ]; then SKIP=0; continue; fi
+  case "$a" in --area|--component) SKIP=1 ;; --*) ;; *) HAS_INTENT=1 ;; esac
+done
+if [ "$HAS_INTENT" = 1 ]; then
+  $PY "${CLAUDE_SKILL_DIR}/scripts/candidates_top.py" --top 5 --completion-gap --explicit-intent
+fi
+```
+`HAS_INTENT` is a **flag, not the text**: `${ARGUMENTS[@]}` word-splits, so a quoted description arrives as
+several tokens and no single one is "the description". `--explicit-intent` is boolean — the gate only needs to
+know that intent WAS supplied; you already have the description itself from the invocation.
+Run this re-run **at most once**, and render exactly ONE `recommendation.mode`: the `--explicit-intent` result
+when it fired, otherwise the injected one. Two mode renders on one surface is the same "contradictory
+instructions" failure `suppress_governor` exists to prevent.
+
 The injected candidates are already scored (priority.score, effort, blast_radius, blocked-on-spike) and carry a
 **`couples-with`** line (Theme 4): other live candidates touching the same code area. Present a **ranked
 recommendation** with a 🏆 top pick and a one-line "why this one", plus 2–4 alternatives. If `/slice
@@ -305,12 +371,36 @@ inside `$wt` (or relocated by the one explicit path), never grabbed from the mai
      ```bash
      $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" update --file shippability.json --array rows --id SHIP-NNN --set slice=slice-NNN-<name>
      ```
+7. **Gate row for the completion gate (slice-102 / [[ADR-147]]) — POST-CLAIM, and only here.** Not at 5.1: that
+   step's own failure-ladder entry asserts that NOTHING ELSE RAN at that point, and appending a vault row there
+   would falsify its premise. Emit ONE row recording the verdict the pick surface carried and what the user
+   decided, so `/pulse` and `/critic-calibrate` can later show how often the gate fired and how often it was
+   declined. `decision` is one of `product-pick` (the gate's pick was taken) | `declined` (the halt was declined
+   and an ordinary candidate claimed) | `explicit-intent`.
+   **A route-* mode emits NO row** — the user left `/slice` WITHOUT claiming, and the row's ABSENCE is the honest
+   record. Stated plainly: this makes firing-vs-decline measurable and accept-rate NOT measurable from `/slice`;
+   the durable record of an accept is the PS/SC mint itself.
+   ```bash
+   VAULT="${AI_SDLC_VAULT_ROOT:-$("$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+   TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+   T="$(mktemp -d "$TMPD/aisdlc-cg-row.XXXXXX")"
+   "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" \
+       --gate completion-gap --slice slice-NNN-<name> \
+       --verdict <product-work-available|scope-exhausted|scope-absent> --findings-count 0 \
+       --note "decision=<product-pick|declined|explicit-intent>; reason=<r>; done=X/Y; unbuilt=N; dangling=M" \
+       --out "$T/row.json" \
+     && "$PY" "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append \
+           --vault "$VAULT" --file gate-log.json --array entries --content-file "$T/row.json"; rc=$?
+   [ "$rc" = 0 ] || echo "WARN: completion-gap gate row not appended (rc=$rc) -- the claim and scaffold STAND; only the measurement row is lost." >&2
+   rm -rf "$T"
+   ```
 
 **Failure ladder (must-not-defer #1 — no silent partial scaffold; claim-first, so the claim is the FIRST committed state and the compensation is wrapper-enforced, not skippable prose):**
 - claim (5.1) fails → **STOP**; nothing else ran (no worktree, no scaffold). If a Step-1.5 reservation is live, `--release` it — the claim/upgrade did not commit, so the hold must not linger `reserved`.
 - worktree-add (5.3) fails → **wrapper-enforced compensation**: `claim_candidate.py --candidate <SC-NNN> --release` (revert the claim; counter not decremented — monotonic-burn), then STOP. No orphaned reservation.
 - `/repro` (5.4) aborts, or its "test unexpectedly passes" recovery fires → `--release` the claim + `git -C <main> worktree remove <wt_path>` + `git branch -D slice/NNN-<name>`; leave no scaffold.
 - scaffold (5.5) fails → `--release` the claim + roll the worktree back the same way.
+- gate-row append (5.7) fails → **WARN and continue.** The claim and the scaffold STAND; only the measurement row is lost, and a lost measurement must never cost a claimed slice its worktree. Surfaced, never fire-and-forget.
 
 The BFRD-1 Confirm/Not-a-bug gate (Step 2) runs BEFORE the Step-5.3 worktree-add, so cancelling a candidate as "Not a
 bug" never orphans a worktree.

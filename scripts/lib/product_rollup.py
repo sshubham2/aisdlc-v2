@@ -46,6 +46,7 @@ Contract — a stable stdout envelope, EXIT 0 ALWAYS:
      "unit": "capabilities", "done_definition": "materialized candidate archived",
      "empty_scope": bool,
      "whole_app": {done, rejected_only, in_progress, no_children, unknown, total, composition},
+     "capabilities": [{item, title, state, bucket, area}],   # slice-102: the per-capability projection
      "areas": [{name, ...counts, total, composition, rank, ratio}],
      "unassigned": {name, ...counts, total, composition},
      "pulse_line": str,
@@ -266,11 +267,29 @@ def build_envelope(done_result: dict, scope: dict) -> dict:
     whole = _new_strata()
     by_area: dict[str, dict] = {}
     unassigned = _new_strata()
+    # slice-102 / SC-232 ([[ADR-148]]): the PER-CAPABILITY projection of the loop this function ALREADY
+    # runs. Until it existed, `unbuilt[]` (completion_gap.classify) had no shared definition -- the
+    # detector re-derived "not done" from counts, so the headline and the list could disagree and
+    # `all-built` could fire while done < total (round-2 B2). Publishing the stratum makes the two views
+    # ONE array. Additive + conservation-neutral: nothing below reads it.
+    capabilities: list[dict] = []
     for e in items:
         b = _bucket(e)
         area = area_map.get(str(e.get("item")))       # capability -> area: DIRECT + total-function
         _add(whole, e, b)
         _add(by_area.setdefault(area, _new_strata()) if area else unassigned, e, b)
+        capabilities.append({
+            "item": str(e.get("item")),
+            "title": e.get("title"),
+            # BOTH axes travel: `state` is cmd_done's FOUR-valued state UNCHANGED, `bucket` is this
+            # module's five-way stratum. Carrying only one would make `rejected_only` fall out of
+            # `done` AND out of `unbuilt` -- a killed capability representable in neither.
+            "state": e.get("state"),
+            "bucket": b,
+            # the RESERVED sentinel, never None: `--area unassigned` is a real lens value (/slice
+            # documents it), so a consumer filtering by area must have something to match on.
+            "area": area or UNASSIGNED,
+        })
 
     area_list = _order_areas(by_area)
     env = {
@@ -279,6 +298,7 @@ def build_envelope(done_result: dict, scope: dict) -> dict:
         "done_definition": DONE_DEFINITION,
         "empty_scope": whole["total"] == 0,       # M3: present-but-empty is distinct, never '0/0 done'
         "whole_app": whole,
+        "capabilities": capabilities,             # slice-102: one array, two views (see the loop above)
         "areas": area_list,
         "unassigned": {"name": UNASSIGNED, **unassigned},
     }
@@ -338,9 +358,20 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("--vault", default=None, help="vault root (defaults to the resolved VAULT_ROOT)")
     ap.add_argument("--json", action="store_true", help="emit JSON (default: human-readable text)")
+    ap.add_argument("--capabilities", action="store_true",
+                    help="include the per-capability projection in --json. OFF by default: the two "
+                         "SKILL.md injections that consume this CLI (/pulse, /slice) read only the "
+                         "aggregates, and the array is linear in capability count.")
     args = ap.parse_args(argv)
     vault = Path(args.vault) if args.vault else VAULT_ROOT
     env = _error_envelope("could not resolve the vault root") if not vault else compute_rollup(Path(vault))
+    if args.json and not args.capabilities:
+        # slice-102 code-review m2: `capabilities[]` is for the IN-PROCESS consumer
+        # (completion_gap.classify via candidates_top, and story_inputs, both of which call
+        # compute_rollup directly). On the CLI it rode two skill-LOAD injections that never read it —
+        # measured at 27-32% of the envelope and growing linearly with the product. Dropped here rather
+        # than made conditional in build_envelope, so the in-process contract is untouched.
+        env.pop("capabilities", None)
     print(json.dumps(env, ensure_ascii=False) if args.json else _render_text(env))  # m3: ensure_ascii=False
     return 0                                      # exit-0-always: the error rides stdout (mirrors slice-078)
 
