@@ -1,0 +1,101 @@
+{
+  "_schema": "aisdlc/slice-candidates@1",
+  "project": "expenses",
+  "updated": "2026-02-11T10:00:00Z",
+  "candidates": [
+    {
+      "id": "SC-001",
+      "title": "build-receipt-capture",
+      "status": "shipped",
+      "progress": "shipped",
+      "slice": "slice-001",
+      "claimed_by": {
+        "git_user": "Dev One",
+        "git_email": "dev.one@example.com"
+      },
+      "started_at": "2026-01-05T09:00:00Z",
+      "source": [
+        {
+          "type": "product-scope",
+          "ref": "PS-001"
+        }
+      ],
+      "description": "Photograph a receipt and store it against an expense.",
+      "rationale": "The PRODUCT's own scope (PS-001), decomposed once from concept.json.",
+      "user_visible_outcome": "A user can photograph a receipt and see it attached to the expense.",
+      "dependencies": [],
+      "priority": {
+        "score": 5,
+        "severity": "medium",
+        "effort": "L",
+        "blast_radius": "product-scope: capture-receipts"
+      },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "the device camera API returns a usable image on the target OS versions",
+          "risk_ref": null,
+          "blocking": true,
+          "spike_status": "proven"
+        }
+      ],
+      "verification_plan": "Photograph a real receipt on a real device and confirm it renders on the expense.",
+      "history": [
+        {
+          "event": "created",
+          "by": "slice-candidates",
+          "at": "2026-01-04T09:00:00Z",
+          "ref": "PS-001"
+        }
+      ]
+    },
+    {
+      "id": "SC-002",
+      "title": "build-expense-export",
+      "status": "shipped",
+      "progress": "shipped",
+      "slice": "slice-003",
+      "claimed_by": {
+        "git_user": "Dev One",
+        "git_email": "dev.one@example.com"
+      },
+      "started_at": "2026-01-28T09:00:00Z",
+      "source": [
+        {
+          "type": "product-scope",
+          "ref": "PS-002"
+        }
+      ],
+      "description": "Export a date range of expenses as a file the finance team can import.",
+      "rationale": "The PRODUCT's own scope (PS-002), decomposed once from concept.json.",
+      "user_visible_outcome": "A user can download a month of expenses and open it in their accounting tool.",
+      "dependencies": [
+        "SC-001"
+      ],
+      "priority": {
+        "score": 5,
+        "severity": "medium",
+        "effort": "L",
+        "blast_radius": "product-scope: export-expenses"
+      },
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "the accounting tool accepts the export format without a manual mapping step",
+          "risk_ref": null,
+          "blocking": true,
+          "spike_status": "proven"
+        }
+      ],
+      "verification_plan": "Export a real month and import it into a real accounting tool sandbox.",
+      "history": [
+        {
+          "event": "created",
+          "by": "slice-candidates",
+          "at": "2026-01-04T09:00:00Z",
+          "ref": "PS-002"
+        }
+      ]
+    }
+  ]
+}

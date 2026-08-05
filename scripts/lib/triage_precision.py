@@ -33,8 +33,11 @@ never drift. THREE responsibilities:
 4. ``gate_summary(entries, slice_id=None, recent=30)`` — the whole-file aggregation /pulse
    consumes (2026-07 review sweep): per-gate table (verdict-row runs/raised + the
    precision/recall from #3, reality_contact, last verdict, quiet flag) ordered high→low
-   reality-contact, with ``design-tournament`` split out (informational — divergence
-   distribution, never in the quiet math), the cross-domain validity ratio, the active
+   reality-contact, with the INFORMATIONAL gates excluded (they raise no findings, so their
+   always-zero raised_rate is not a "quiet / lighten" signal) and the DIVERGENCE aggregate
+   keyed separately on ``_DIVERGENCE_GATES`` — ``approach_divergence`` is a design-tournament
+   field, so once a second informational gate exists (slice-102's ``completion-gap``) the two
+   sets are no longer the same set, the cross-domain validity ratio, the active
    slice's compact rows, and a capped newest-first ``recent[]``. The gate log grows without
    bound (multiple rows per slice, forever); /pulse reads ONLY this summary — never the
    full file — so its token budget survives slice-100+.
@@ -200,7 +203,13 @@ def gate_precision_recall(entries, gate: str) -> dict:
 # excluded from the per-gate quiet/precision table, reported separately (3.3). The pass-class
 # set for the cross-domain validity ratio is the REALITY-gate vocabulary only (go/conditional/
 # pass) — model-gate greens (clean/accept) never count as "reality confirmed the transfer".
-INFORMATIONAL_GATES = frozenset({"design-tournament"})
+INFORMATIONAL_GATES = frozenset({"design-tournament", "completion-gap"})
+#: slice-102 / SC-232 — the DIVERGENCE aggregate's own key, split out from INFORMATIONAL_GATES.
+#: `approach_divergence` is a design-tournament field; INFORMATIONAL_GATES was a set of ONE, so
+#: `gate_summary` could use it for both jobs. The moment a SECOND informational gate exists, keying the
+#: tournament aggregate on the exclusion set counts the other gate's rows as tournament runs and
+#: inflates the number /pulse --full reads. Two names for two jobs.
+_DIVERGENCE_GATES = frozenset({"design-tournament"})
 _REALITY_PASS_CLASS = frozenset({"go", "conditional", "pass"})
 _RC_RANK = {"high": 0, "medium": 1, "low": 2}
 _SLICE_ROW_FIELDS = ("gate", "kind", "verdict", "findings_count", "reality_contact",
@@ -238,7 +247,7 @@ def gate_summary(entries, slice_id: str | None = None, recent: int = 30) -> dict
         })
     gates_out.sort(key=lambda g: (_RC_RANK.get(g["reality_contact"], 3), g["gate"]))
 
-    dt_rows = [e for e in rows if e.get("gate") in INFORMATIONAL_GATES]
+    dt_rows = [e for e in rows if e.get("gate") in _DIVERGENCE_GATES]
     divergence: dict[str, int] = {}
     for e in dt_rows:
         v = str(e.get("approach_divergence", "")).strip()

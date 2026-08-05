@@ -1,0 +1,57 @@
+{
+  "_schema": "aisdlc/product-scope@1",
+  "project": "expenses",
+  "concept_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "decomposed_at": "2026-01-04T09:00:00Z",
+  "items": [
+    {
+      "id": "PS-001",
+      "decomposition_label": "capture-receipts",
+      "title": "build-receipt-capture",
+      "description": "Photograph a receipt and store it against an expense.",
+      "user_visible_outcome": "A user can photograph a receipt and see it attached to the expense.",
+      "area": "receipts",
+      "code_components": [],
+      "depends_on": [],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "the device camera API returns a usable image on the target OS versions",
+          "risk_ref": null,
+          "blocking": true,
+          "spike_status": "proven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Photograph a real receipt on a real device and confirm it renders on the expense."
+    },
+    {
+      "id": "PS-002",
+      "decomposition_label": "mileage-claims",
+      "title": "build-mileage-claims",
+      "description": "Claim mileage for a journey and roll it into the same expense report.",
+      "user_visible_outcome": "A driver can claim a journey and see it on the same report as their receipts.",
+      "area": "receipts",
+      "code_components": [],
+      "depends_on": [],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "journey distance can be derived without a paid mapping API",
+          "risk_ref": null,
+          "blocking": true,
+          "spike_status": "failed",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Claim a real journey and confirm the distance matches the odometer."
+    }
+  ],
+  "counters": {
+    "ps": 2
+  }
+}

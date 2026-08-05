@@ -1,8 +1,8 @@
 ---
 name: slice-candidates
 description: "Builds the slice-candidate backlog in <vault>/candidates.json from two sources. From an annotated diagnosis.html (produced by /diagnose and returned by the repo owner): extracts confirmed findings, uses code-review-graph blast-radius queries to detect file-overlap coupling, topo-sorts by dependency + severity/blast/effort priority, and flags must-do-together cycles; --obo walks the owner through findings one at a time. From <vault>/concept.json: --product decomposes the PRODUCT's own declared scope into candidate-shaped items ONCE, persists them with receiver-minted PS-NNN ids, and idempotently materializes them as PRODUCT-sourced candidates — without which a backlog fills with pipeline exhaust and the product itself is never pickable."
-when_to_use: "Trigger phrases: /slice-candidates, 'generate slice candidates', 'build the backlog from diagnosis', 'turn confirmed findings into slices', 'what should we fix first', 'the backlog has no product work in it', 'materialize the product scope', 'why is the roadmap not in the backlog'. Finding path: use after /diagnose has been run and the owner has annotated and returned the saved HTML (prerequisite: diagnose-out/diagnosis.html with >=1 Confirmed: yes finding); pass --obo to walk findings interactively. Product path: pass --product after /discover has written concept.json (it hands off here) — needs no diagnosis at all."
-argument-hint: "[path-to-diagnose-out — omit to use ./diagnose-out] [--obo for guided one-finding-at-a-time review] [--product to materialize the product's own scope from concept.json]"
+when_to_use: "Trigger phrases: /slice-candidates, 'generate slice candidates', 'build the backlog from diagnosis', 'turn confirmed findings into slices', 'what should we fix first', 'the backlog has no product work in it', 'materialize the product scope', 'why is the roadmap not in the backlog', 'add a capability', 'the product is finished but there is more to build'. Finding path: use after /diagnose has been run and the owner has annotated and returned the saved HTML (prerequisite: diagnose-out/diagnosis.html with >=1 Confirmed: yes finding); pass --obo to walk findings interactively. Product path: pass --product after /discover has written concept.json (it hands off here) — needs no diagnosis at all. Incremental path: pass --add-item to add ONE more capability to an already-decomposed scope (where /slice's completion gate routes when every declared capability is built)."
+argument-hint: "[path-to-diagnose-out — omit to use ./diagnose-out] [--obo for guided one-finding-at-a-time review] [--product to materialize the product's own scope from concept.json] [--add-item to add ONE more capability to an already-decomposed scope]"
 allowed-tools: Bash, Read, Write, AskUserQuestion
 ---
 
@@ -36,10 +36,10 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" count --file candidate
 ## Step 0 — Resolve paths + flags (ONE parse, both outputs)
 
 ```bash
-DIAGNOSE_OUT=""; OBO=0; PRODUCT=0
-for a in ${ARGUMENTS[@]}; do case "$a" in --obo) OBO=1 ;; --product) PRODUCT=1 ;; --*) ;; *) [ -z "$DIAGNOSE_OUT" ] && DIAGNOSE_OUT="$a" ;; esac; done
+DIAGNOSE_OUT=""; OBO=0; PRODUCT=0; ADDITEM=0
+for a in ${ARGUMENTS[@]}; do case "$a" in --obo) OBO=1 ;; --product) PRODUCT=1 ;; --add-item) ADDITEM=1 ;; --*) ;; *) [ -z "$DIAGNOSE_OUT" ] && DIAGNOSE_OUT="$a" ;; esac; done
 [ -n "$DIAGNOSE_OUT" ] || DIAGNOSE_OUT="./diagnose-out"
-echo "DIAGNOSE_OUT=$DIAGNOSE_OUT OBO=$OBO PRODUCT=$PRODUCT"
+echo "DIAGNOSE_OUT=$DIAGNOSE_OUT OBO=$OBO PRODUCT=$PRODUCT ADDITEM=$ADDITEM"
 ```
 
 > Shell vars do NOT persist across separate ```bash blocks, and skill args are 0-based Claude Code
@@ -48,6 +48,12 @@ echo "DIAGNOSE_OUT=$DIAGNOSE_OUT OBO=$OBO PRODUCT=$PRODUCT"
 > (both args are optional) would make the flag the path (`DIAGNOSE_OUT="--obo"`), and bare `$ARGUMENTS`
 > under an array binding sees only token 0. `${ARGUMENTS[@]}` unquoted is array-safe AND scalar-safe.
 > Bundled scripts use `${CLAUDE_SKILL_DIR}` directly.
+
+If the Step-0 parse printed `ADDITEM=1`, skip to
+[--add-item mode](#--add-item-mode--add-one-more-capability-to-an-exhausted-scope-slice-102--adr-152). It reads
+`<vault>/product-scope.json`, **not** `diagnose-out/` — the diagnosis checks below do not apply and must not be
+run. (`--add-item` is a peer of `--product`/`--obo`; if `--product` is also passed, run `--product` — the once-act
+comes first — and tell the user `--add-item` was ignored.)
 
 If the Step-0 parse printed `PRODUCT=1`, skip to
 [--product mode](#--product-mode--materialize-the-products-own-scope-slice-068--adr-067). It reads
@@ -414,6 +420,138 @@ rc=$?; [ "$rc" = 0 ] || { echo "STOP: area annotation refused (rc=$rc) -- see st
   `/slice --area` surface renders `via candidate` vs `via product-scope` so it is at least visible.
 - The **capability-progress rollup never reads this field.** A candidate is not a capability; per-area capability
   counts are unmoved by any amount of candidate annotation.
+
+## --add-item mode — add ONE more capability to an exhausted scope (slice-102 / [[ADR-152]])
+
+Invoked when `--add-item` appears in arguments. A peer of `--product` / `--obo` / `--demote`.
+
+**Why this mode exists, and why it lives HERE.** `--product` decomposes the product's scope **exactly
+once** by design — a re-decomposition re-mints ~78% duplicate sludge — so an EXHAUSTED scope is the
+steady state of every project past its initial capability list. `persist` is create-only and `revise` is
+a whole-list replace, so there was no incremental door at all: the backlog filled with pipeline exhaust
+and nothing told you. `/slice`'s completion gate now DETECTS that state and **routes here**. It routes
+rather than doing the work itself because `/slice`'s pick phase is read-only ([[ADR-067]] section 1) and
+this skill already owns product-scope writes — `--product` runs `persist` + `materialize`, already
+declares `Write`, and already stages a model-authored items file at a fixed name. This mode reuses that
+seam instead of inventing one inside `/slice`.
+
+**It takes no argument from `/slice` and re-derives its own state.** The route is a suggestion to the
+user, not a parameter handoff.
+
+### add-item-1 — elicit exactly what the contract demands
+
+Ask the user for the ONE missing capability, eliciting precisely the fields `_check_contract` requires —
+anything less is refused at the crossing, and finding that out after the elicitation wastes the user's
+answer:
+
+- **title** — verb-led, e.g. `build-approval-workflow`
+- **label** — a short run-local id, e.g. `approve-expenses`
+- **description** — what the capability IS, in a sentence or two
+- **user_visible_outcome** — what a real user can DO once it exists (non-empty; the field that gives a
+  capability meaning)
+- **verification_plan** — how reality confirms it works (non-empty)
+- **≥1 blocking assumption**, `spike_status: "unproven"` — without it the candidate SKIPS `/risk-spike`
+  step-0, the pipeline's reality gate, on exactly the least-understood work in the product
+- **area** (optional) — the product-area grouping. It travels **in the item file**, never as `--area`:
+  the item-file channel is what runs the single-sourced `_valid_area` gate ([[ADR-152]] d6)
+
+### add-item-2 — stage the ONE-item payload
+
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+echo "ITEM=$TMPD/aisdlc-add-item.json"   # FIXED name: every block below re-derives it identically (vars do NOT persist across bash blocks)
+```
+
+Now **`Write`** the payload to that exact absolute path (use `Write`, not a bash heredoc — capability
+prose contains apostrophes, which a heredoc mangles). **NEVER emit an `id`** — identity is minted in-lock
+by the receiver, and the verb rejects a supplied one:
+
+```json
+{ "items": [
+  { "label": "<run-local id>", "title": "<verb-led title>",
+    "description": "<what this capability IS>",
+    "user_visible_outcome": "<what a real user can DO once it exists>",
+    "area": "<OPTIONAL product-area — omit to leave it unassigned>",
+    "assumptions": [ { "id": "A1", "statement": "<the blocking feasibility premise>",
+                       "blocking": true, "spike_status": "unproven" } ],
+    "verification_plan": "<how reality confirms it works>" } ] }
+```
+
+### add-item-3 — PREVIEW, then BRANCH on the exit code
+
+`--dry-run` IS the preview, and it is predictive because it is the **same code path**: the same gates,
+the same pre-mint `_plan` check, the same allocator, run against an in-memory copy that is never
+written. It previews **both** files — `would_add` (the PS id) alongside `would_mint` (the SC id).
+
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+ITEM="$TMPD/aisdlc-add-item.json"   # re-derived, not inherited (fresh shell per block)
+[ -s "$ITEM" ] || { echo "STOP: $ITEM is missing or empty -- Write the add-item-2 payload first." >&2; exit 1; }
+VAULT="${AI_SDLC_VAULT_ROOT:-$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+# FAIL-CLOSED (BC-PROJ-11's `$(...)` leg, closing round-4 B3 properly): an empty $VAULT is FALSY, so
+# `--vault ""` would silently fall back to the verb's own cwd-based resolver -- which is exactly the
+# "another project's vault" hazard ADR-152 d5 exists to prevent. An irreversible mint never guesses.
+[ -n "$VAULT" ] || { echo "STOP: cannot resolve the vault root; refusing to run an irreversible verb against a vault resolved from the cwd." >&2; exit 1; }
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" --vault "$VAULT" add-item --item-file "$ITEM" --dry-run --json
+```
+
+`--vault` is resolved **in-block and never leaves the harness** ([[ADR-152]] d5). Without it the one
+production invocation of an irreversible verb could resolve ANOTHER project's vault from the cwd's
+git-common-dir.
+
+**The exit code is a BRANCH, not something to print through** ([[ADR-152]] d4):
+
+- **exit 0** → render the preview (`would_add` **and** `would_mint`) and raise the `AskUserQuestion`
+  confirmation below.
+- **exit 2** → render the refusal message **VERBATIM**, re-elicit the field it names, re-`Write` the
+  payload and re-preview. **Never confirm, never mint.** Common causes: the title collides with an
+  existing unowned candidate (the message names `--acknowledge <label>` as the remedy, and it is
+  available *before* the mint precisely because the check runs before the allocator); a missing
+  `verification_plan` / `user_visible_outcome` / blocking assumption; an `area` that is empty or the
+  reserved `unassigned` sentinel.
+- **exit 1** → malformed vault JSON. Surface it and stop; do not retry.
+- **exit 4** → `product-scope.json` is absent, so there is nothing to add to. Unreachable from `/slice`'s
+  route (its `scope-absent` verdict routes to `/discover` + `/slice-candidates --product` instead) and a
+  hard stop if it occurs anyway.
+
+### add-item-4 — confirm, then mint
+
+Raise ONE `AskUserQuestion` naming the **PS id** the preview predicted (`would_add`) and the capability's
+title. **Do NOT name an SC id** — candidate identity is minted by the receiver inside the `candidates.json`
+lock, so the preview genuinely cannot predict it (`would_mint` carries PS ids, not SC ids), and inventing one
+would put a fabricated id in front of the user at the confirmation gate. The real SC id is reported after the
+mint. Then:
+
+```bash
+TMPD="$($PY -c 'import tempfile; print(tempfile.gettempdir().replace(chr(92),"/"))')" || { echo "STOP: cannot resolve a portable temp dir" >&2; exit 1; }
+ITEM="$TMPD/aisdlc-add-item.json"
+[ -s "$ITEM" ] || { echo "STOP: $ITEM is missing or empty -- Write the add-item-2 payload first." >&2; exit 1; }
+VAULT="${AI_SDLC_VAULT_ROOT:-$($PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/_vault_paths.py" --path 2>/dev/null)}"
+# FAIL-CLOSED (BC-PROJ-11's `$(...)` leg, closing round-4 B3 properly): an empty $VAULT is FALSY, so
+# `--vault ""` would silently fall back to the verb's own cwd-based resolver -- which is exactly the
+# "another project's vault" hazard ADR-152 d5 exists to prevent. An irreversible mint never guesses.
+[ -n "$VAULT" ] || { echo "STOP: cannot resolve the vault root; refusing to run an irreversible verb against a vault resolved from the cwd." >&2; exit 1; }
+$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" --vault "$VAULT" add-item --item-file "$ITEM" --json
+rc=$?; rm -f "$ITEM"; exit $rc
+```
+
+**The confirmation is payload-level but PROSE-enforced — the honest cost of this design, stated because
+it was the reason the decision went to the user rather than being made by the Builder.** Typing the
+skill name is intent-level authorization and IS structural; the gate between preview and mint is a
+model-issued `AskUserQuestion`, which is the same mechanism `/build-slice`'s plan-approval HALT and
+`/commit-slice`'s confirmations already rely on, and `--product` already mints PS ids through a
+model-issued call. The compensating control that actually matters is unchanged and stronger: the
+**pre-mint refusal** means a refused add burns **ZERO** PS ids. A PS mint has no un-mint.
+
+On success report the minted `PS-NNN` + its `SC-NNN` and suggest `/slice` — the ordinary
+`product-work-available` path will now pick the new candidate **by identity**. A `partial` result (exit
+2, the scope item added but its candidate not minted) echoes the child's own remedy: surface it verbatim
+and stop — the capability is already persisted and must not be added again.
+
+**This mode emits NO gate row** ([[ADR-152]] d7). `/slice`'s completion-gap row is POST-CLAIM, and a
+user who follows any route leaves `/slice` without claiming. Stated plainly rather than hidden: that
+makes the gate's *firing-vs-decline* rate measurable and its *accept* rate not, from `/slice`. The
+durable record of an accept is the PS/SC mint itself.
 
 ## --demote mode — 'good enough for now' (slice-077 / [[ADR-088]])
 

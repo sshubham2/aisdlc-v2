@@ -30,6 +30,47 @@ SLICE_CANDIDATES = ROOT / "skills" / "slice-candidates" / "SKILL.md"
 
 _BOOTSTRAP = "/slice-candidates --product"
 
+#: The ADR-067 section-1 enumeration (as scoped by [[ADR-080]] + [[ADR-152]]). This is the ONLY
+#: executable guard on that invariant — there is no _DISPATCH-completeness test — so a slice that
+#: changes the CARDINALITY of `product_scope`'s mutating-verb set MUST extend it (FBCD-1, slice-081 m3).
+#:
+#: slice-102 grew the set 5 -> 6 with `add-item`, banned **UNCONDITIONALLY**. There is deliberately no
+#: mode-awareness, no continuation-joining and no invocation scoping: under [[ADR-152]] `/slice` ROUTES
+#: to `/slice-candidates --add-item` and has no reason to name the verb at all, so the check stays the
+#: flat membership scan it has always been ([[ADR-153]] d1, superseding ADR-151's mode-aware parser,
+#: which DR-1 broke on its first adversarial read).
+#:
+#: PRE-EXISTING GAP, RECORDED AND NOT FIXED ([[ADR-153]] d4): persist/materialize/revise are enumerated
+#: in the QUOTE form only, while set-area/set-component carry both. `add-item` is added in BOTH forms so
+#: the new verb does not inherit that gap; closing it for the older three is someone else's cut.
+_MUTATING_VERBS = (
+    "product_scope.py\" persist", "product_scope.py\" materialize",
+    "product_scope.py\" revise",
+    "product_scope.py\" add-item", "product_scope.py add-item",
+    "product_scope.py\" set-area", "product_scope.py set-area",
+    "product_scope.py\" set-component", "product_scope.py set-component",
+)
+
+
+def _mutating_hits(text: str) -> list[str]:
+    """THE guard's predicate, single-sourced so the GREEN and RED directions exercise the SAME check.
+
+    STRENGTH, STATED HONESTLY ([[ADR-153]] d2): this is a substring scan over ONE file's text. It
+    cannot distinguish printing from executing, it is defeated by holding the script path in a
+    variable, and it does NOT scan `skills/slice-candidates/SKILL.md`, where the verb legitimately
+    lives. It is a cardinality-drift guard on ADR-067 section 1's subject file — not a general
+    "nothing mutates the vault from /slice" enforcement, and it must not be described as one.
+
+    A THIRD LIMITATION, FOUND BY CONSTRUCTION WHILE WIRING slice-102 AND RECORDED RATHER THAN PATCHED:
+    the scan requires the verb to be ADJACENT to the script path, so any flag between them — the very
+    shape `/slice-candidates` ships (`product_scope.py" --vault "$VAULT" add-item`) — slips past it.
+    Not fixed here on purpose: [[ADR-153]] d1 keeps this a FLAT membership scan with no predicate
+    change, because the alternative (a parser) is what DR-1 broke on its first adversarial read in
+    round 4. Widening it is a separate, deliberate cut — and the honest reading is that this guard
+    catches DRIFT in a counted set, not a determined bypass.
+    """
+    return [v for v in _MUTATING_VERBS if v in text]
+
 
 def test_discover_hands_off_to_the_bootstrap():
     """The primary discovery path. Without it, nothing ever runs the decompose act."""
@@ -58,17 +99,48 @@ def test_slice_is_read_only_and_carries_the_backstop_notice():
     )
     assert "READ-ONLY" in text
     # slice-081 (m3 / FBCD-1): the mutating-verb set grew 3->4 with `set-component` (slice-084 renamed it
-    # to `set-area`, keeping `set-component` as an alias — BOTH are mutating and enumerated). A slice that
-    # changes the cardinality of a counted set must extend that set's enumeration (this is the ONLY
-    # enumeration guard -- there is no _DISPATCH-completeness test). Both quote- and space-forms are enumerated.
-    for mutating in ("product_scope.py\" persist", "product_scope.py\" materialize",
-                     "product_scope.py\" revise",
-                     "product_scope.py\" set-area", "product_scope.py set-area",
-                     "product_scope.py\" set-component", "product_scope.py set-component"):
-        assert mutating not in text, (
-            f"/slice must never invoke a MUTATING product_scope verb ({mutating}) — it is a read-only "
-            f"pick path (ADR-067 section 1)"
-        )
+    # to `set-area`, keeping `set-component` as an alias — BOTH are mutating and enumerated), then 5->6
+    # with slice-102's `add-item`. A slice that changes the cardinality of a counted set must extend that
+    # set's enumeration (this is the ONLY enumeration guard -- there is no _DISPATCH-completeness test).
+    hits = _mutating_hits(text)
+    assert not hits, (
+        f"/slice must never invoke a MUTATING product_scope verb ({hits}) — its PICK PHASE is a "
+        f"read-only path (ADR-067 section 1, as scoped by ADR-080 + ADR-152)"
+    )
+
+
+def test_slice_readonly_guard_rejects_a_bare_add_item_invocation():
+    """slice-102 / AC6 — BOTH DIRECTIONS, against REAL `skills/slice/SKILL.md` text.
+
+    THE FBCD-1 GAP THIS CLOSES, FOUND BY EXECUTION: the shipped guard walked a FIXED tuple that did NOT
+    contain `add-item`, so a `/slice` naming the new verb would have shipped **green by omission** —
+    measured by running the SHIPPED test body against real patched SKILL.md copies. Green by omission is
+    the defect the guard's own comment names, not a passing grade.
+
+    THE RED DIRECTION IS ASSERTED, NOT ASSUMED ([[ADR-153]] d3). A guard only ever run on the passing
+    case is the failure mode this slice has already paid for TWICE: round-3's B1 (a cross-check reasoned
+    about rather than executed, which would have shipped the gate inert) and the DD3 spike's own T2
+    (reporting PASS on a defective run). Both directions use the SAME predicate — `_mutating_hits` — so
+    this cannot pass against a reimplementation that has drifted from the shipped check.
+    """
+    text = SLICE.read_text(encoding="utf-8")
+    assert _mutating_hits(text) == [], "GREEN: the shipped file must pass"
+
+    for injected in (
+        '$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" add-item --item-file "$F"',
+        "$PY ${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py add-item --item-file $F",
+        '$PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/product_scope.py" add-item --dry-run --item-file "$F"',
+    ):
+        patched = text + "\n```bash\n" + injected + "\n```\n"
+        assert _mutating_hits(patched), (
+            f"the guard did NOT fire on a bare add-item invocation: {injected}")
+
+    # both FORMS are enumerated, so the new verb does not inherit the pre-existing quote-only gap
+    assert 'product_scope.py" add-item' in _MUTATING_VERBS
+    assert "product_scope.py add-item" in _MUTATING_VERBS
+    # and the mode-aware carve-out is RETIRED with the printed command ([[ADR-153]] supersedes ADR-151):
+    # `--dry-run` earns no exemption, because /slice has no reason to name the verb at all.
+    assert not any("dry-run" in v for v in _MUTATING_VERBS)
 
 
 def test_slice_retires_the_stale_pre_materialized_claim():

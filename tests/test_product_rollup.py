@@ -282,3 +282,64 @@ def test_ac3_cli_envelope_shape_and_exit_zero(tmp_path):
     cp2 = subprocess.run([sys.executable, str(SCRIPT), "--vault", str(tmp_path / "nope"), "--json"],
                          capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert cp2.returncode == 0 and json.loads(cp2.stdout)["scope_present"] is False
+
+
+# ── slice-102 / SC-232 (AC5, [[ADR-148]]) — the per-capability projection ──────────────────
+#
+# `unbuilt[]`'s membership predicate had no definition until this projection existed: the detector had
+# to re-derive "which capabilities are not done" from counts, so the headline and the list could
+# disagree and `all-built` could fire while done < total (round-2 B2). The rollup ALREADY computes the
+# stratum per capability in its `_bucket(e)` loop; publishing it is what gives `completion_gap.classify`
+# ONE source shared with the headline. Additive + conservation-neutral.
+
+def test_capabilities_projection_agrees_with_whole_app(tmp_path):
+    """ONE array, two views — they cannot diverge. Asserted per STRATUM, not just on the total, so a
+    projection that mis-buckets one capability while keeping the count right still goes red."""
+    _five_state_vault(tmp_path)
+    env = product_rollup.compute_rollup(tmp_path)
+    caps = env["capabilities"]
+    w = env["whole_app"]
+
+    assert len(caps) == w["total"] == 6, caps
+    for state in ("done", "rejected_only", "in_progress", "no_children", "unknown"):
+        assert sum(1 for c in caps if c["bucket"] == state) == w[state], (state, caps)
+
+    by_id = {c["item"]: c for c in caps}
+    assert set(by_id) == {"PS-100", "PS-101", "PS-102", "PS-103", "PS-104", "PS-105"}
+    # `state` is cmd_done's FOUR-valued state, UNCHANGED; `bucket` is the rollup's five-way stratum.
+    # Keeping both is what makes `rejected_only` REPRESENTABLE instead of falling out of done AND unbuilt.
+    assert by_id["PS-101"]["state"] == "done" and by_id["PS-101"]["bucket"] == "rejected_only"
+    assert by_id["PS-100"]["state"] == "done" and by_id["PS-100"]["bucket"] == "done"
+    assert by_id["PS-103"]["state"] == "no-children" and by_id["PS-103"]["bucket"] == "no_children"
+    # title + area travel with the row, so the headline can name capabilities without a second join
+    assert by_id["PS-100"]["title"] == "ps-100" and by_id["PS-100"]["area"] == "payments"
+    # un-annotated capabilities carry the RESERVED sentinel, never None — `--area unassigned` is a real
+    # lens value (/slice documents it), so the filter must have something to match on.
+    assert by_id["PS-104"]["area"] == product_rollup.UNASSIGNED
+
+
+def test_capabilities_projection_is_area_filterable_and_conservation_neutral(tmp_path):
+    """The `--area` half: filtering `capabilities[]` by area reproduces that area's own strata exactly,
+    which is what lets candidates_top compute an area-scoped done/total WITHOUT reading `whole_app`
+    (which is never area-scoped)."""
+    _five_state_vault(tmp_path)
+    env = product_rollup.compute_rollup(tmp_path)
+    payments = next(c for c in env["areas"] if c["name"] == "payments")
+    scoped = [c for c in env["capabilities"] if c["area"] == "payments"]
+    assert len(scoped) == payments["total"] == 2
+    assert sum(1 for c in scoped if c["bucket"] == "done") == payments["done"] == 1
+    assert sum(1 for c in scoped if c["bucket"] == "rejected_only") == payments["rejected_only"] == 1
+    # additive only: the pre-existing envelope keys are untouched and conservation still holds
+    assert env["whole_app"]["total"] == 6 and "error" not in env
+
+
+def test_capabilities_projection_is_absent_on_the_error_and_no_scope_envelopes(tmp_path):
+    """The key exists only where it is MEANINGFUL. `_error_envelope` and the no-scope envelope carry no
+    capabilities, so a consumer that reads them KeyErrors loudly instead of seeing an empty product."""
+    assert "capabilities" not in product_rollup._error_envelope("boom")
+    assert "capabilities" not in product_rollup.compute_rollup(tmp_path / "no-such-vault")
+    # a PRESENT-but-empty scope is a real, decidable state: the key IS there, and it is empty
+    (tmp_path / "archive").mkdir(parents=True, exist_ok=True)
+    _write(tmp_path, [], [], [])
+    env = product_rollup.compute_rollup(tmp_path)
+    assert env["empty_scope"] is True and env["capabilities"] == []
