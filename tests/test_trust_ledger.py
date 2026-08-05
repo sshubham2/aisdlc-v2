@@ -108,8 +108,12 @@ def test_ac1_zero_authorship_and_provenance(tmp_path):
     assert any(l["source"]["file"] == "gate-log.json" and "validate-slice" in l["text"]
                for l in led["reality_confirmed"])
 
-    # ZERO model authorship: every line field is a structured key — no free-text prose field
-    allowed = {"text", "source", "reality_contact", "reality_proxy", "at", "reason", "state"}
+    # ZERO model authorship: every line field is a structured key — no free-text prose field.
+    # slice-086 (M3): gate/verdict/ac added CONSCIOUSLY to the closed set — each a structured
+    # gate-log enum / mission-brief id, not free text — so the zero-authorship invariant is
+    # EXTENDED, not weakened (story_signoff projects from these instead of parsing `text`).
+    allowed = {"text", "source", "reality_contact", "reality_proxy", "at", "reason", "state",
+               "gate", "verdict", "ac"}
     for key in _LINE_ARRAYS:
         for line in led[key]:
             assert set(line).issubset(allowed), (key, set(line) - allowed)
@@ -300,6 +304,24 @@ def test_proxy_rank_set_equal_to_gate_log():
     assert len(PROXY_RANK) == len(_PROXIES)          # no duplicate rank entries
 
 
+# --- M3 (slice-086): the structured gate/verdict/ac enrichment does NOT change render() ---
+
+def test_enrichment_does_not_change_render(tmp_path):
+    """TF-1 characterization pin: render() reads only text/source/reality_contact/reality_proxy,
+    so the additive gate/verdict/ac fields are invisible to it — the human-facing view (and the
+    ship_receipt twin's contract, which is `text`) is byte-identical with or without enrichment."""
+    led = compose(_seed(tmp_path / "enrich"), "slice-050")
+    # a reality-confirmed gate line DOES carry the new structured fields
+    assert any(l.get("gate") and l.get("verdict") for l in led["reality_confirmed"])
+    stripped = json.loads(json.dumps(led))
+    for key in _LINE_ARRAYS:
+        for line in stripped[key]:
+            for k in ("gate", "verdict", "ac"):
+                line.pop(k, None)
+    for fmt in ("text", "md"):
+        assert render(stripped, fmt) == render(led, fmt)   # enrichment invisible to the view
+
+
 # --- render is a PURE function of the composed JSON --------------------------------------
 
 def test_render_is_pure_function_of_json(tmp_path):
@@ -337,3 +359,59 @@ def test_cli_compose_render_and_exit_codes(run_script, tmp_path):
     # slice not found -> exit 2 (fail-visible)
     r3 = run_script(SCRIPT, ["compose", "--slice", "slice-777", "--vault", v])
     assert r3.returncode == 2 and "not found" in r3.stderr
+
+
+# ── slice-089 / SC-194 (AC5 / M1-DR-1): gate-log derives on a synced vault; status stays available ──
+
+def test_ac5_gate_log_derives_on_synced_vault_status_available(tmp_path):
+    """AC5 / DR-1: on a sharded vault whose derived cache is absent, compose derives the gate rows
+    AND reports availability status 'derived' (never 'missing'), so slice-086's story_signoff panel
+    stays available with the real reality/model classification instead of going dark."""
+    import sys as _sys
+    from importlib import util as _util
+    _root = Path(__file__).resolve().parents[1]
+    if str(_root) not in _sys.path:
+        _sys.path.insert(0, str(_root))
+    from scripts.lib import _shard_store as S
+
+    vault = _seed(tmp_path / "v", canon="slice-089", name="slice-089-x")
+    led0 = compose(vault, "slice-089")
+    st0 = {a["source"]: a["status"] for a in led0["availability"]}
+    assert st0["gate-log.json"] == "ok"
+    assert led0["reality_confirmed"], "cache-present baseline classifies reality rows"
+
+    # migrate + delete the derived cache -> a synced/cloned vault (git-ignored cache absent).
+    S.migrate(vault, "gate-log.json", "entries")
+    (vault / "gate-log.json").unlink()
+    led1 = compose(vault, "slice-089")
+    st1 = {a["source"]: a["status"] for a in led1["availability"]}
+    assert st1["gate-log.json"] == "derived", "status must be 'derived', never 'missing', on a synced vault"
+    assert led1["reality_confirmed"] == led0["reality_confirmed"], "derived rows classify identically"
+
+    # story_signoff keeps slice-086's signoff panel AVAILABLE on the derived ledger (not dark).
+    ss_path = _root / "skills" / "slice-story" / "scripts" / "story_signoff.py"
+    spec = _util.spec_from_file_location("story_signoff_ac5", ss_path)
+    ss = _util.module_from_spec(spec)
+    spec.loader.exec_module(ss)
+    assert ss._gate_log_unavailable(led1) is False
+
+
+def test_m1_listless_cache_with_shards_derives_not_false_empty(tmp_path):
+    """slice-089/code-review m1: a JSON-valid but LIST-LESS local cache ({} / {entries:null}) with
+    shards present must DERIVE (M2 consistency with read_entries), not return early as 'ok' with
+    entries=None -- which would yield a false-empty signoff panel while the other 4 readers self-heal."""
+    import sys as _sys
+    _root = Path(__file__).resolve().parents[1]
+    if str(_root) not in _sys.path:
+        _sys.path.insert(0, str(_root))
+    from scripts.lib import _shard_store as S
+
+    vault = _seed(tmp_path / "v", canon="slice-089", name="slice-089-x")
+    led0 = compose(vault, "slice-089")
+    S.migrate(vault, "gate-log.json", "entries")
+    for listless in ('{}', '{"entries": null}'):
+        (vault / "gate-log.json").write_text(listless, encoding="utf-8")  # listless-but-present cache
+        led = compose(vault, "slice-089")
+        st = {a["source"]: a["status"] for a in led["availability"]}
+        assert st["gate-log.json"] == "derived", f"listless cache {listless!r} must derive, not stay 'ok'-empty"
+        assert led["reality_confirmed"] == led0["reality_confirmed"], "derived rows classify identically"

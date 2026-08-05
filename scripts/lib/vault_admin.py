@@ -19,14 +19,36 @@ Subcommands:
                           Restore an exported archive into this repo's vault dir. Refuses a
                           non-empty target unless --force (then the target is REPLACED). Prints a
                           write-pin reminder — an imported vault should be pinned to its new repo.
+  migrate [--vault P] [--reverse]
+                          Convert gate-log <-> the append-only shard store (slice-088 / ADR-106):
+                          forward explodes the flat gate-log.json into per-entry shards + a derived
+                          local cache; --reverse rebuilds the flat file and tears the shards down.
+                          Fail-closed, reversible, idempotent (a re-run is a no-op); holds the single
+                          gate-log.json.lock across the whole read->build->verify->publish, so a
+                          parallel-slice append can never be lost or duplicated. Actions are logged.
+  sync push|pull [--vault P] [--remote R] [--force] [--force-drop-local]
+                          Git-native vault sync (slice-092 / ADR-114): "sync the log, never the
+                          view". push = ensure sync hygiene -> git add -A -> commit -> push; a fresh
+                          clone reconstructs the vault via the derive-on-missing readers (the derived
+                          gate-log cache + *.lock/*.tmp/.source-repo + .git/ are excluded). pull =
+                          fetch + fast-forward-only by default (REFUSES a dirty tree or divergent
+                          history), --force mirror-resets (still guarding unpushed local commits;
+                          --force-drop-local overrides), then invalidates the derived cache.
+                          NOTE: `sync push` transmits the WHOLE vault UNREDACTED — use a PRIVATE
+                          remote (a secret committed once persists in the pushed history).
 
-Exit: 0 ok · 2 usage (not a git tree / unknown vault / unconfirmed delete / bad archive)
+Exit: 0 ok · 2 usage (not a git tree / unknown vault / unconfirmed delete / bad archive / sync:
+        unconfigured-or-ambiguous remote / detached-HEAD / no-upstream / missing committer identity)
       · 3 genuine failure (slice-058/ADR-055: a fail-visible pin-write / git-init-actuator
-        failure, DISTINCT from the benign exit-2 so a skill exit-check can tell them apart).
+        failure, DISTINCT from the benign exit-2 so a skill exit-check can tell them apart; sync:
+        missing remote / auth / network / push-reject / refused data-loss pull / cache-invalidation).
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
+import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -40,11 +62,11 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from scripts.lib import _stdout
+from scripts.lib import _claim_coord, _shard_store, _stdout, _sync_config, _vault_git_sync
 from scripts.lib._vault_paths import (
-    _CONFIG_REL, _canonical, _git_common_dir, external_store_path, resolve_base,
+    _BASE_CONFIG_FILE, _CONFIG_REL, _canonical, _git_common_dir, external_store_path, resolve_base,
 )
-from scripts.lib._vault_write import read_vault_root_config, write_vault_root_config
+from scripts.lib._vault_write import read_vault_root_config, safe_write_text, write_vault_root_config
 
 _SOURCE_MARKER = ".source-repo"  # written INSIDE the vault: the source repo root (orphan detection)
 
@@ -286,6 +308,386 @@ def cmd_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_migrate(args: argparse.Namespace) -> int:
+    """Convert gate-log <-> the shard store (slice-088 / ADR-106). Fail-closed, reversible,
+    idempotent; holds the single gate-log.json.lock across the whole read -> build -> verify ->
+    publish so no parallel-slice append is lost or duplicated. Actions are logged to stdout
+    (auditable, must-not-defer #4); a build / verify / publish failure is fail-VISIBLE (stderr +
+    exit 3 — the genuine-failure code, DISTINCT from the benign usage exit 2), and the flat file
+    is left intact (a re-run is safe)."""
+    vault = _this_repo_vault(args.vault)
+    if vault is None:
+        return 2
+    if not vault.is_dir():
+        sys.stderr.write(f"vault_admin migrate: no vault at {vault} — nothing to migrate.\n")
+        return 2
+    rel_key, array = "gate-log.json", "entries"
+    try:
+        result = _shard_store.migrate(vault, rel_key, array, reverse=args.reverse,
+                                      log=lambda m: print(m))
+    except Exception as exc:  # noqa: BLE001 — fail-closed actuator: ANY failure -> exit 3, flat intact
+        sys.stderr.write(f"vault_admin migrate: FAILED ({type(exc).__name__}: {exc}) — fail-closed; "
+                         f"the flat {rel_key} is left intact and no entry was lost or reordered.\n")
+        return 3
+    print(f"migrate: {result}")
+    return 0
+
+
+def cmd_read_entries(args: argparse.Namespace) -> int:
+    """Print a (possibly sharded) aggregate's entries as JSON — the shell entry point for SKILL.md
+    gate-log reads that cannot import _shard_store (slice-089 / SC-194). Derive-on-missing via
+    _shard_store.read_entries: on a synced/cloned vault whose git-ignored cache is absent, the
+    entries are rebuilt from the shard log (read-only, no write-back).
+
+    Exit 3 (+ stderr) on a GENUINE read failure — a torn cache with no shards / a torn shard —
+    matching vault_admin's 0-ok / 2-usage / 3-genuine-failure taxonomy (m1/critique, ADR-055), NOT
+    the usage exit 2 (which would collide with 'bad args / unknown vault')."""
+    vault = _this_repo_vault(args.vault)
+    if vault is None:
+        return 2
+    if not vault.is_dir():
+        sys.stderr.write(f"vault_admin read-entries: no vault at {vault}.\n")
+        return 2
+    try:
+        entries = _shard_store.read_entries(vault, args.rel_key, args.array)
+    except Exception as exc:  # noqa: BLE001 — fail-visible genuine failure (torn cache/shard) -> exit 3
+        sys.stderr.write(f"vault_admin read-entries: FAILED to read {args.rel_key} "
+                         f"({type(exc).__name__}: {exc}) — fail-visible; no rows emitted.\n")
+        return 3
+    print(json.dumps(entries, ensure_ascii=False))
+    return 0
+
+
+# ── sync-backend picker actuators (slice-097 / SC-206 / ADR-121 + ADR-123) ────────────
+
+def _base_config_file() -> Path:
+    """The external-vault BASE config file (`~/.claude/ai-sdlc-vault-base`) that `set-base` writes and
+    `_vault_paths.resolve_base` reads. A dedicated seam (tests monkeypatch it, like `_git_common_dir`)
+    so a set-base test never touches the developer's real home file."""
+    return Path(os.path.expanduser(_BASE_CONFIG_FILE))
+
+
+def _boto3_available() -> bool:
+    """True iff boto3 can be imported — WITHOUT importing it (``find_spec`` only). set-backend uses
+    this to WARN + surface the pip hint on absence while STILL persisting the s3 choice (m5: never a
+    force-install, and validate-before-record is boto3-free so absence never blocks)."""
+    return importlib.util.find_spec("boto3") is not None
+
+
+def _s3_env_pairs(s3: dict) -> list[tuple[str, str]]:
+    """(env-var, value) for each NON-EMPTY s3 field the config carries — the exact vars
+    `_vault_s3_sync.resolve_config` reads (ADR-123 setdefault fold)."""
+    return [(_sync_config.S3_FIELD_ENV[f], v) for f, v in s3.items()
+            if f in _sync_config.S3_FIELD_ENV and v]
+
+
+@contextlib.contextmanager
+def _scoped_env_setdefault(pairs: list[tuple[str, str]]):
+    """``os.environ.setdefault`` each (env, value) — NEVER clobbering a real env var — for the block,
+    then RESTORE os.environ to its prior state on exit. Used for validate-before-record: the mutation
+    mirrors cmd_sync's runtime setdefault fold (so validation resolves EXACTLY as a later sync will)
+    but is scoped + reverted so an in-process caller/test sees no leak."""
+    saved = {env: os.environ.get(env) for env, _ in pairs}
+    try:
+        for env, val in pairs:
+            if val:
+                os.environ.setdefault(env, val)
+        yield
+    finally:
+        for env, old in saved.items():
+            if old is None:
+                os.environ.pop(env, None)
+            else:
+                os.environ[env] = old
+
+
+def _warn_shadowing_s3_env(s3: dict) -> None:
+    """m1: a real-env ``AISDLC_S3_*`` already set will SHADOW the freshly-picked file at sync time
+    (env > file precedence, ADR-123), so a persist could be a silent no-op. Emit a VISIBLE WARN
+    naming each shadowing var (a testable surface for the 'note')."""
+    shadowed = sorted(_sync_config.S3_FIELD_ENV[f] for f in s3
+                      if f in _sync_config.S3_FIELD_ENV and os.environ.get(_sync_config.S3_FIELD_ENV[f]))
+    if shadowed:
+        sys.stderr.write(
+            "vault_admin: WARNING — these real-env vars are already set and will SHADOW the "
+            "persisted sync-backend config at sync time (env > file precedence): "
+            + ", ".join(shadowed) + ". Unset them so `vault_admin sync` uses the picked config.\n")
+
+
+def cmd_set_backend(args: argparse.Namespace) -> int:
+    """Consented actuator (owned by /setup's SKILL.md AskUserQuestion) that records the chosen sync
+    backend {local,git,s3} + its NON-SECRET config to ``<git-common-dir>/aisdlc/sync-backend.json``.
+    For s3, VALIDATES-before-record by calling the real, boto3-FREE ``resolve_config`` (a scoped
+    setdefault fold identical to the runtime path), then persists via ``_sync_config`` + read-back-
+    verifies. NEVER imports boto3 (m5); on boto3 absence WARNs + surfaces the pip hint but STILL
+    persists (exit 0). Exit 0 ok / 2 usage (not a git tree / bad s3 config / userinfo endpoint /
+    secret key) / 3 genuine failure (write or read-back mismatch)."""
+    common = _git_common_dir()
+    if not common:
+        sys.stderr.write("vault_admin set-backend: not in a git work tree — no common-dir to anchor "
+                         "the sync-backend config (run `git init`).\n")
+        return 2
+    backend = args.backend
+    cfg: dict = {"backend": backend}
+    if backend == "s3":
+        s3: dict = {}
+        for field, val in (("bucket", args.s3_bucket), ("endpoint", args.s3_endpoint),
+                           ("region", args.s3_region), ("project", args.s3_project)):
+            if val and val.strip():
+                s3[field] = val.strip()
+        # M3: reject a credential-bearing endpoint value early with a clear usage message.
+        if _sync_config.endpoint_has_userinfo(s3.get("endpoint")):
+            sys.stderr.write(
+                "vault_admin set-backend: the S3 endpoint embeds credentials in its URL userinfo "
+                "(user:pass@host) — refusing (M3). Use a bare endpoint (https://host:port); boto3's "
+                "default chain supplies credentials.\n")
+            return 2
+        cfg["s3"] = s3
+        # validate-before-record via the boto3-FREE resolve_config (scoped, reverted setdefault).
+        vault = _this_repo_vault(args.vault)
+        if vault is None:
+            return 2
+        try:
+            with _scoped_env_setdefault(_s3_env_pairs(s3)):
+                from scripts.lib import _vault_s3_sync  # boto3-free import; resolve_config never imports boto3
+                _vault_s3_sync.resolve_config(vault)
+        except _vault_git_sync.SyncUsageError as exc:
+            sys.stderr.write(f"vault_admin set-backend: {exc}\n")
+            return 2
+        _warn_shadowing_s3_env(s3)  # m1: name any real-env AISDLC_S3_* that would shadow this persist
+        if not _boto3_available():
+            sys.stderr.write(
+                "vault_admin set-backend: WARNING — boto3 is not installed; run `pip install boto3` "
+                "before a real `sync --backend s3` (an OPTIONAL dependency, never auto-installed). "
+                "Persisting the s3 choice anyway.\n")
+    elif backend == "git":
+        if args.remote and args.remote.strip():
+            cfg["git"] = {"remote": args.remote.strip()}
+    # persist (validate + BOM-free atomic write) — secret/usage errors are exit 2, IO is exit 3.
+    try:
+        p = _sync_config.save(cfg, common)
+    except _sync_config.SyncConfigError as exc:
+        sys.stderr.write(f"vault_admin set-backend: {exc}\n")
+        return 2
+    except (OSError, ValueError, UnicodeError) as exc:
+        sys.stderr.write(f"vault_admin set-backend: FAILED to write the config ({exc}) — fail-visible.\n")
+        return 3
+    # read-back verify (Shingo self-inspection) — a silent partial becomes a loud stop.
+    got = _sync_config.load(common)
+    if not got or got.get("backend") != backend:
+        sys.stderr.write(f"vault_admin set-backend: read-back MISMATCH after write (wrote backend "
+                         f"{backend!r}, read {got!r}) — config NOT trustworthy; fail-visible.\n")
+        return 3
+    print(f"sync backend set: {backend} -> {p}")
+    if backend == "git":
+        _enable_git_claim_backend(common, _this_repo_vault(args.vault))
+    else:
+        _disable_git_claim_backend(common)
+    return 0
+
+
+def _claim_signal_path(common: str) -> Path:
+    return Path(common) / _claim_coord._CONFIG_REL
+
+
+def _claim_backend_precondition(vault: Path | None) -> str | None:
+    """``None`` when this vault can actually serve a git claim register, else the reason it cannot.
+
+    CR1 (code-review blocker). The register needs the VAULT to be a git work tree with a resolvable
+    remote — but the vault lives OUTSIDE the repo at ``~/.aisdlc/<slug>-<hash>/`` and is NOT a git
+    repo by default, while ``set-backend``'s own precondition check only covers the PROJECT repo's
+    common-dir. Arming the signal without this check hard-blocks ``/slice``: every claim then builds a
+    GitClaimBackend whose first act is ``_require_git_tree`` and refuses. This mirrors what the ``s3``
+    branch already does — validate BEFORE record."""
+    if vault is None:
+        return "the vault path could not be resolved"
+    try:
+        _vault_git_sync._require_git_tree(vault)
+        _vault_git_sync._resolve_remote(vault, None)
+    except (_vault_git_sync.SyncUsageError, _vault_git_sync.SyncFailure) as exc:
+        return str(exc)
+    return None
+
+
+def _enable_git_claim_backend(common: str, vault: Path | None) -> None:
+    """slice-100 / M5 / [[ADR-131]] addition 3 — GIVE THE CLAIM REGISTER A PRODUCER.
+
+    ``set-backend`` writes ``<git-common-dir>/aisdlc/sync-backend.json``, but the claim backend reads
+    a DIFFERENT file with a different schema — ``<git-common-dir>/aisdlc/claim-backend``
+    (``_claim_coord._CONFIG_REL``). Before this, ZERO writers of that file existed outside a test
+    fixture, so the register's mitigation for its own weakest joint ("a team that ran /setup once
+    shares one register by construction") was simply FALSE: nobody was ever opted in, and every peer
+    silently took the uncoordinated ``backend is None`` path at ``claim_candidate.py``.
+
+    VALIDATE-BEFORE-RECORD (CR1): the signal is written ONLY when the vault can actually serve the
+    register. An armed-but-unservable register is worse than no register — it fails every claim
+    closed, which is correct but hard-blocks ``/slice`` — so an unmet precondition SKIPS the write and
+    prints the exact recovery instead. Choosing a NON-git backend REMOVES the signal
+    (``_disable_git_claim_backend``), which is what makes this reversible from the same verb.
+
+    Fail-VISIBLE but NON-fatal to the sync-backend choice that already succeeded and read back clean:
+    an unannounced failure here is precisely the silent double-pick this slice exists to prevent."""
+    signal = _claim_signal_path(common)
+    blocked = _claim_backend_precondition(vault)
+    if blocked:
+        sys.stderr.write(
+            f"vault_admin set-backend: claim coordination NOT enabled — {blocked}\n"
+            f"  The git claim register needs the VAULT itself to be a git work tree with a remote. "
+            f"Set it up, then re-run this command:\n"
+            f"    git -C \"{vault or '<vault>'}\" init\n"
+            f"    git -C \"{vault or '<vault>'}\" remote add origin <url>\n"
+            f"  (`vault_admin sync push` will do the rest.) The sync backend itself IS recorded; only "
+            f"the concurrent-claim register is off, so claiming stays local-only and uncoordinated.\n")
+        return
+    err: BaseException | None = None
+    readback = ""
+    try:
+        signal.parent.mkdir(parents=True, exist_ok=True)
+        safe_write_text(signal, "git\n")
+        readback = signal.read_text(encoding="utf-8-sig").strip()
+    except (OSError, ValueError, UnicodeError) as exc:
+        err = exc
+    if readback != "git":
+        detail = f" ({err})" if err else f" (read back {readback!r})"
+        sys.stderr.write(
+            f"vault_admin set-backend: WARNING — the sync backend was recorded, but the CLAIM "
+            f"coordination signal at {signal} could not be written{detail}. Concurrent slice "
+            f"claiming on this clone is therefore NOT coordinated — two developers can both mint the "
+            f"same slice. Fix it by hand: write the single word `git` into that file, or export "
+            f"AI_SDLC_CLAIM_BACKEND=git.\n")
+        return
+    print(f"claim coordination enabled: git -> {signal}")
+    print("  concurrent slice claiming on this clone is now coordinated through "
+          "refs/aisdlc-claims/* on the vault's remote; `set-backend --backend local` turns it off.")
+
+
+def _disable_git_claim_backend(common: str) -> None:
+    """The symmetric OFF switch (CR1). Picking a non-git sync backend removes the claim signal, so the
+    picker that armed the register is also the verb that disarms it — without this there is no way to
+    turn coordination off short of hand-deleting a file under ``.git/``. A no-op when nothing is
+    armed; announced when it actually changes state, because silently disabling a collision guard
+    would be its own hazard."""
+    signal = _claim_signal_path(common)
+    try:
+        if not signal.exists():
+            return
+        signal.unlink()
+    except OSError as exc:
+        sys.stderr.write(
+            f"vault_admin set-backend: WARNING — could not remove the claim coordination signal at "
+            f"{signal} ({exc}); claims on this clone will keep using the git register. Delete that "
+            f"file by hand to disable it.\n")
+        return
+    print(f"claim coordination disabled: removed {signal}")
+
+
+def cmd_set_base(args: argparse.Namespace) -> int:
+    """Consented actuator: record the external-vault BASE directory in
+    ``~/.claude/ai-sdlc-vault-base``. Confirms the base dir is creatable + writable, writes the
+    config BOM-free, and READ-BACK-VERIFIES it (matching cmd_write_pin). Exit 0 ok / 3 genuine
+    failure (base not writable, write or read-back mismatch). The lower-priority half of AC1 (the
+    higher half — pinning the vault — is the existing `write-pin`)."""
+    base_dir = Path(os.path.expanduser(args.dir))
+    try:
+        base_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        sys.stderr.write(f"vault_admin set-base: base dir {base_dir} is not creatable ({exc}) — "
+                         "fail-visible.\n")
+        return 3
+    if not os.access(base_dir, os.W_OK):
+        sys.stderr.write(f"vault_admin set-base: base dir {base_dir} is not writable — fail-visible.\n")
+        return 3
+    cfgfile = _base_config_file()
+    try:
+        safe_write_text(cfgfile, str(base_dir) + "\n")
+    except (OSError, ValueError, UnicodeError) as exc:
+        sys.stderr.write(f"vault_admin set-base: FAILED to write the base config at {cfgfile} "
+                         f"({exc}) — fail-visible.\n")
+        return 3
+    try:
+        got = cfgfile.read_text(encoding="utf-8-sig").strip()  # utf-8-sig: mirror resolve_base's read
+    except OSError:
+        got = None
+    if got != str(base_dir):
+        sys.stderr.write(f"vault_admin set-base: read-back MISMATCH (wrote {str(base_dir)!r}, read "
+                         f"{got!r}) — base pin NOT trustworthy; fail-visible.\n")
+        return 3
+    print(f"vault base set: {cfgfile} -> {base_dir}")
+    return 0
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """`vault_admin sync push|pull [--backend git|s3]` — vault sync over a git remote (slice-092 /
+    ADR-114) OR an S3/MinIO object store (slice-095 / ADR-119). Thin CLI wrapper that resolves the
+    vault, dispatches to the selected engine, and maps its typed exceptions onto the 0-ok / 2-usage /
+    3-genuine-failure taxonomy (mirroring cmd_migrate). Both engines RAISE the SAME
+    ``_vault_git_sync.SyncUsageError`` / ``SyncFailure`` classes (the S3 engine imports them), so the
+    single except surface covers both: a ``SyncUsageError`` (bad setup / config / optional-dep / an
+    unresolvable S3 prefix) is exit 2 with a hint; a ``SyncFailure`` (network / auth / push-reject /
+    a refused data-loss pull / a fork / an S3-slip key / a gapped shard set) is exit 3; the engine's
+    log lines (auditable summary, the unredacted-transmission note) go to stdout."""
+    vault = _this_repo_vault(args.vault)
+    if vault is None:
+        return 2
+    if not vault.is_dir():
+        sys.stderr.write(f"vault_admin sync: no vault at {vault}.\n")
+        return 2
+    # Load the persisted sync-backend config (ADR-121/123). Absent/empty/malformed -> None (the git
+    # back-compat default); a secret-shaped key / userinfo endpoint -> SyncConfigError (fail-visible).
+    try:
+        cfg_file = _sync_config.load(
+            _git_common_dir(), warn=lambda m: sys.stderr.write(f"vault_admin sync: {m}\n"))
+    except _sync_config.SyncConfigError as exc:
+        sys.stderr.write(f"vault_admin sync: {exc}\n")
+        return 2
+    # Resolve the backend: explicit --backend > persisted config > git (back-compat: no config AND no
+    # flag => git, so every pre-slice-097 bare `sync` caller is unchanged).
+    backend = getattr(args, "backend", None) or (cfg_file or {}).get("backend") or "git"
+    if backend == "local":
+        print("sync: local backend — no remote sync configured (nothing to push/pull).")
+        return 0
+    try:
+        if backend == "s3":
+            s3 = (cfg_file or {}).get("s3") or {}
+            # ADR-123: fold the file's non-secret fields into os.environ via setdefault (NEVER
+            # clobbering a real env var), then call the SHIPPED resolve_config UNCHANGED. Effective
+            # precedence CLI-arg > real-env > file > computed-default is thereby STRUCTURAL. Scoped to
+            # this one-shot CLI subprocess (a fresh process per SKILL.md call); tests save/restore env.
+            _warn_shadowing_s3_env(s3)  # m1: a stale real-env AISDLC_S3_* silently shadows the file
+            for env, val in _s3_env_pairs(s3):
+                os.environ.setdefault(env, val)
+            from scripts.lib import _vault_s3_sync
+            cfg = _vault_s3_sync.resolve_config(
+                vault, bucket=args.s3_bucket, endpoint_url=args.s3_endpoint_url, prefix=args.s3_prefix)
+            client = _vault_s3_sync.build_client(cfg)  # SyncUsageError (exit 2) if boto3 is absent
+            if args.direction == "push":
+                result = _vault_s3_sync.sync_push(vault, cfg=cfg, client=client, force=args.force,
+                                                  log=lambda m: print(m))
+            else:
+                result = _vault_s3_sync.sync_pull(vault, cfg=cfg, client=client, force=args.force,
+                                                  log=lambda m: print(m))
+        else:
+            # git backend: fall back to the persisted remote when --remote is not passed.
+            remote = args.remote or (cfg_file or {}).get("git", {}).get("remote")
+            if args.direction == "push":
+                result = _vault_git_sync.sync_push(vault, remote_arg=remote, log=lambda m: print(m))
+            else:
+                result = _vault_git_sync.sync_pull(
+                    vault, remote_arg=remote, force=args.force,
+                    force_drop_local=args.force_drop_local, log=lambda m: print(m))
+    except _vault_git_sync.SyncUsageError as exc:
+        sys.stderr.write(f"vault_admin sync: {exc}\n")
+        return 2
+    except _vault_git_sync.SyncFailure as exc:
+        sys.stderr.write(f"vault_admin sync: {exc}\n")
+        return 3
+    except Exception as exc:  # noqa: BLE001 — fail-closed actuator: any unexpected failure -> exit 3
+        sys.stderr.write(f"vault_admin sync: FAILED ({type(exc).__name__}: {exc}) — fail-closed.\n")
+        return 3
+    print(f"sync: {result}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _stdout.reconfigure_stdout_utf8()
     p = argparse.ArgumentParser(prog="vault_admin", description="Vault lifecycle admin (4.7).")
@@ -305,9 +707,68 @@ def main(argv: list[str] | None = None) -> int:
     im.add_argument("archive", help="path to the .tgz produced by export")
     im.add_argument("--vault", default=None, help="target vault path (default: computed for this repo)")
     im.add_argument("--force", action="store_true", help="replace a non-empty target vault")
+    mg = sub.add_parser("migrate", help="convert gate-log <-> the shard store (slice-088; "
+                                        "fail-closed, reversible, idempotent)")
+    mg.add_argument("--vault", default=None, help="vault path (default: computed for this repo)")
+    mg.add_argument("--reverse", action="store_true",
+                    help="rebuild the flat gate-log.json from shards, remove the shard dir, and "
+                         "un-ignore the flat file (the symmetric rollback of a forward migrate)")
+    re_ = sub.add_parser("read-entries", help="print a sharded aggregate's entries as JSON, "
+                                              "deriving on a missing cache (slice-089)")
+    re_.add_argument("--vault", default=None, help="vault path (default: computed for this repo)")
+    re_.add_argument("--rel-key", default="gate-log.json",
+                     help="the aggregate's vault-relative cache file (default: gate-log.json)")
+    re_.add_argument("--array", default="entries",
+                     help="the array key to read (only 'entries' is supported today)")
+    sy = sub.add_parser("sync", help="push|pull the vault sync-set over a git remote or an S3/MinIO "
+                                     "bucket (slice-092/095; transmits the WHOLE vault UNREDACTED — "
+                                     "use a PRIVATE remote / a Block-Public-Access bucket)")
+    sy.add_argument("direction", choices=["push", "pull"], help="push or pull the vault")
+    sy.add_argument("--vault", default=None, help="vault path (default: computed for this repo)")
+    sy.add_argument("--backend", choices=["local", "git", "s3"], default=None,
+                    help="sync transport (default: the persisted /setup choice in "
+                         "<git-common-dir>/aisdlc/sync-backend.json, else 'git' for back-compat). "
+                         "'local' = no remote sync; 'git' = a git remote (slice-092); 's3' = S3/MinIO "
+                         "object store (slice-095)")
+    sy.add_argument("--remote", default=None,
+                    help="git backend: remote name (default: 'origin' / the sole remote for push, "
+                         "the branch upstream's remote for pull; ambiguity is an error)")
+    sy.add_argument("--force", action="store_true",
+                    help="pull: mirror-reset (git) / overwrite a conflicting local artifact (s3), "
+                         "discarding local edits (git still refuses to drop unpushed local commits)")
+    sy.add_argument("--force-drop-local", action="store_true",
+                    help="git pull: additionally DISCARD unpushed local commits (enumerated before "
+                         "the reset); implies --force")
+    sy.add_argument("--s3-bucket", default=None,
+                    help="s3 backend: target bucket (default: env AISDLC_S3_BUCKET)")
+    sy.add_argument("--s3-endpoint-url", default=None,
+                    help="s3 backend: endpoint URL (default: env AISDLC_S3_ENDPOINT; unset = AWS S3, "
+                         "set = MinIO / S3-compatible)")
+    sy.add_argument("--s3-prefix", default=None,
+                    help="s3 backend: object-key prefix (default: env AISDLC_S3_PREFIX, else a "
+                         "machine-invariant hash of the git remote URL / AISDLC_S3_PROJECT)")
+    # slice-097: /setup's consented backend picker + base-location actuators.
+    sb = sub.add_parser("set-backend", help="record /setup's chosen sync backend (local|git|s3) + "
+                                            "its non-secret config for a later `sync` (slice-097)")
+    sb.add_argument("--backend", choices=["local", "git", "s3"], required=True,
+                    help="the sync backend to persist (local = no remote sync)")
+    sb.add_argument("--s3-bucket", default=None, help="s3: target bucket (validated before record)")
+    sb.add_argument("--s3-endpoint", default=None,
+                    help="s3: endpoint URL (unset = AWS S3; a userinfo-bearing URL is REFUSED — M3)")
+    sb.add_argument("--s3-region", default=None, help="s3: region (default us-east-1 at sync time)")
+    sb.add_argument("--s3-project", default=None,
+                    help="s3: a machine-INVARIANT project id (stable per project, NOT per machine) "
+                         "-> the S3 key prefix, so two machines pull the SAME prefix (B3)")
+    sb.add_argument("--remote", default=None, help="git: the remote name to record")
+    sb.add_argument("--vault", default=None, help="vault path (default: computed for this repo)")
+    sbase = sub.add_parser("set-base", help="set the external-vault base dir "
+                                            "(~/.claude/ai-sdlc-vault-base), read-back-verified (slice-097)")
+    sbase.add_argument("dir", help="the base directory to record")
     args = p.parse_args(argv)
     return {"write-pin": cmd_write_pin, "git-init": cmd_git_init, "list": cmd_list,
-            "uninstall": cmd_uninstall, "export": cmd_export, "import": cmd_import}[args.cmd](args)
+            "uninstall": cmd_uninstall, "export": cmd_export, "import": cmd_import,
+            "migrate": cmd_migrate, "read-entries": cmd_read_entries, "sync": cmd_sync,
+            "set-backend": cmd_set_backend, "set-base": cmd_set_base}[args.cmd](args)
 
 
 if __name__ == "__main__":

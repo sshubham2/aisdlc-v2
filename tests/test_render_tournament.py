@@ -283,3 +283,30 @@ def test_scoped_css_output_is_brace_balanced_m1():
     css = rt.scoped_css()
     assert css.count("{") == css.count("}")   # a mis-split would leave the merged <style> unbalanced
     assert css.count("{") >= 20               # all the real rules survived the scope pass
+
+
+# ── slice-089 / SC-194 (AC5): the 'which reviews ran' panel derives on a synced vault ──
+
+def test_gate_panel_derives_on_synced_vault(tmp_path):
+    """AC5 (M1): the gate-log panel reads real rows via derive-on-missing when the vault's derived
+    cache is absent (a synced/cloned vault) instead of a silently-empty panel."""
+    import sys as _sys
+    _root = Path(__file__).resolve().parents[1]
+    if str(_root) not in _sys.path:
+        _sys.path.insert(0, str(_root))
+    from scripts.lib import _shard_store as S
+
+    slice_dir = _make_slice(tmp_path)   # canon slice-039
+    gl = _gate_log(tmp_path)            # vault-root gate-log.json (slice-039 rows + 1 other)
+
+    body_cache, code_cache, _s, _t = rt.render_body(slice_dir, gl)
+    assert code_cache == 0
+    assert "risk-spike" in body_cache and "design-tournament" in body_cache
+
+    S.migrate(tmp_path, "gate-log.json", "entries")
+    gl.unlink()  # synced/cloned vault: cache gone, shards present
+    body_derived, code_derived, _s2, _t2 = rt.render_body(slice_dir, gl)
+    assert code_derived == 0
+    assert "risk-spike" in body_derived, "gate panel must show derived rows on a synced vault"
+    assert "design-tournament" in body_derived
+    assert "slice-007" not in body_derived  # other-slice rows stay filtered out

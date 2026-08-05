@@ -64,7 +64,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]  # <plugin>/scripts/lib/trust
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from scripts.lib import _stdout  # noqa: E402
+from scripts.lib import _shard_store, _stdout  # noqa: E402
 # The SINGLE source of truth for reality-contact classification + the proxy value-set +
 # the informational-gate exclusion (ADR-097 point 3). Do NOT re-hardcode the contact map.
 from scripts.lib.gate_log import (  # noqa: E402
@@ -141,6 +141,38 @@ def _load_source(path: Path) -> tuple[dict | None, str]:
     return data, "ok"
 
 
+def _load_gate_log_source(vault: Path) -> tuple[dict | None, str]:
+    """Gate-log loader with derive-on-missing (slice-089 / SC-194 / M1-DR-1).
+
+    On a synced/cloned vault the git-ignored flat gate-log.json cache is absent while the append-
+    only shard log holds the rows; ``_load_source`` alone would return status 'missing' and zero
+    rows, which makes ``story_signoff._gate_log_unavailable`` mark slice-086's WHOLE signoff panel
+    unavailable DESPITE non-empty derived rows (the panel would go dark). So on a not-ok cache that
+    is SHARDED, derive the entries (read-only, no write-back — ADR-106 B2) and report status
+    'derived' (available), never 'missing'.
+
+    A genuinely absent + unsharded gate-log stays 'missing' (legitimate — no reviews yet); a torn
+    shard/cache with no recovery surfaces as 'malformed' (fail-visible availability, not a silent
+    []). Only the ``entries`` array is needed downstream (``_classify_gate_rows``), so the derived
+    doc carries just that.
+
+    M2 consistency (slice-089 code-review m1): the fast-path ok-return is gated on ``entries`` being
+    a LIST — mirroring ``read_entries``' own list-guard. ``_load_source`` classifies a JSON-valid
+    but list-less cache (``{}`` / ``{"entries": null}``) as 'ok', so WITHOUT this guard a listless-
+    but-present cache with shards present would return early (entries=None) and NOT self-heal, unlike
+    the other four readers. With the guard it falls through to derive."""
+    doc, status = _load_source(vault / "gate-log.json")
+    if status == "ok" and isinstance((doc or {}).get("entries"), list):
+        return doc, status
+    if _shard_store.is_sharded(vault, "gate-log.json", "entries"):
+        try:
+            entries = _shard_store.read_entries(vault)
+        except (OSError, ValueError, RuntimeError):
+            return None, "malformed"  # torn shard/cache -> fail-visible availability
+        return {"entries": entries}, "derived"
+    return doc, status  # not sharded -> preserve the real status (missing/malformed/empty)
+
+
 def _line(text: str, file: str, locator: str, **extra) -> dict:
     """Build one ledger line, enforcing the provenance invariant.
 
@@ -210,8 +242,12 @@ def _classify_gate_rows(gl: dict | None, canon: str) -> tuple[list, list, list, 
             contact = GATE_CONTACT.get(gate)
         fc_txt = f" ({fc} finding{'s' if fc != 1 else ''})" if isinstance(fc, int) else ""
         txt = f"{gate}: {verdict}{fc_txt}"
+        # slice-086 (M3): carry the STRUCTURED gate id + verdict so a downstream consumer
+        # (story_signoff.project_ledger_for_signoff) translates from structure, never by parsing
+        # the engineer-facing `text` (slice-073 brittle-key lesson). Additive — `text` unchanged.
         line = _line(txt, "gate-log.json", loc, reality_contact=contact, at=at or None,
-                     reality_proxy=row.get("reality_proxy"))
+                     reality_proxy=row.get("reality_proxy"),
+                     gate=gate or None, verdict=str(verdict) if verdict is not None else None)
         if contact in ("high", "medium"):
             reality_confirmed.append(line)
         elif contact == "low":
@@ -316,11 +352,12 @@ def compose(vault: Path, slice_arg: str) -> dict:
 
     val, val_status = _load_source(sdir / "validation.json")
     brief, brief_status = _load_source(sdir / "mission-brief.json")
-    gl, gl_status = _load_source(vault / "gate-log.json")
+    gl, gl_status = _load_gate_log_source(vault)  # slice-089: derive-on-missing (never false-'missing')
     ship_cat, ship_status = _load_source(vault / "shippability.json")
 
     _reasons = {"missing": "file absent", "malformed": "invalid JSON / not an object",
-                "empty": "empty file", "ok": ""}
+                "empty": "empty file", "ok": "",
+                "derived": "derived from the shard log (local cache absent — synced/cloned vault)"}
     availability = [
         {"source": name, "status": st, "reason": _reasons.get(st, st)}
         for name, st in (("validation.json", val_status), ("mission-brief.json", brief_status),
@@ -361,18 +398,18 @@ def compose(vault: Path, slice_arg: str) -> dict:
                 uncovered_acs.append(acid)
                 not_checked.append(_line(f"{acid}: no validation criterion recorded",
                                          "mission-brief.json", f"acceptance_criteria[{i}]",
-                                         reason="criterion-absent"))
+                                         reason="criterion-absent", ac=acid))
             elif str(c.get("result", "")).lower() != "pass":
                 uncovered_acs.append(acid)
                 not_checked.append(_line(
                     f"{acid}: criterion result={str(c.get('result', '')).lower() or 'unknown'} "
                     "(not a reality-verified pass)", "validation.json", f"criteria[id={acid}]",
-                    reason="criterion-not-pass"))
+                    reason="criterion-not-pass", ac=acid))
             elif slice_contact not in ("high", "medium"):
                 not_checked.append(_line(
                     f"{acid}: criterion passed but slice reality_contact={slice_contact or 'absent'} "
                     "(model-only, not reality-verified)", "validation.json", "reality_contact",
-                    reason="low-contact"))
+                    reason="low-contact", ac=acid))
 
     # reality_surprises = un-eliminated defeaters (M-add-1).
     surprises = val.get("reality_surprises") if val_status == "ok" and isinstance(val, dict) else None

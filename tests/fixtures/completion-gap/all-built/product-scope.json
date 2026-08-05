@@ -1,0 +1,59 @@
+{
+  "_schema": "aisdlc/product-scope@1",
+  "project": "expenses",
+  "concept_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "decomposed_at": "2026-01-04T09:00:00Z",
+  "items": [
+    {
+      "id": "PS-001",
+      "decomposition_label": "capture-receipts",
+      "title": "build-receipt-capture",
+      "description": "Photograph a receipt and store it against an expense.",
+      "user_visible_outcome": "A user can photograph a receipt and see it attached to the expense.",
+      "area": "receipts",
+      "code_components": [],
+      "depends_on": [],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "the device camera API returns a usable image on the target OS versions",
+          "risk_ref": null,
+          "blocking": true,
+          "spike_status": "proven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Photograph a real receipt on a real device and confirm it renders on the expense."
+    },
+    {
+      "id": "PS-002",
+      "decomposition_label": "export-expenses",
+      "title": "build-expense-export",
+      "description": "Export a date range of expenses as a file the finance team can import.",
+      "user_visible_outcome": "A user can download a month of expenses and open it in their accounting tool.",
+      "area": "reporting",
+      "code_components": [],
+      "depends_on": [
+        "PS-001"
+      ],
+      "assumptions": [
+        {
+          "id": "A1",
+          "statement": "the accounting tool accepts the export format without a manual mapping step",
+          "risk_ref": null,
+          "blocking": true,
+          "spike_status": "proven",
+          "spike_ref": null,
+          "spike_evidence": null,
+          "fallback": null
+        }
+      ],
+      "verification_plan": "Export a real month and import it into a real accounting tool sandbox."
+    }
+  ],
+  "counters": {
+    "ps": 2
+  }
+}

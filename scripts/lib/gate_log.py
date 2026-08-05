@@ -106,12 +106,17 @@ GATE_CONTACT: dict[str, str] = {
     # green is NOT a reality green; the hard STOP in build_checks_audit.py is kept (a forcing function), but it is
     # now visible to /pulse + /critic-calibrate as a low-contact gate.
     "build-checks": "low",
+    # slice-102 / SC-232: the completion gate. Informational — it raises no findings; its row records
+    # WHICH verdict the pick surface carried and what the user decided, so /pulse can later show how
+    # often the gate fired and how often it was declined. Model-tier contact by construction: it reads
+    # the vault's own JSON, nothing outside the model.
+    "completion-gap": "low",
 }
 # Informational gates raise no findings; their row carries a measurement, not a verdict
 # of pass/fail. Readers (pulse) must NOT treat their always-zero raised_rate as a
 # "quiet / lighten candidate", and they are excluded from the /critic-calibrate lighten
 # filter by construction (that filter passes only critique/critique-review/code-review).
-INFORMATIONAL_GATES: frozenset[str] = frozenset({"design-tournament"})
+INFORMATIONAL_GATES: frozenset[str] = frozenset({"design-tournament", "completion-gap"})
 _CONTACTS = {"high", "medium", "low"}
 # Reality is GRADUATED, not binary (roadmap §2.7 / philosophy §6.1): a simulator pass and a
 # two-real-device pass should not be the same green. `--reality-proxy` records WHAT stood in

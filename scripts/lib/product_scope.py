@@ -81,6 +81,9 @@ a sibling `status` field, so a consumer branches on structured state and never o
                                                 [--acknowledge PS-NNN ...] [--json]
     product_scope.py [--vault ROOT] revise --items-file PATH [--cut PS-NNN ...]
                                            [--reason TEXT] [--json]
+    product_scope.py [--vault ROOT] add-item --item-file PATH [--area NAME] [--dry-run]
+                                             [--acknowledge LABEL ...] [--json]
+                                    (slice-102: add ONE capability + mint ONE candidate)
     product_scope.py [--vault ROOT] census [--json]
     product_scope.py [--vault ROOT] done [--item PS-NNN] [--json]
     product_scope.py [--vault ROOT] set-area --item PS-NNN --area NAME [--json]
@@ -90,9 +93,12 @@ a sibling `status` field, so a consumer branches on structured state and never o
     1  runtime error (fail-visible)
     2  usage error (incl. a model-supplied id, an invented PS id, --scope-file without --dry-run,
        a `done`/`set-area --item` naming an id this scope does not carry, an empty/whitespace or
-       reserved-'unassigned' set-area --area)
+       reserved-'unassigned' set-area --area, an add-item payload carrying more than ONE item, and
+       add-item's PRE-MINT refusals -- a title collision or a transitive withhold, raised BEFORE the
+       allocator so a refused add burns ZERO PS ids; also add-item's `partial` state, where the scope
+       item WAS added but its candidate was not minted)
     3  concept.json ABSENT           -> actionable message naming /discover            [decompose-context, persist]
-    4  product-scope.json ABSENT     -> actionable message naming /slice-candidates --product   [materialize, revise, done, set-area]
+    4  product-scope.json ABSENT     -> actionable message naming /slice-candidates --product   [materialize, revise, add-item, done, set-area]
        product-scope.json ALREADY EXISTS -> create-only refusal naming `revise`        [persist]
 
 A CAPABILITY HAS MANY CANDIDATES (slice-075 / [[ADR-086]], which SUPERSEDES ADR-085). "How many slices
@@ -115,6 +121,7 @@ MODELS N>1 correctly, it does not police the producer.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -498,20 +505,27 @@ def _load_items(path: str, *, allow_empty: bool = False) -> list[dict]:
     for it in items:
         if not isinstance(it, dict):
             raise _Refuse(2, "usage", f"{p}: every item must be a JSON object; got {type(it).__name__}")
-        # SC-182 / ADR-096 (slice-084: `component` renamed to `area`): recognize the one untrusted
-        # write-seam field at the shared boundary. This loop is _load_items' single choke point for all
-        # THREE callers -- persist, revise, and the read-only --scope-file replay -- so routing a SUPPLIED
-        # grouping label through the single-sourced _valid_area here closes every write seam at once (the
-        # set-area parity SC-182 is about). `area` is canonical; `component` is accepted as a back-compat
-        # alias and normalized into `area`. RAW truthiness (isinstance-str + value, NOT .strip()) mirrors
-        # the persist/revise `... or ...` short-circuit exactly, so this check == the persisted value with
-        # no differential (m2/M2); _valid_area then strips + rejects the reserved sentinel. Blank / absent /
-        # non-string is LEFT UNTOUCHED (a description-only revise grandfathers a legacy value; no new
-        # .strip() crash path). Sits AFTER the non-dict guard above so it.get() only runs on a dict (m2).
+        # SC-182 / ADR-096; SC-185 / [[ADR-118]] (slice-084: `component` renamed to `area`): recognize the
+        # one untrusted write-seam field at the shared boundary. This loop is _load_items' single choke
+        # point for all THREE callers -- persist, revise, and the read-only --scope-file replay -- so
+        # routing a SUPPLIED grouping label through the single-sourced _valid_area here closes every write
+        # seam at once (the set-area parity SC-182/SC-185 is about). `area` is canonical; `component` is a
+        # back-compat INPUT alias normalized into `area`.
+        #
+        # PRESENCE-GATE (SC-185 / m4), not raw truthiness: the gate keys on `grp is None`, NEVER on a
+        # `.strip()`/truthiness pre-check. A PRESENT (non-None) grouping label is routed through the
+        # type-guarded _valid_area UNCONDITIONALLY, so an empty-string / whitespace / non-string / reserved
+        # value REFUSES on every seam (identical to set-area) instead of being written verbatim -- the
+        # SC-185 differential the old raw-truthiness gate left open on persist/revise/replay. The alias is
+        # resolved ONLY when `area` is absent/None; an explicit empty/junk `area` refuses even when a valid
+        # `component` is present (reject-don't-repair -- borrowing the alias would reopen the differential
+        # one level over). Absent/None on BOTH keys stays LEFT UNTOUCHED (a legal un-annotated item; a
+        # description-only revise grandfathers a legacy value -- it is not re-supplied). Sits AFTER the
+        # non-dict guard above so it.get() only runs on a dict (m2).
         grp = it.get("area")
-        if not (isinstance(grp, str) and grp):
+        if grp is None:
             grp = it.get("component")
-        if isinstance(grp, str) and grp:
+        if grp is not None:
             it["area"] = _valid_area(grp)
     _check_identities(items, p)
     return items
@@ -682,6 +696,26 @@ def _nonempty_contract_str(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def has_blocking_assumption(item: dict) -> bool:
+    """Single-sourced recognizer: does this scope item carry >=1 dict assumption marked `blocking`?
+
+    The ONE contract invariant a generic vault write could break (ADR-067 §5: a candidate with no
+    blocking assumption SKIPS /risk-spike step-0, the pipeline's reality gate). Extracted from
+    _check_contract Phase-1's `blocking` test and consumed by THREE enforcement boundaries so they cannot
+    drift (BC-PROJ-6, slice-093 / [[ADR-118]]):
+      * _check_contract Phase-1 (the write-time crossing contract),
+      * vault_edit._cmd_update's kind=='ps' guard (the generic-update leg; lazy import, acyclic),
+      * _candidate_from (the irreversible MINT belt -- M-add-1, closing the harm for ALL routes).
+
+    isinstance-guarded on BOTH the list and each element, so a non-list `assumptions` or a non-dict entry
+    is decisively False (never a crash, never a silent pass). Semantics match _check_contract exactly:
+    `a.get('blocking')` truthiness with no default -- a blocking assumption must be EXPLICITLY marked."""
+    assumptions = item.get("assumptions")
+    if not isinstance(assumptions, list):
+        return False
+    return any(isinstance(a, dict) and a.get("blocking") for a in assumptions)
+
+
 def _check_contract(
     items: list[dict],
     *,
@@ -742,11 +776,16 @@ def _check_contract(
 
         iid = str(it.get("id") or "").strip()
         named = f"{_label(it)!r}" + (f" ({iid})" if iid else "")
+        # `assumptions` / `blocking` are the message-distinguishing locals ONLY (RPCD-1, slice-093/m2):
+        # the Phase-1 ENFORCEMENT decision routes through the single-sourced has_blocking_assumption so the
+        # three boundaries (this contract, the vault_edit ps guard, the _candidate_from mint belt) cannot
+        # drift; these locals stay to branch the refusal message (genuinely-empty vs none-blocking, both
+        # test-pinned) and to size the Phase-2 message. Same computation the predicate performs.
         assumptions = [a for a in it.get("assumptions") or [] if isinstance(a, dict)]
         blocking = [a for a in assumptions if a.get("blocking")]
 
         # Phase 1 — a BLOCKING assumption must EXIST. Never waived, on either verb.
-        if not blocking:
+        if not has_blocking_assumption(it):
             if not assumptions:
                 cause = ("carries `assumptions: []`")            # the genuinely-empty case
             else:
@@ -855,7 +894,28 @@ def _require_contract_field(item: dict, field: str) -> str:
 
 def _candidate_from(item: dict, sc_id: str, dep_sc: list[str], ts: str) -> dict:
     """The FULL candidate record (M-add-4), mirroring build_backlog._candidate_from field-for-field."""
-    blocking = [a for a in item.get("assumptions") or [] if a.get("blocking")]
+    # M-add-1 (slice-093 / [[ADR-118]]): the ADR-067 §5 harm is realized HERE, at the irreversible mint.
+    # cmd_materialize's WRITE path reads PERSISTED items and reaches this function WITHOUT re-running
+    # _check_contract, and _require_contract_field already belts 2 of the 3 Phase-1 invariants
+    # (user_visible_outcome, verification_plan below) -- the blocking assumption, the one most directly
+    # tied to a step-0 skip, was the omitted third. Re-check it via the SAME single-sourced predicate the
+    # write seams use, so an assumptionless item introduced by ANY route (the vault_edit update leg now
+    # closed, the out-of-scope `rewrite` verb, a hand-edit, a legacy pre-enforcement persist) cannot mint
+    # a step-0-skipping candidate. This is NOT over-tightening a legacy item (the false rationale ADR-115
+    # gave, corrected by ADR-118): _require_contract_field ALREADY refuses a Phase-1-incomplete item at
+    # this same boundary, so refusing the assumptionless one is the SAME contract, not a new hazard.
+    if not has_blocking_assumption(item):
+        raise _Refuse(
+            2, "usage",
+            f"materialize reached scope item {(item.get('id') or _label(item))!r} with no BLOCKING "
+            f"assumption -- minting it would put a candidate that SKIPS /risk-spike step-0 (ADR-067 "
+            f"section 5, the pipeline's reality gate) into an append-only, non-revocable backlog. The "
+            f"contract recognizer (_check_contract) should have refused it upstream; refusing to mint "
+            f"from an unrecognized item. Add a `blocking: true` assumption to the scope item and re-run.",
+        )
+    # m2: isinstance-guarded to match has_blocking_assumption exactly (was an unguarded count that would
+    # AttributeError on a non-dict raw assumption). Count-only, for the rationale string below.
+    blocking = [a for a in item.get("assumptions") or [] if isinstance(a, dict) and a.get("blocking")]
     return {
         "id": sc_id,
         "title": item["title"],
@@ -1265,6 +1325,123 @@ def cmd_persist(vault: Path, args) -> dict:
     }
 
 
+def _apply_items(vault: Path, data: dict, items_in: list[dict], *, cut_ids, reason, ts, where) -> dict:
+    """The SHARED in-lock core of `revise` and `add-item` (slice-102 / [[ADR-149]] d8).
+
+    BOUNDARY, PINNED EXACTLY (M9): it contains what `cmd_revise`'s mutate closure contained BEFORE the
+    extraction and NOTHING else --
+
+        _check_membership -> exempt -> _check_contract(prev_by_id=cur) -> _topo -> seed_max_for/next_id
+        -> the out_items projection -> the conditional revisions[] append
+
+    `_check_identities` / `_check_deps` deliberately STAY with each caller, because each already runs
+    them where its payload becomes knowable: `revise` PRE-lock (its payload arrives whole), `add-item`
+    IN-lock (its payload is COMPOSED from `cur`, so it does not exist until the lock is held). A raise
+    from either position leaves the target UNTOUCHED -- `safe_mutate_text` writes no temp and performs
+    no replace on an exception (`_vault_write.py:319-322`) -- so the refusal is byte-identical either
+    way, structurally rather than by re-writing identical bytes.
+
+    Mutates `data` in place and returns `{items, dropped, added}`. The caller `_dump`s.
+    """
+    cur = {str(i.get("id")): i for i in data.get("items") or [] if isinstance(i, dict)}
+
+    # THE AUTHORITATIVE GATES, against the IN-LOCK read (slice-073). Both were previously
+    # evaluated against the STALE pre-lock snapshot, or not at all:
+    #   _check_membership -- SC-160's omission gate + M-add-1's resurrection guard, bidirectional
+    #   _check_contract   -- relaxed (Phase 2 only) for items whose spike has ALREADY run
+    #                        (SC-161), keyed on the population this gate just verified
+    _check_membership(items_in, cur, cut_ids, where)
+
+    # THE EXEMPT SET keys on MATERIALIZED, not on minted-`id` presence (ADR-079 section 1). The
+    # design spike REJECTED the id-keyed rule by executing its exploit: an item can carry a
+    # minted id while never having been materialized (materialize REFUSES a provenance
+    # collision, and WITHHOLDS its dependents transitively), so id-presence would exempt an item
+    # /risk-spike step-0 could never have run on -- reopening the ADR-067 section 5 bypass.
+    # Exempt iff a candidate exists THROUGH WHICH step-0 could actually have run. The CALLER
+    # does the lookup; _check_contract performs none.
+    live = _load_json(vault / "candidates.json").get("candidates") or []
+    exempt = {ref for c in _observed(vault, [c for c in live if isinstance(c, dict)])
+              if (ref := owner_ref(c))} & set(cur)
+    # slice-076 / ADR-087 + M-add-1: pass the in-lock `cur` as `prev_by_id` so the two
+    # contract-completeness fields are validated on the EFFECTIVE value (item OR prev) the persist
+    # merge at :1328/:1331 will write -- the check and the write agree on the same value.
+    _check_contract(items_in, exempt_spiked=frozenset(exempt), prev_by_id=cur)
+
+    ordered = _topo(items_in, lambda it: str(it.get("id") or _label(it)))
+    key_to_ps: dict[str, str] = {}
+    seed = id_allocator.seed_max_for(vault, "ps", data)
+    for it in ordered:
+        iid = str(it["id"]) if it.get("id") else id_allocator.next_id(data, "ps", seed_max=seed)
+        key_to_ps[str(it.get("id") or _label(it))] = iid
+        key_to_ps.setdefault(_label(it), iid)
+
+    out_items = []
+    for it in ordered:
+        key = str(it.get("id") or _label(it))
+        ps = key_to_ps[key]
+        prev = cur.get(ps) or {}
+        out_items.append({
+            "id": ps,
+            "decomposition_label": _label(it) or prev.get("decomposition_label"),
+            "title": str(it["title"]).strip(),
+            "description": it.get("description") or prev.get("description") or it["title"],
+            "user_visible_outcome": it.get("user_visible_outcome") or prev.get("user_visible_outcome"),
+            # slice-084 (was slice-080/ADR-091): a revise can SET/UPDATE the product-AREA AND preserve a
+            # prior one; a prev-only round-trip never silently drops it. `component` accepted as a
+            # back-compat alias on BOTH the incoming item and any legacy prev.
+            "area": (it.get("area") or it.get("component")
+                     or prev.get("area") or prev.get("component")),
+            # slice-084 (C1b): set/update the code-component link, preserving a prior one on a
+            # link-less revise. Only a genuine list replaces; anything else falls back to prev.
+            "code_components": ([c for c in it["code_components"] if isinstance(c, str) and c.strip()]
+                                if isinstance(it.get("code_components"), list)
+                                else prev.get("code_components") or []),
+            "depends_on": [key_to_ps[d] for d in (it.get("depends_on") or []) if d in key_to_ps],
+            "assumptions": _normalize_assumptions(it),
+            "verification_plan": it.get("verification_plan") or prev.get("verification_plan"),
+        })
+
+    data["_schema"] = SCOPE_SCHEMA
+    data.setdefault("project", vault.name)
+    data["revised_at"] = ts
+    data["items"] = out_items
+
+    # ── the revisions[] ledger (slice-073 / ADR-078) ──────────────────────────────────────
+    # THE DEFECT, verbatim: `dropped` was computed here and thrown to STDOUT, so a deletion from
+    # the PRODUCT'S SCOPE OF RECORD left zero durable trace. A membership change is now written
+    # IN THE FILE, inside this same lock. Append-only: prior entries are never rewritten or
+    # truncated -- that is the defect's own lesson (create-only `persist` was mistaken for
+    # append-only HISTORY).
+    #
+    # `data["revisions"] = (data.get("revisions") or []) + [rec]`, never `setdefault`, and ONLY
+    # when the item set actually changed -- so a no-op / description-only revise never grows the
+    # key and the LIVE revisions-less file stays byte-identical apart from revised_at (AC5).
+    # An absent key is a legal, PERMANENT state meaning "empty history"; there is no migration.
+    #
+    # B1 (blocker) makes this ledger LOAD-BEARING beyond its audit value: `cut` retires a PS id,
+    # which falsifies id_allocator.seed_max_for('ps')'s previous premise that the live items[] IS
+    # the full history. revisions[].cut IS the retirement history the allocator's floor now scans
+    # (id_allocator.py:180-190) -- so this record is not documentation, it is the thing that
+    # stops a retired id being re-issued onto a shipped candidate.
+    kept_ids = {o["id"] for o in out_items}
+    dropped = [i for i in cur if i not in kept_ids]
+    added = [o["id"] for o in out_items if o["id"] not in cur]
+    if dropped or added:
+        data["revisions"] = (data.get("revisions") or []) + [{
+            "at": ts,
+            "cut": dropped,
+            "added": added,
+            # required iff `cut` (M3's taste call, ratified at TRI-1): an ADD is self-describing
+            # -- the item's own title/description IS the reason -- while a CUT destroys the only
+            # record of what was there. Null on an add-only revise.
+            "reason": reason,
+            "items_before": len(cur),
+            "items_after": len(out_items),
+        }]
+
+    return {"items": out_items, "dropped": dropped, "added": added}
+
+
 def cmd_revise(vault: Path, args) -> dict:
     """The scope-correction verb (C8) — explicit, user-gated, in-lock.
 
@@ -1332,104 +1509,12 @@ def cmd_revise(vault: Path, args) -> dict:
 
     def mutate(text: str) -> str:
         data = json.loads(text) if text.strip() else {}
-        cur = {str(i.get("id")): i for i in data.get("items") or [] if isinstance(i, dict)}
-
-        # THE AUTHORITATIVE GATES, against the IN-LOCK read (slice-073). Both were previously
-        # evaluated against the STALE pre-lock snapshot, or not at all:
-        #   _check_membership -- SC-160's omission gate + M-add-1's resurrection guard, bidirectional
-        #   _check_contract   -- relaxed (Phase 2 only) for items whose spike has ALREADY run
-        #                        (SC-161), keyed on the population this gate just verified
-        _check_membership(items_in, cur, cut_ids, args.items_file)
-
-        # THE EXEMPT SET keys on MATERIALIZED, not on minted-`id` presence (ADR-079 section 1). The
-        # design spike REJECTED the id-keyed rule by executing its exploit: an item can carry a
-        # minted id while never having been materialized (materialize REFUSES a provenance
-        # collision, and WITHHOLDS its dependents transitively), so id-presence would exempt an item
-        # /risk-spike step-0 could never have run on -- reopening the ADR-067 section 5 bypass.
-        # Exempt iff a candidate exists THROUGH WHICH step-0 could actually have run. The CALLER
-        # does the lookup; _check_contract performs none.
-        live = _load_json(vault / "candidates.json").get("candidates") or []
-        exempt = {ref for c in _observed(vault, [c for c in live if isinstance(c, dict)])
-                  if (ref := owner_ref(c))} & set(cur)
-        # slice-076 / ADR-087 + M-add-1: pass the in-lock `cur` as `prev_by_id` so the two
-        # contract-completeness fields are validated on the EFFECTIVE value (item OR prev) the persist
-        # merge at :1328/:1331 will write -- the check and the write agree on the same value.
-        _check_contract(items_in, exempt_spiked=frozenset(exempt), prev_by_id=cur)
-
-        ordered = _topo(items_in, lambda it: str(it.get("id") or _label(it)))
-        key_to_ps: dict[str, str] = {}
-        seed = id_allocator.seed_max_for(vault, "ps", data)
-        for it in ordered:
-            iid = str(it["id"]) if it.get("id") else id_allocator.next_id(data, "ps", seed_max=seed)
-            key_to_ps[str(it.get("id") or _label(it))] = iid
-            key_to_ps.setdefault(_label(it), iid)
-
-        out_items = []
-        for it in ordered:
-            key = str(it.get("id") or _label(it))
-            ps = key_to_ps[key]
-            prev = cur.get(ps) or {}
-            out_items.append({
-                "id": ps,
-                "decomposition_label": _label(it) or prev.get("decomposition_label"),
-                "title": str(it["title"]).strip(),
-                "description": it.get("description") or prev.get("description") or it["title"],
-                "user_visible_outcome": it.get("user_visible_outcome") or prev.get("user_visible_outcome"),
-                # slice-084 (was slice-080/ADR-091): a revise can SET/UPDATE the product-AREA AND preserve a
-                # prior one; a prev-only round-trip never silently drops it. `component` accepted as a
-                # back-compat alias on BOTH the incoming item and any legacy prev.
-                "area": (it.get("area") or it.get("component")
-                         or prev.get("area") or prev.get("component")),
-                # slice-084 (C1b): set/update the code-component link, preserving a prior one on a
-                # link-less revise. Only a genuine list replaces; anything else falls back to prev.
-                "code_components": ([c for c in it["code_components"] if isinstance(c, str) and c.strip()]
-                                    if isinstance(it.get("code_components"), list)
-                                    else prev.get("code_components") or []),
-                "depends_on": [key_to_ps[d] for d in (it.get("depends_on") or []) if d in key_to_ps],
-                "assumptions": _normalize_assumptions(it),
-                "verification_plan": it.get("verification_plan") or prev.get("verification_plan"),
-            })
-
-        data["_schema"] = SCOPE_SCHEMA
-        data.setdefault("project", vault.name)
-        data["revised_at"] = ts
-        data["items"] = out_items
-
-        # ── the revisions[] ledger (slice-073 / ADR-078) ──────────────────────────────────────
-        # THE DEFECT, verbatim: `dropped` was computed here and thrown to STDOUT, so a deletion from
-        # the PRODUCT'S SCOPE OF RECORD left zero durable trace. A membership change is now written
-        # IN THE FILE, inside this same lock. Append-only: prior entries are never rewritten or
-        # truncated -- that is the defect's own lesson (create-only `persist` was mistaken for
-        # append-only HISTORY).
-        #
-        # `data["revisions"] = (data.get("revisions") or []) + [rec]`, never `setdefault`, and ONLY
-        # when the item set actually changed -- so a no-op / description-only revise never grows the
-        # key and the LIVE revisions-less file stays byte-identical apart from revised_at (AC5).
-        # An absent key is a legal, PERMANENT state meaning "empty history"; there is no migration.
-        #
-        # B1 (blocker) makes this ledger LOAD-BEARING beyond its audit value: `cut` retires a PS id,
-        # which falsifies id_allocator.seed_max_for('ps')'s previous premise that the live items[] IS
-        # the full history. revisions[].cut IS the retirement history the allocator's floor now scans
-        # (id_allocator.py:180-190) -- so this record is not documentation, it is the thing that
-        # stops a retired id being re-issued onto a shipped candidate.
-        kept_ids = {o["id"] for o in out_items}
-        dropped = [i for i in cur if i not in kept_ids]
-        added = [o["id"] for o in out_items if o["id"] not in cur]
-        if dropped or added:
-            data["revisions"] = (data.get("revisions") or []) + [{
-                "at": ts,
-                "cut": dropped,
-                "added": added,
-                # required iff `cut` (M3's taste call, ratified at TRI-1): an ADD is self-describing
-                # -- the item's own title/description IS the reason -- while a CUT destroys the only
-                # record of what was there. Null on an add-only revise.
-                "reason": reason,
-                "items_before": len(cur),
-                "items_after": len(out_items),
-            }]
-
-        holder["items"] = out_items
-        holder["dropped"] = dropped
+        # slice-102 / [[ADR-149]] d8: the whole in-lock core is now SHARED with `add-item`, so one gate
+        # ORDER, one projection and one allocator call serve both verbs and cannot drift apart.
+        applied = _apply_items(vault, data, items_in, cut_ids=cut_ids, reason=reason, ts=ts,
+                               where=args.items_file)
+        holder["items"] = applied["items"]
+        holder["dropped"] = applied["dropped"]
         return _dump(data)
 
     safe_mutate_text(vault / SCOPE_FILE, mutate)
@@ -1451,6 +1536,175 @@ def cmd_revise(vault: Path, args) -> dict:
         "dropped": holder["dropped"],   # retained: the pre-slice-073 key, for any existing consumer
         "materialize": mat,
     }
+
+
+def _add_item_pre_mint_gates(vault: Path, data: dict, new: dict, ack: set, where) -> list[dict]:
+    """Everything that must hold BEFORE the id allocator runs. Raises `_Refuse`; returns the composed list.
+
+    THE POINT OF THIS FUNCTION (slice-102 / [[ADR-145]] d5). `safe_mutate_text` leaves the target
+    UNTOUCHED on a raise and the allocator mutates only the in-closure `data`, so every refusal reachable
+    from here costs **ZERO PS ids**. That is what converts must-not-defer #2 from recoverability into
+    STRUCTURE: a PS mint is not reversible (`revise --cut` retires the id but leaves its materialized
+    candidate untouched, and this module's own note records that the owner-deletion cascade "is not even
+    expressible"), so verify-AFTER could only ever have reported the damage.
+
+    The payload is COMPOSED IN-LOCK from the same `cur` that is written, so `_check_membership`'s four
+    properties hold BY CONSTRUCTION and the read-then-compose-then-write TOCTOU is unrepresentable.
+    """
+    cur_items = [dict(i) for i in (data.get("items") or []) if isinstance(i, dict)]
+    composed = cur_items + [new]
+    _check_identities(composed, where)      # a new label aliasing an existing one must STOP
+    _check_deps(composed, where)            # CR3; IN-LOCK here because `composed` needs `cur`
+
+    live = _load_json(vault / "candidates.json").get("candidates") or []
+    plan = _plan(composed, _observed(vault, [c for c in live if isinstance(c, dict)]), ack)
+    key = _label(new)
+
+    if plan["refused"]:
+        r = plan["refused"][0]
+        raise _Refuse(
+            2, "usage",
+            f"add-item refused BEFORE minting any id -- {r['reason']} (Nothing was written; "
+            f"counters.ps is unchanged.)")
+    if plan["withheld"]:
+        w = plan["withheld"][0]
+        raise _Refuse(
+            2, "usage",
+            f"add-item refused BEFORE minting any id: {w['item']} would be withheld behind the "
+            f"unresolved dependency {w['unresolved_dependency']} (root cause {w['root_cause']}). A "
+            f"partially-minted DAG whose dependency maps to no candidate is SILENTLY dropped at the "
+            f"pick surface, which is the quieter failure. Nothing was written.")
+
+    # MINTS ONLY ITS OWN CHILD ([[ADR-149]] d5). `_plan`'s no-children fall-through would ALSO mint
+    # candidates for pre-existing capabilities that never got one -- turning "add one capability" into
+    # a bulk materialize the user never asked for, against an append-only backlog. "Exactly one" is a
+    # property of the VERB here, not of the call context.
+    would_mint = sorted((it.get("id") or _label(it)) for it in plan["to_mint"])
+    foreign = sorted(set(would_mint) - {key})
+    if foreign:
+        # The refusal NAMES every would-be mint, not only the foreign ones, because that list IS the
+        # preview the user needs in order to decide. It fires identically under --dry-run, so the
+        # preview stays PREDICTIVE: a preview that exited 0 where the real run exits 2 would be worse
+        # than no preview at all -- the driver branches on that exit code.
+        raise _Refuse(
+            2, "usage",
+            f"add-item would mint {len(would_mint)} candidate(s) ({', '.join(would_mint)}), not one: "
+            f"{', '.join(foreign)} are PRE-EXISTING capabilities that never got a candidate. This verb "
+            f"adds ONE capability and mints ONE child; bulk-minting a backlog nobody asked for, into an "
+            f"append-only file with no un-mint, is not a side effect it may have. Run "
+            f"`product_scope materialize` first (it is idempotent and exists for exactly this), then "
+            f"re-run add-item. Nothing was written.")
+    return composed
+
+
+def cmd_add_item(vault: Path, args) -> dict:
+    """Add ONE new capability to an already-persisted scope, and materialize its ONE candidate.
+
+    WHY A VERB AND NOT A WRAPPER ([[ADR-145]], superseding ADR-141). `persist` is create-only and
+    `revise` is a whole-list replace, so an EXHAUSTED scope -- the steady state of every project past
+    its initial capability list, because the decomposition is a ONCE-act by design -- had no incremental
+    door at all. The design's first answer was a `skills/slice/scripts/scope_append.py` wrapper; six
+    review findings turned out to be consequences of that ONE placement, and they DISSOLVED when the
+    write collapsed into the module that already owns the lock, the allocator and the mint.
+
+    DRIVEN BY `/slice-candidates --add-item`, NEVER BY `/slice` ([[ADR-152]], superseding ADR-150).
+    `/slice` ROUTES: it renders the completion headline and names the skill, and invokes no mutating
+    verb in any form -- which is what lets the ADR-067 section-1 read-only guard stay a PLAIN
+    unconditional ban rather than growing a bespoke parser. The receiving skill elicits, previews with
+    `--dry-run`, BRANCHES on the preview's exit code, confirms, then mints.
+
+    Exit contract: `product_scope`'s SHIPPED table, reused verbatim -- 0 ok | 1 malformed | 2
+    usage/refusal | 4 no-scope. No new codes, no exit 5, no read-back-mismatch code.
+    """
+    _scope(vault, required=True)                 # exit 4 `no-scope` -- which is exactly why the gate's
+                                                 # `scope-absent` verdict routes to /discover, not here
+    items_in = _load_items(args.item_file)       # single-sourced _valid_area + non-dict + identities
+    if len(items_in) != 1:
+        raise _Refuse(
+            2, "usage",
+            f"add-item takes exactly ONE item; {args.item_file} carries {len(items_in)}. One halt adds "
+            f"one capability -- filling a page at a time is deliberate, because a bulk re-decomposition "
+            f"re-mints ~78% duplicate sludge. Use `revise --items-file` for a whole-list correction.")
+    new = items_in[0]
+    if new.get("id") is not None:
+        raise _Refuse(
+            2, "usage",
+            f"the item carries id {new['id']!r}. identity is minted by the receiver, in-lock -- the "
+            f"model may reuse an id the vault gave it (that is `revise`), never supply one for a NEW "
+            f"capability. Omit `id` and re-run.")
+    if getattr(args, "area", None) is not None:
+        # `--area` stays on the CLI for other callers; the SKILL route carries the elicited area in the
+        # ITEM FILE instead ([[ADR-152]] d6), because `_load_items` is what runs the single-sourced
+        # `_valid_area` gate on this FOURTH write seam.
+        new["area"] = _valid_area(args.area)
+
+    ts = _now()
+    ack = set(getattr(args, "acknowledge", None) or [])
+    label = _label(new)
+
+    if args.dry_run:
+        # --dry-run IS the preview, and it is PREDICTIVE because it is the SAME code path: the same
+        # gates, the same `_plan`, the same allocator -- run against an in-memory COPY that is never
+        # written. It previews BOTH files ([[ADR-149]] d4): `would_add` (the PS) alongside `would_mint`
+        # (the SC), so the confirmation renders every record that would be created.
+        data = copy.deepcopy(_load_json(vault / SCOPE_FILE))
+        composed = _add_item_pre_mint_gates(vault, data, new, ack, args.item_file)
+        applied = _apply_items(vault, data, composed, cut_ids=[], reason=None, ts=ts,
+                               where=args.item_file)
+        mat = _materialize(vault, applied["items"], dry_run=True,
+                           acknowledge=ack | set(applied["added"]), ts=ts)
+        return {"action": "add-item", "status": "ok", "dry_run": True,
+                "would_add": applied["added"], "materialize": mat}
+
+    holder: dict = {}
+
+    def mutate(text: str) -> str:
+        data = json.loads(text) if text.strip() else {}
+        composed = _add_item_pre_mint_gates(vault, data, new, ack, args.item_file)
+        applied = _apply_items(vault, data, composed, cut_ids=[], reason=None, ts=ts,
+                               where=args.item_file)
+        holder.update(applied)
+        return _dump(data)
+
+    safe_mutate_text(vault / SCOPE_FILE, mutate)
+    added = holder["added"]
+    if len(added) != 1:                          # belt: _apply_items minted something unexpected
+        raise _Refuse(1, "malformed",
+                      f"add-item minted {added!r} instead of exactly one scope id -- refusing to "
+                      f"materialize from an unrecognized result.")
+    ps_id = added[0]
+
+    # THE DESIGN-SPIKE CONSTRAINT, carried verbatim (spike-add-item-refuse-before-mint). `_plan`'s
+    # acknowledge key is `it.get('id') or _label(it)` -- the LABEL in the in-lock pre-check (no id
+    # exists yet) and the PS ID at materialize (the item now carries one). Passing only the label
+    # leaves the item REFUSED at materialize, producing a minted PS with NO candidate on an ordinary
+    # acknowledged add. Proven fix: pass BOTH.
+    ack_out = set(ack)
+    if label in ack_out:
+        ack_out.add(ps_id)
+    mat = _materialize(vault, holder["items"], dry_run=False, acknowledge=ack_out, ts=ts)
+
+    # STATUS IS DERIVED FROM THE MINT, NEVER ASSERTED ([[ADR-149]] d1). Asserting `ok` because the
+    # scope write succeeded is exactly how a minted PS with no child gets reported as success -- the
+    # spike's own first pass did that. The derivation keys on the CHILD.
+    if mat["would_mint"] != [ps_id] or len(mat["minted"]) != 1:
+        remedy = ""
+        if mat["refused"]:
+            remedy = mat["refused"][0].get("reason") or ""
+        elif mat["withheld"]:
+            w = mat["withheld"][0]
+            remedy = (f"{w['item']} was withheld behind {w['unresolved_dependency']} "
+                      f"(root cause {w['root_cause']})")
+        raise _Refuse(
+            2, "partial",
+            f"{ps_id} WAS added to the product's scope, but its candidate was NOT minted -- this vault "
+            f"is now half-applied. {remedy or mat['reason']} REMEDY: re-run "
+            f"`product_scope materialize --acknowledge {ps_id}` once the cause above is resolved; the "
+            f"capability itself is already persisted and must not be added again.")
+
+    return {"action": "add-item", "status": "ok", "dry_run": False,
+            "added": ps_id, "item": next(i for i in holder["items"] if i["id"] == ps_id),
+            "materialize": mat}
 
 
 def cmd_materialize(vault: Path, args) -> dict:
@@ -1659,15 +1913,22 @@ def _valid_area(name: str) -> str:
     Called by set-area (and its set-component alias) AND (via _load_items) by persist / revise / the
     --scope-file replay, so the _Refuse message stays verb-neutral.
 
-    Two rejects, and only two (the field stays OPTIONAL — absent/None is a legal un-annotated item, set
-    only by persist/revise, never by this verb):
+    Three rejects (the field stays OPTIONAL — absent/None is a legal un-annotated item, handled by the
+    caller BEFORE reaching here; this recognizer decides only a PRESENT value):
+      * non-string                -> SC-185 / [[ADR-118]]: the type-guard fires BEFORE `.strip()`, so a
+        non-string (int/list/object) refuses cleanly instead of crashing with AttributeError (the old
+        `(name or '').strip()` raised on a non-empty non-string). Totality: decisive for EVERY value.
       * empty / whitespace-only  -> an area name must be a real label
       * the reserved sentinel     -> casefold-match of UNASSIGNED. 'unassigned' is a RESIDUAL the rollup
         buckets un-annotated capabilities into (a suspense account you never post INTO); writing it would
         merge a genuinely-annotated capability with the truly-unassigned. Compared against
         UNASSIGNED.casefold() (m1), never a re-hardcoded literal, so the sentinel stays single-sourced.
     """
-    s = (name or "").strip()
+    if not isinstance(name, str):
+        raise _Refuse(2, "usage",
+                      f"area must be a string; got {type(name).__name__}. An area name is a single "
+                      f"scalar label. To leave a capability un-annotated, simply do not annotate it.")
+    s = name.strip()
     if not s:
         raise _Refuse(2, "usage",
                       "area must be a non-empty name (an empty/whitespace value is not an area). "
@@ -1838,6 +2099,28 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="why the --cut item(s) are being removed. REQUIRED with --cut (an added "
                         "item is self-describing; a cut destroys the only record of what was there).")
 
+    # slice-102 / SC-232 ([[ADR-145]]/[[ADR-149]] d6). `parents=[common]` is MANDATORY -- it is what
+    # gives the verb `--vault`, the flag that prevents the RECORDED slice-081 accident where a producer
+    # smoke without it wrote to the real shared vault. `--acknowledge` mirrors its `materialize` sibling
+    # field-for-field, but takes the elicited LABEL: that is what `_plan` keys on in the pre-mint check,
+    # where no PS id exists yet.
+    ai = sub.add_parser("add-item", parents=[common],
+                        help="add ONE new capability to an already-persisted scope and materialize "
+                             "its ONE candidate (the incremental door persist/revise never opened)")
+    ai.add_argument("--item-file", required=True, dest="item_file",
+                    help="a ONE-item payload: {items:[{label,title,description,user_visible_outcome,"
+                         "area?,depends_on?,assumptions,verification_plan}]} -- NO id (identity is "
+                         "minted in-lock by the receiver)")
+    ai.add_argument("--area", default=None, metavar="NAME",
+                    help="OPTIONAL product-area for the new capability. Prefer carrying `area` IN THE "
+                         "ITEM FILE -- that channel runs the single-sourced _valid_area gate.")
+    ai.add_argument("--dry-run", action="store_true", dest="dry_run",
+                    help="the PREVIEW: same gates, same _plan, same allocator, against an in-memory "
+                         "copy. Writes nothing, mints nothing, and previews BOTH files.")
+    ai.add_argument("--acknowledge", action="append", default=[], metavar="LABEL",
+                    help="override the provenance-integrity refusal for this item (repeatable). Takes "
+                         "the item's LABEL -- the key _plan uses before an id exists.")
+
     sub.add_parser("census", parents=[common],
                    help="classify live u archive into PRODUCT / EXHAUST / HUMAN / unclassified")
 
@@ -1869,6 +2152,7 @@ _DISPATCH = {
     "persist": cmd_persist,
     "materialize": cmd_materialize,
     "revise": cmd_revise,
+    "add-item": cmd_add_item,        # slice-102 / SC-232: the incremental single-capability door
     "census": cmd_census,
     "done": cmd_done,
     "set-area": cmd_set_area,
@@ -1920,6 +2204,20 @@ def _text(out: dict) -> str:
         prev = out.get("previous")
         was = f" (was {prev!r})" if prev else " (was unassigned)"
         return f"set-area: {out['item']} -> area {out['area']!r}{was}."
+    if a == "add-item":
+        m = out["materialize"]
+        if out["dry_run"]:
+            # NOT `m['reason']` here: on a dry run that string reads "minted 0: ...", which describes a
+            # preview as a failed mint (code-review m4). The SC id is deliberately NOT predicted --
+            # `would_mint` carries PS ids, because candidate identity is minted by the receiver inside
+            # the candidates.json lock and does not exist until the real run.
+            return (f"add-item (DRY RUN -- nothing written): would add "
+                    f"{', '.join(out['would_add'])} to the product's scope and mint ONE candidate for "
+                    f"{', '.join(m['would_mint']) or 'nothing'} (its SC id is allocated in-lock by the "
+                    f"real run and is not predicted here).\n"
+                    f"  Re-run WITHOUT --dry-run to apply.")
+        return (f"add-item: {out['added']} {out['item']['title']!r} added to the product's scope; "
+                f"minted {', '.join(m['minted'])}.\n  {m['reason']}")
     if a in ("persist", "revise"):
         m = out["materialize"]
         return (f"{a}: {out.get('persisted', out.get('items'))} scope item(s) persisted "

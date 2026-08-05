@@ -1,0 +1,46 @@
+{
+  "_schema": "aisdlc/slice-candidates@1",
+  "project": "expenses",
+  "updated": "2026-03-02T10:00:00Z",
+  "candidates": [
+    {
+      "id": "SC-010",
+      "title": "pin-the-ci-runner-image",
+      "status": "candidate",
+      "progress": "not-started",
+      "slice": null,
+      "claimed_by": null,
+      "started_at": null,
+      "source": [
+        {
+          "type": "reflection-residue",
+          "ref": "slice-004"
+        }
+      ],
+      "description": "The CI job floats on ubuntu-latest; pin it so a runner bump cannot turn the suite red overnight.",
+      "rationale": "Pipeline exhaust: real, small, and NOT the product.",
+      "user_visible_outcome": "Nothing a user sees; the build stops breaking for reasons nobody chose.",
+      "dependencies": [],
+      "priority": {
+        "score": 6,
+        "severity": "medium",
+        "effort": "XS",
+        "blast_radius": ".github/workflows"
+      },
+      "assumptions": [],
+      "verification_plan": "Re-run CI on the pinned image and confirm the suite is green.",
+      "history": [
+        {
+          "event": "created",
+          "by": "reflect",
+          "at": "2026-03-01T09:00:00Z",
+          "ref": "slice-004"
+        }
+      ]
+    }
+  ],
+  "pick_log": [],
+  "counters": {
+    "sc": 10
+  }
+}

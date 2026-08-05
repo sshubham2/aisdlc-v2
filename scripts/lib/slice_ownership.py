@@ -199,8 +199,9 @@ def _refusal_message(slice_id: str, owner: dict, caller: str, reason: str) -> st
             f"  If you are an AGENT: STOP and report the owner to the user. Do NOT set the override\n"
             f"  yourself. If you are the OPERATOR and you mean to proceed anyway, re-run with:\n"
             f"      {OVERRIDE_ENV}={slice_id} <re-run the exact command that was refused>\n"
-            f"  To take the slice over permanently, ask the owner to release it (a first-class\n"
-            f"  transfer verb does not exist yet -- it is a filed follow-up).")
+            f"  To take the slice over permanently (no override needed), record it with the logged,\n"
+            f"  append-only transfer verb:\n"
+            f"      claim_candidate.py transfer --slice {slice_id} --to \"<Name> <email>\"")
     return line
 
 

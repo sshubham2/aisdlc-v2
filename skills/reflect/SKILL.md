@@ -135,6 +135,13 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/vault_edit.py" append --file candidat
 rm -rf "$T"
 ```
 
+The item body MAY carry an optional `area` (slice-098 / [[ADR-125]]) when the residue plainly belongs to a known
+product area — a candidate's own area is what makes it reachable by the `/slice --area` lens. It is **validated at
+the mint leg**: an empty/whitespace/non-string value, the reserved `unassigned` sentinel, or a `component` key
+(candidates carry `area`, never `component`) is **REFUSED at exit 2** with `candidates.json` byte-identical, and a
+LIST payload is validated **element by element**. Omitting `area` entirely is the norm and always legal — annotate
+later through the seam in `/slice-candidates` (product-6) rather than guessing here.
+
 ---
 
 ## Step 3 — Critic calibration (TRI-1)
@@ -150,7 +157,7 @@ For every finding in `critique.json`, score its outcome using build/validate evi
 | `MISSED` | Surfaced during build/validate, absent from Critic findings entirely |
 
 Pattern observations feed `/critic-calibrate` every 10–20 slices. **Record the verdicts STRUCTURED, not just
-prose**: write a `calibration[]` array into `reflection.json` (Step 4) — one `{"finding": "<id>", "verdict":
+prose**: write a `critic_calibration` array into `reflection.json` (Step 4) — one `{"finding": "<id>", "verdict":
 "<VALIDATED|FALSE-ALARM|OVERRIDE-MISJUDGED|NOT-YET|MISSED>", "note": "<one line>"}` row per scored finding — so
 `/critic-calibrate` counts them without text-mining reflection prose (its 1h user-override signal reads exactly
 these rows).
@@ -180,7 +187,20 @@ $PY "${CLAUDE_SKILL_DIR}/../../scripts/lib/gate_log.py" --kind miss \
 ## Step 4 — Write reflection.json
 
 Write `<vault>/slices/slice-NNN/reflection.json` (schema: `examples/reflection.json`), including the Step-3
-structured `calibration[]` rows when the Critic ran (omit the array when the Critic was skipped).
+structured rows under the canonical key `critic_calibration` when the Critic ran — and an explicit empty
+array when the Critic was skipped. **Never omit the key**: it is REQUIRED, so an absent one is a lint
+violation, and a prose paragraph in its place is one too (ADR-135 / ADR-139).
+
+Optionally record misses the Critic never raised under `missed_by_critic` — the published, OPTIONAL
+structured home for the Step-3b `MISSED` findings, one `{"id", "gate", "severity", "caught_by", "note"}`
+row each. Omitting it entirely is normal and always legal.
+
+> **[aisdlc:reflection-calibration-canonical-key -- doc-guarded: the two instructions above (Step 3's
+> "record the verdicts STRUCTURED" sentence and Step 4's) must name the calibration rows' home by the ONE
+> canonical key published in `schemas/artifact-examples.json`, and must never spell it with a bracketed
+> array suffix — that suffix re-creates the very token this guard exists to keep out of the prose. The
+> AC1 grep and the doc-guard test in `tests/bugs/test_reflection_calibration_key_drift.py` both key on
+> it (slice-101/SC-227). ]**
 
 ---
 

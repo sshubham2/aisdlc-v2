@@ -352,13 +352,26 @@ rc=$?; if [ "$rc" -ne 0 ] || [ -z "$wt" ]; then echo "HALT: worktree path unreso
 $PY "${CLAUDE_SKILL_DIR}/scripts/shippability_runner.py" <vault>/shippability.json --session-timeout 1800
 ```
 
-> **Harness budget.** The Bash tool's own ceiling is **600s** (default 120s) —
-> BELOW the runner's 1800s bound, so a long catalog dies at the TOOL layer before the runner's timeout /
-> serial-fallback ladder can produce verdicts. Run this
-> command with an explicit tool `timeout: 600000`. If the catalog legitimately needs longer than 10 minutes,
-> run it with `run_in_background` (the harness notifies on completion — do not poll) or chunk the catalog
-> (`--no-merge` + row subsets); never let the tool default kill it mid-run and read the absence of output
-> as a verdict.
+> **Harness budget -- [aisdlc:catalog-fork-synchronous -- doc-guarded: a `context: fork` run MUST execute the
+> shippability catalog SYNCHRONOUSLY (inline / awaited, as a foreground Bash call) and write validation.json
+> BEFORE it returns; it MUST NEVER launch the catalog with `run_in_background` and return -- a forked context
+> ends its lifetime on return, orphaning the background task, so its verdict is dropped and validation.json is
+> left unwritten on the first pass (SC-186 / slice-083). No `run_in_background` for the forked catalog run,
+> ever.].** Run the runner as a foreground Bash call with an explicit tool `timeout: 600000`. The Bash tool's
+> own ceiling is **600s** (default 120s) -- BELOW the runner's 1800s bound. slice-064/ADR-061 merged the
+> catalog into ONE fast pytest session (fixtures boot once), so a realistic catalog finishes in seconds, well
+> under 600s, and its verdict write is **deterministic** for that (<=600s) case.
+>
+> There is no flag to run a partial catalog (`shippability_runner.py` argparse exposes only
+> `catalog`/`--timeout`/`--session-timeout`/`--no-merge`/`--repo-root`/`--json` -- no row-selection option, and
+> `--no-merge` alone runs *slower*, not shorter), and `--session-timeout 1800` is pinned above (> the 600s
+> ceiling), so a genuinely >600s catalog cannot self-terminate under the tool ceiling: the Bash tool
+> HARD-KILLS it at 600s with no output and no catchable exception. For that branch follow this EXPLICIT
+> instruction -- **on a killed / no-output catalog run, write `validation.json` with `result: 'fail'`** (a
+> valid enum value; NEVER `result: 'blocked'`), surface a blocked message to the main thread, and **never
+> advance**; never read the absence of output as a verdict. This >600s verdict is best-effort LLM-mediated
+> (the fork must notice the silent tool-kill); the honest remedy is keeping the merged session fast (ADR-061).
+> See ADR-117.
 
 The runner reads each row's Machine-cmd, splits on ` ; `, strips backticks per segment (reuses SCMD-1
 `_segments()`), and reports a three-valued verdict per row — **PASS / FAIL / ABSENT** (SC-021 / ADR-021).

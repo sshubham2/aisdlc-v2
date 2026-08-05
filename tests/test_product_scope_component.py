@@ -378,11 +378,12 @@ def test_sc182_revise_rejects_reserved_component_every_write_seam(run_script, pv
     assert _scope_items(pvault)[a_id].get("area") in (None, ""), "the reserved name must never persist"
 
 
-def test_sc182_m2_revise_rejects_whitespace_only_component_locks_raw_truthy(run_script, pvault, tmp_path):
-    """M2: the write-seam gate keys on RAW truthiness (isinstance-str + value, NOT value.strip()). A
-    whitespace-only area is truthy -> routed to _valid_area -> stripped to '' -> rejected (exit 2). This
-    LOCKS the raw-truthy semantics: a future .strip()-based gate would skip validation and silently
-    persist '   ' -- and this test would go red (slice-076 precedent)."""
+def test_sc182_m2_revise_rejects_whitespace_only_area_presence_gate(run_script, pvault, tmp_path):
+    """slice-093 / m4: the write-seam gate keys on PRESENCE (`grp is None`), not raw truthiness. A
+    whitespace-only area is PRESENT (not None) -> routed to _valid_area -> stripped to '' -> rejected
+    (exit 2). This LOCKS the present-but-empty/whitespace refusal: the gate must NEVER pre-check with a
+    `grp and grp.strip()` truthiness test, which would let '   ' (or '') fall through to the `component`
+    alias and silently borrow it -- reopening the very differential SC-185 exists to close."""
     items = {"items": [
         {"label": "a", "title": "build-a", "description": "a", "user_visible_outcome": "a",
          "depends_on": [], "assumptions": _assump(), "verification_plan": "x"},
@@ -423,3 +424,123 @@ def test_sc182_persist_and_revise_strip_a_supplied_component(run_script, pvault,
     assert _persist(run_script, pvault, items, tmp_path).returncode == 0
     it = next(iter(_scope_items(pvault).values()))
     assert it.get("area") == "payments", "a supplied area must persist stripped (check == write)"
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# slice-093 / SC-185 + SC-170 / [[ADR-118]] — complete the product-scope write-seam mediation.
+#
+# SC-185 (area parity): _load_items keys the grouping-label gate on PRESENCE (`grp is None`), NOT raw
+# truthiness, so an empty-string / non-string `area` (or its `component` INPUT alias) is routed through
+# the type-guarded _valid_area on EVERY write/preview seam (persist / revise / --scope-file replay),
+# identically to set-area — no seam stricter than another (AC1 + m1 alias + m3 replay).
+# M-add-1 (AC3, all routes): the MINT boundary (_candidate_from) re-checks has_blocking_assumption, so an
+# assumptionless item introduced by ANY route cannot mint a step-0-skipping candidate (ADR-067 §5).
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+
+def _valid_item(**over):
+    it = {"label": "a", "title": "build-a", "description": "a", "user_visible_outcome": "a",
+          "depends_on": [], "assumptions": _assump(), "verification_plan": "x"}
+    it.update(over)
+    return it
+
+
+def test_sc185_persist_rejects_empty_area(run_script, pvault, tmp_path):
+    """AC1: a PRESENT empty-string area refuses at persist (exit 2) via the presence-gate + _valid_area
+    (it was silently persisted verbatim under the old raw-truthiness gate). A pre-lock reject leaves
+    product-scope.json byte-ABSENT."""
+    r = _persist(run_script, pvault, {"items": [_valid_item(area="")]}, tmp_path)
+    assert r.returncode == 2, f"empty area must refuse at persist, got {r.returncode}: {r.stderr}"
+    assert not (pvault / "product-scope.json").exists(), "a pre-lock reject leaves scope byte-ABSENT"
+
+
+def test_sc185_persist_rejects_nonstring_area(run_script, pvault, tmp_path):
+    """AC1: a NON-STRING area (int / list / object) refuses at persist (exit 2) — the _valid_area type
+    guard fires BEFORE .strip() (was an AttributeError crash on a non-empty non-string, or a silent
+    verbatim write, before)."""
+    for bad in (5, [], {"x": 1}):
+        r = _persist(run_script, pvault, {"items": [_valid_item(area=bad)]}, tmp_path)
+        assert r.returncode == 2, f"non-string area {bad!r} must refuse, got {r.returncode}: {r.stderr}"
+        assert not (pvault / "product-scope.json").exists(), f"reject on {bad!r} must leave scope absent"
+
+
+def test_sc185_persist_rejects_empty_component_alias(run_script, pvault, tmp_path):
+    """AC1 / m1: the `component` INPUT alias is mediated identically — an empty component (area absent)
+    refuses (exit 2), not silently persisted. `area` is canonical; `component` is the back-compat alias,
+    resolved only when area is None, and it goes through the SAME recognizer."""
+    r = _persist(run_script, pvault, {"items": [_valid_item(component="")]}, tmp_path)
+    assert r.returncode == 2, f"empty component alias must refuse, got {r.returncode}: {r.stderr}"
+
+
+def test_sc185_persist_rejects_empty_area_even_with_valid_component(run_script, pvault, tmp_path):
+    """AC1 reject-don't-repair: a PRESENT empty area refuses EVEN WHEN a valid `component` alias is
+    present. The presence-gate keys on `area is None`, so an explicit '' does NOT silently borrow the
+    alias (which would reopen the differential one level over)."""
+    r = _persist(run_script, pvault, {"items": [_valid_item(area="", component="payments")]}, tmp_path)
+    assert r.returncode == 2, f"empty area must refuse despite a valid alias, got {r.returncode}: {r.stderr}"
+
+
+def test_sc185_revise_rejects_empty_and_nonstring_area(run_script, pvault, tmp_path):
+    """AC1 parity at the revise seam: a SUPPLIED empty-string AND non-string area both refuse (exit 2),
+    identical to persist / set-area — no seam stricter than another."""
+    assert _persist(run_script, pvault, {"items": [_valid_item()]}, tmp_path).returncode == 0
+    a_id = next(iter(_scope_items(pvault)))
+    for bad in ("", 5):
+        rev = {"items": [{"id": a_id, "title": "build-a", "area": bad,
+                          "assumptions": _assump(), "verification_plan": "x"}]}
+        r = _revise(run_script, pvault, rev, tmp_path, "rev.json")
+        assert r.returncode == 2, f"revise area={bad!r} must refuse, got {r.returncode}: {r.stderr}"
+
+
+def test_sc185_set_area_rejects_empty_parity(run_script, pvault, tmp_path):
+    """AC1: set-area --area '' refuses (exit 2) — the seam that was already strict; pinned alongside the
+    others so the parity claim (no seam stricter than another) is enforced on all seams TOGETHER."""
+    ids = _persist_two(run_script, pvault, tmp_path)
+    r = _setarea(run_script, pvault, ids["pay-core"], "")
+    assert r.returncode == 2, f"set-area empty must refuse, got {r.returncode}: {r.stderr}"
+
+
+def test_sc185_m3_materialize_scope_file_replay_rejects_malformed_area(run_script, pvault, tmp_path):
+    """m3: the third _load_items call site — the `materialize --scope-file <f> --dry-run` READ-ONLY
+    replay preview — refuses a malformed area (exit 2) at the shared choke, pinning the replay-preview
+    parity INDEPENDENTLY (not just transitively via persist/revise)."""
+    f = tmp_path / "scope.json"
+    _write(f, {"items": [_valid_item(area="")]})
+    r = _run(run_script, pvault, "materialize", "--scope-file", str(f), "--dry-run", "--json")
+    assert r.returncode == 2, f"malformed-area replay must refuse (exit 2), got {r.returncode}: {r.stderr}"
+
+
+def test_sc185_madd1_materialize_belt_refuses_assumptionless_mint(run_script, pvault, tmp_path):
+    """M-add-1 / AC3 (all routes): the MINT boundary re-checks has_blocking_assumption. A persisted item
+    carrying NO blocking assumption — introduced by ANY route (a hand-edit here, a legacy pre-fix persist,
+    the out-of-scope rewrite verb) — REFUSES to mint (exit 2), candidates.json byte-untouched. Closes the
+    ADR-067 §5 harm at the irreversible commit, not just the vault_edit write leg."""
+    scope = {"_schema": "aisdlc/product-scope@1", "items": [
+        {"id": "PS-001", "label": "a", "title": "build-a", "description": "a",
+         "user_visible_outcome": "a", "verification_plan": "x", "depends_on": [],
+         "assumptions": []}]}  # <-- no blocking assumption
+    _write(pvault / "product-scope.json", scope)
+    before = _read(pvault / "candidates.json")
+    r = _run(run_script, pvault, "materialize", "--json")
+    assert r.returncode == 2, f"mint of an assumptionless item must refuse (exit 2), got {r.returncode}: {r.stderr}"
+    assert "blocking" in r.stderr.lower(), r.stderr
+    assert _read(pvault / "candidates.json") == before, "candidates.json must be byte-untouched on refusal"
+
+
+def test_sc170_ac3_vault_edit_strip_refused_then_materialize_keeps_assumptions(run_script, pvault, tmp_path):
+    """AC3 / m5: the vault_edit strip route to a step-0-skipping candidate is closed. A persisted item's
+    blocking assumptions cannot be stripped via `vault_edit update ... --set assumptions=[]` (exit 2), so
+    a subsequent materialize can never mint a candidate with empty assumptions — proven by RUNNING
+    materialize after the refused strip and asserting the candidate still carries a blocking assumption."""
+    assert _persist(run_script, pvault, {"items": [_valid_item()]}, tmp_path).returncode == 0
+    ps_id = next(iter(_scope_items(pvault)))
+    ve = run_script("scripts/lib/vault_edit.py",
+                    ["--vault", str(pvault), "update", "--file", "product-scope.json",
+                     "--array", "items", "--id", ps_id, "--set", "assumptions=[]"])
+    assert ve.returncode == 2, f"the strip must be refused (exit 2), got {ve.returncode}: {ve.stderr}"
+    assert _scope_items(pvault)[ps_id].get("assumptions"), "assumptions must survive the refused strip"
+    r = _run(run_script, pvault, "materialize", "--json")
+    assert r.returncode == 0, r.stderr
+    cand_id = _cands_by_psref(pvault)[ps_id]
+    cand = next(c for c in _read(pvault / "candidates.json")["candidates"] if c["id"] == cand_id)
+    assert any(a.get("blocking") for a in cand.get("assumptions") or []), "candidate must carry a blocking assumption"

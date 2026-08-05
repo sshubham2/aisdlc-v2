@@ -59,6 +59,7 @@
       "rationale": "Deferred out of its owning slice as an out-of-scope cut, recorded on capture.",
       "dependencies": [], "assumptions": [],
       "priority": { "score": 3, "effort": "S", "blast_radius": "shared/lib" },
+      "area": "resilience",
       "ejected_from": "slice-072",
       "ejection_reason": "out of budget for slice-072; deliberate out-of-scope cut recorded on capture (residue provenance)",
       "history": [{ "event": "created", "by": "reflect", "at": "<ts>" }]
@@ -226,6 +227,7 @@
     "discovered": [{ "item": "Safari retry header", "becomes": "candidate", "ref": "SC-024" }],
     "deferred": [{ "item": "cursor positions", "why": "out of scope", "becomes_candidate": "SC-025" }],
     "critic_calibration": [{ "finding": "WS scale risk", "verdict": "VALIDATED" }],
+    "missed_by_critic": [{ "id": "MISSED-1", "gate": "critique", "severity": "major", "caught_by": "build", "note": "Safari retry header — absent from the Critic findings entirely, surfaced at build." }],
     "lessons": ["Prove transport limits with a spike before designing realtime features."],
     "supersession": null, "at": "<ts>"
   },
@@ -463,16 +465,21 @@
       ],
       "unassigned": { "done": 1, "in_progress": 0, "total": 4 }
     },
-    "signoff": {
-      "_note": "Optional. Who has actually said 'yes' to this slice, separated by WHAT did the approving: reality (a spike on a real environment, or real-device/data testing) vs the model (a design or code review). Reality-approved and model-approved are NOT the same green. not_yet = checks that haven't happened at this lifecycle stage.",
+    "trust_signoff": {
+      "_note": "slice-086 / [[ADR-102]]: the 'Who has signed off' panel, DERIVED mechanically from the trust ledger (recorded gate outcomes + their reality-contact) and injected by the /slice-story skill on the main thread — NEVER authored by the narrator, so a model-only pass can never render as reality-proven. render_story renders these three columns ONLY when the block carries the provenance stamp `\"_source\": \"story_signoff.inject\"`. reality_approved = a reality gate with a clean-positive outcome (or a passing regression); model_approved = the model reviews; not_yet = unchecked gaps AND reality-flagged concerns (each item is a plain-English `{what, ref?}`). state:'unavailable' (with unavailable_reason) is the fail-visible branch when the ledger or the review record can't be read — the panel then shows an explicit notice and NO green column.",
+      "_source": "story_signoff.inject",
+      "state": "ok",
+      "derivation": "trust-ledger",
       "reality_approved": [
-        { "what": "Could one server hold 500 always-open live connections? Tested on a real managed server — it tapped out near 120, so the design switched to a lighter one-way feed.", "by": "spike on a real server", "ref": "R-27" }
+        { "what": "Feasibility check on the real environment confirmed it works, with conditions." },
+        { "what": "The project's regression test suite passed." }
       ],
       "model_approved": [
-        { "what": "The plan was reviewed and one real gap — a live feed that didn't check who was asking — was found and fixed before any code was written.", "by": "independent design review", "ref": "C1" }
+        { "what": "Design review by the model asked for changes." },
+        { "what": "Code review by the model raised some notes." }
       ],
       "not_yet": [
-        "Reality testing on real devices and data hasn't happened yet — that comes after the build, when the slice is checked against the real world."
+        { "what": "AC2 has not been checked against reality yet.", "ref": "AC2" }
       ]
     },
     "sections": [

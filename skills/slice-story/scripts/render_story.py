@@ -135,15 +135,12 @@ def scan_jargon(data: dict) -> list[tuple[str, str]]:
             if isinstance(it, dict):
                 hits += _jargon_hits(it.get("label", ""), f"{base}.items[{j}].label")
                 hits += _jargon_hits(it.get("detail", ""), f"{base}.items[{j}].detail")
-    so = data.get("signoff") or {}
-    if isinstance(so, dict):
-        for key in ("reality_approved", "model_approved", "not_yet"):
-            for j, it in enumerate(so.get(key) or []):
-                if isinstance(it, str):
-                    hits += _jargon_hits(it, f"signoff.{key}[{j}]")
-                elif isinstance(it, dict):
-                    hits += _jargon_hits(it.get("what", ""), f"signoff.{key}[{j}].what")
-                    hits += _jargon_hits(it.get("by", ""), f"signoff.{key}[{j}].by")
+    # slice-086 (M2/M4): the signoff panel is no longer narrator prose — it is the DETERMINISTIC
+    # `trust_signoff` block story_signoff.inject derives from the trust ledger (jargon-free by
+    # construction: a CLOSED gate/verdict->English table, no raw gate id / verdict enum for the known
+    # vocabulary). So scan_jargon no longer scans a `signoff` key (the narrator stops authoring it), and
+    # AC2 rests on the closed table + a dedicated substring test, NOT on this tripwire (which never matched
+    # gate ids / verdict enums anyway, and whose exit-3 would contradict the AC4 fail-visible pass-through).
     for j, g in enumerate(data.get("glossary") or []):
         if isinstance(g, dict):
             hits += _jargon_hits(g.get("plain", ""), f"glossary[{j}].plain")
@@ -242,35 +239,52 @@ def _render_glossary(glossary: list) -> str:
     )
 
 
-def _render_signoff(signoff: dict) -> str:
-    """Render the 'Who has signed off' panel: reality-approved vs model-approved vs
-    not-yet, so the reader sees at a glance whether reality or just a review said yes.
-    Each list is optional; the whole panel is omitted when nothing applies."""
-    if not isinstance(signoff, dict):
-        return ""
+def _render_trust_signoff(block: dict) -> str:
+    """Render the 'Who has signed off' panel from the DETERMINISTIC trust_signoff block
+    (slice-086 / [[ADR-102]]). The block is derived from the trust ledger and stamped by
+    story_signoff.inject on the MAIN THREAD; the narrator NEVER authors it. render reads ONLY
+    this stamped block — there is no code path from the narrator's `signoff` to the panel
+    (Biba no-write-up, severed by construction, not merely guarded).
+
+    An absent / unstamped / state!='ok' block renders a visible 'trust classification
+    unavailable' notice with NO green column and NO narrator fallback (AC4)."""
+    if not isinstance(block, dict) or block.get("_source") != "story_signoff.inject":
+        return ""  # not the main-thread-injected block -> render NOTHING (never a narrator characterization)
+    if block.get("state") != "ok":
+        reason = _inline(str(block.get("unavailable_reason")
+                             or "the trust record could not be read.").strip())
+        return (
+            '<section class="signoff"><h2>Who has signed off</h2>'
+            '<div class="signoff-grid"><div class="so-col so-notyet">'
+            '<div class="so-label">Trust classification unavailable</div>'
+            f"<ul><li>{reason}</li></ul></div></div>"
+            '<p class="signoff-foot">This panel is derived mechanically from the recorded evidence; it could '
+            "not be shown here, so nothing is being claimed as proven against reality.</p></section>"
+        )
 
     def _items(lst: list) -> str:
         rows = []
         for it in (lst or []):
             if isinstance(it, str):
-                rows.append(f"<li>{_inline(it.strip())}</li>")
+                what, ref = it.strip(), None
             elif isinstance(it, dict):
-                what = _inline(str(it.get("what", "")).strip())
-                by = it.get("by")
-                ref = it.get("ref")
-                by_html = f' <span class="so-by">— {html.escape(str(by), quote=False)}</span>' if by else ""
-                ref_html = f'<span class="ref">{html.escape(str(ref), quote=False)}</span>' if ref else ""
-                rows.append(f'<li>{what}{by_html}{ref_html}</li>')
+                what, ref = str(it.get("what", "")).strip(), it.get("ref")
+            else:
+                continue
+            if not what:
+                continue
+            ref_html = f'<span class="ref">{html.escape(str(ref), quote=False)}</span>' if ref else ""
+            rows.append(f"<li>{_inline(what)}{ref_html}</li>")
         return "".join(rows)
 
     groups = (
         ("reality_approved", "Proven against reality", "so-reality"),
         ("model_approved", "Reviewed by the model", "so-model"),
-        ("not_yet", "Not yet checked against reality", "so-notyet"),
+        ("not_yet", "Not yet proven against reality", "so-notyet"),
     )
     cols = []
     for key, label, cls in groups:
-        body = _items(signoff.get(key) or [])
+        body = _items(block.get(key) or [])
         if body:
             cols.append(
                 f'<div class="so-col {cls}"><div class="so-label">{label}</div>'
@@ -485,7 +499,9 @@ def render(data: dict, *, tournament_section: str = "", tournament_css: str = ""
     if tldr:
         tldr_html = f'<div class="tldr"><div class="lbl">In short</div>{_md(str(tldr))}</div>'
 
-    signoff_html = _render_signoff(data.get("signoff") or {})
+    # slice-086 (ADR-102): the panel is derived from the trust ledger and injected on the main thread
+    # (data['trust_signoff']); the narrator's `signoff` key is NEVER read (the write-up channel is severed).
+    signoff_html = _render_trust_signoff(data.get("trust_signoff") or {})
     # slice-082: the deterministic 'Where this fits in the product' section (counts owned by the renderer,
     # M-add-1). Sits after the sign-off panel as orienting context, before the narrative sections.
     product_shape_html = _render_product_shape(

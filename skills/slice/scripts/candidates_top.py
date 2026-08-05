@@ -42,6 +42,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 # --- single-skill import bootstrap (cannot use `python -m` for a bundled script) ---
 _REPO = pathlib.Path(__file__).resolve().parents[3]
@@ -192,11 +193,261 @@ def _unmet_deps(cand: dict, live_ids: set[str]) -> list[str]:
     return [d for d in (cand.get("dependencies") or []) if d in live_ids]
 
 
+# ── the completion gate (slice-102 / SC-232) ─────────────────────────────────────
+#
+# `/slice` had no notion of what is still MISSING for the app to be usable, so on an EXHAUSTED product
+# scope -- the steady state of every project past its initial capability list, because the decomposition
+# is a ONCE-act by design -- it fell through to score-ranked pipeline exhaust BY CONSTRUCTION. This is
+# the residency check that was missing (completion_gap.py carries the frame). It is an OPT-IN flag, not
+# a layer below the consumer: DD1 measured that an ALWAYS-present banner breaks slice-080/m5's
+# test-pinned contract that the default-OFF payload adds NO top-level key, while the opt-in shape
+# `--area`/`area_lens` already uses is GO 5/5. So the gate is BYPASSABLE BY DESIGN (INV-1 `fails`,
+# recorded honestly rather than claimed away), and `/slice`'s injection always passes the flag with a
+# doc-guard pinning that it does.
+
+
+def _fmt_gap_banner(gap: dict) -> list[str]:
+    """The TEXT header half of the gate. Renders the verdict, the HONEST headline, the route and the
+    always-offered decline."""
+    out = ["", "COMPLETION GAP (app completeness at the pick surface):"]
+    if "verdict" not in gap:
+        # FAIL-VISIBLE, and never a silent degrade to `scope-absent` (must-not-defer #1).
+        out.append(f"  UNDECIDABLE ({gap['cause_kind']}): {gap['error']}")
+        out.append("  The ranked list below is still correct -- only the completeness verdict is "
+                   "withheld. Fix the named file and re-run /slice.")
+        return out
+    rec = gap["recommendation"]
+    out.append(f"  verdict: {gap['verdict']} ({gap['reason']})")
+    out.append(f"  {gap['headline']}")
+    if gap["dangling"]:
+        out.append(f"  dangling owner_ref(s) -- reported, never retracted: "
+                   f"{', '.join(str(d['candidate']) for d in gap['dangling'])}")
+    out.append(f"  -> {rec['mode']}: {rec['rationale']}")
+    if rec["offer_decline"]:
+        out.append("  Declining is always offered and returns the ordinary ranked pick below.")
+    return out
+
+
+def _fmt_pick_row(row: dict) -> list[str]:
+    meta = f"score {row['score']:g}  effort {row['effort'] or '?'}"
+    if row["blast_radius"]:
+        meta += f"  blast: {row['blast_radius']}"
+    if row["deps_unmet"]:
+        # the gate must not STRIP a pick-time warning the ordinary digest already shows ([[ADR-148]] d5)
+        meta += f"  [deps-unmet: {', '.join(row['deps_unmet'])}]"
+    return ["",
+            f"Completion pick (rank {row['rank']} of {row['of']}) -- hoisted by the completion gate:",
+            f"  {row['id']}  {row['title']}",
+            f"       {meta}"]
+
+
+def _project_ranked_rows(ranked: list[tuple[dict, list[str]]], sources: dict) -> list[dict]:
+    """THE PROJECTION, at the render point. It is what makes completion_gap's "imports nothing" TRUE
+    rather than asserted: the classifier receives plain dicts and never reaches back into this module,
+    `product_scope`, or `product_priority`.
+
+    `unmet_deps` is the SECOND element of the `(candidate, unmet_deps)` tuples this list already holds.
+    Dropping it would let the gate hoist a pick whose prerequisite has not shipped, stripping the
+    `[deps-unmet: ...]` marker the ordinary digest renders.
+    """
+    from scripts.lib import product_scope
+    return [{
+        "id": c.get("id"),
+        "title": c.get("title"),
+        "score": _score(c),
+        "effective_score": _effective_score(c),
+        "effort": _effort(c) or None,
+        "rank": i,
+        # membership for `pickable_product[]` is `owner_ref is not None`, NEVER path_class ([[ADR-148]]
+        # d9): path_class returns OFF_PATH for a DEMOTED candidate before it ever tests owner_ref, and
+        # it is per-candidate, so blocked/in-flight product rows are `on-path` while belonging to
+        # neither array.
+        "owner_ref": product_scope.owner_ref(c),
+        "area_source": sources.get(str(c.get("id"))),
+        "unmet_deps": list(unmet),
+    } for i, (c, unmet) in enumerate(ranked, 1)]
+
+
+def _live_capture(cands) -> dict:
+    """ONE population, as a `{id: status}` map. BOTH mid-read captures use THIS shape over THIS file --
+    [[ADR-148]] d1, replacing ADR-146 d13's pair, which compared live-only against live UNION archive
+    (measured 119 vs 224 on a QUIESCENT vault: the gate would have refused on every run, shipping
+    INERT). One population, two reads, genuinely independent."""
+    return {str(c.get("id")): c.get("status") for c in (cands or []) if isinstance(c, dict)}
+
+
+def _scope_ids(vault: Path) -> set[str]:
+    """The scope's id set. An unreadable scope yields an EMPTY set here -- reporting it is the ROLLUP's
+    job (cause_kind `rollup-error`), not this capture's."""
+    p = vault / "product-scope.json"
+    if not p.exists():
+        return set()
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    return {str(i.get("id")) for i in (data.get("items") or [])
+            if isinstance(i, dict) and i.get("id")}
+
+
+def _scope_shape_error(vault: Path) -> str | None:
+    """A present-but-STRUCTURALLY-WRONG scope, named rather than degraded (must-not-defer #1).
+
+    THE SILENT DEGRADE THIS CLOSES (code-review m1). `product-scope.json` can be perfectly valid JSON
+    and still be the wrong SHAPE -- `items` a dict, a string, or a list of non-dicts. Every reader then
+    yields ZERO capabilities without raising: `_scope_item_ids` and `cmd_done` both filter non-dicts, so
+    they AGREE on the empty set, `build_envelope`'s id-set guard passes, and the rollup reports
+    `total: 0`. The gate would map that to `empty-scope` -> `route-add-item` and tell the user "every
+    declared capability is built" about a file it could not read. A corrupt scope must never read as a
+    FINISHED product.
+    """
+    p = vault / "product-scope.json"
+    if not p.exists():
+        return None                       # a genuinely absent scope is the NORMAL scope-absent verdict
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None                       # unparseable -> compute_rollup owns it (rollup-error)
+    if not isinstance(data, dict):
+        return f"{p} top-level is not a JSON object"
+    items = data.get("items")
+    if items is None:
+        return None                       # legal: a scope file that carries no items key yet
+    if not isinstance(items, list):
+        return f"{p} `items` is {type(items).__name__}, not an array"
+    bad = [i for i, it in enumerate(items) if not isinstance(it, dict)]
+    if bad:
+        return (f"{p} `items` carries {len(bad)} non-object entr(y/ies) at index {bad[:5]} -- every "
+                f"reader silently drops them, so the product would read as SMALLER than it is")
+    return None
+
+
+def _reread_live(vault: Path) -> list:
+    """The SECOND explicit read of candidates.json for the cross-check. A file that vanished or turned
+    unparseable between the captures yields an EMPTY population, which the cross-check then REPORTS as
+    a delta -- visible, never swallowed."""
+    p = vault / "candidates.json"
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return (data.get("candidates") or []) if isinstance(data, dict) else []
+
+
+def _derive_completion_gap(vault: Path, cands: list, ranked: list, area, explicit_intent: bool,
+                           sources: dict, area_known: bool | None = None) -> dict:
+    """Build the whole `completion_gap` payload. ALL IO and ALL projection live HERE, at the call site.
+
+    Read-only by construction: `/slice`'s PICK PHASE takes no lock and mutates no vault file
+    ([[ADR-067]] section 1 as scoped by [[ADR-080]] + [[ADR-152]]).
+    """
+    import completion_gap as gap_lib
+    from scripts.lib import product_rollup, product_scope
+
+    cand_a = _live_capture(cands)          # capture A -- the backlog read this function was handed
+    scope_a = _scope_ids(vault)
+
+    shape = _scope_shape_error(vault)
+    if shape:
+        return gap_lib.error_envelope(
+            f"the product scope is present but structurally invalid -- {shape}. Every reader drops the "
+            f"unreadable entries silently, so the completeness verdict would describe a product this "
+            f"file does not actually declare. Fix the file and re-run.", "scope-malformed")
+
+    env = dict(product_rollup.compute_rollup(vault))
+    # `done_definition` is supplied by the CALLER on EVERY branch, including `scope_present: false`,
+    # which neither build_envelope nor _error_envelope covers. That keeps the constant single-sourced,
+    # so SC-233's redefinition of what `done` MEANS cannot leave a stale copy in the classifier.
+    env.setdefault("done_definition", product_rollup.DONE_DEFINITION)
+
+    # THE ORPHANED DERIVATION IS GUARDED (round-3 M-add-1 / [[ADR-148]] d4). `cmd_materialize` resolves
+    # items via `_scope(required=True)` and RAISES `_Refuse(4, no-scope)` on the branch this design
+    # declares NORMAL, and `_Refuse(1, malformed)` on a corrupt one. `main()` has no handler and the
+    # `!`-injection carries no `||` fallback, so an escaping exception would render a traceback exactly
+    # where the ranked digest belongs.
+    try:
+        plan = product_scope.cmd_materialize(
+            vault, SimpleNamespace(scope_file=None, dry_run=True, acknowledge=[]))
+        orphaned = plan.get("orphaned") or []
+    except product_scope._Refuse as exc:
+        if getattr(exc, "code", None) != 4:
+            return gap_lib.error_envelope(
+                f"the product scope could not be read while deriving dangling owner_refs: {exc}",
+                "scope-malformed")
+        orphaned = []                       # no scope -> no orphans; continue to the NORMAL verdict
+    except Exception as exc:                # a genuine compute failure is still fail-VISIBLE
+        return gap_lib.error_envelope(
+            f"the dangling-owner_ref derivation failed: {exc}", "scope-malformed")
+
+    # live-filter the orphans HERE: `cands` is the only input carrying the live set ([[ADR-148]] d7),
+    # so this is the only place the filter can honestly happen.
+    live_ids = {str(c.get("id")) for c in cands if isinstance(c, dict)}
+    orphaned = [{"candidate": o.get("candidate"), "ref": o.get("ref")} for o in orphaned
+                if str(o.get("candidate")) in live_ids]
+
+    # capture B -- the SAME populations, read again at the END of the derivation
+    delta = gap_lib.cross_check(scope_a, _scope_ids(vault))
+    if delta:
+        return gap_lib.error_envelope(
+            f"the product-scope item set changed while the completion gate was reading it ({delta}); "
+            f"refusing a possibly-miscounted verdict", "scope-changed-mid-read")
+    delta = gap_lib.cross_check(cand_a, _live_capture(_reread_live(vault)))
+    if delta:
+        return gap_lib.error_envelope(
+            f"candidates.json changed while the completion gate was reading it ({delta}); refusing a "
+            f"possibly-miscounted verdict", "candidates-changed-mid-read")
+
+    if area is not None and env.get("capabilities") is not None:
+        # the WHOLE population is scoped: done/total are COUNTED FROM this filtered array, never read
+        # from `whole_app`, which is never area-scoped ([[ADR-148]] d6)
+        scoped = [cap for cap in env["capabilities"] if cap["area"] == area]
+        # THE TYPO TRAP (code-review M2). A MISSPELLED `--area` filters `capabilities[]` to empty; the
+        # classifier maps `total == 0` to `empty-scope`, and the route table sends `empty-scope` to
+        # `route-add-item` -- so a typo would tell the user "every declared capability is built" and
+        # point them at the ONE irreversible act in this module. `area_lens.known` was computed sixty
+        # lines earlier and never consulted. It is now, and an area with nothing to be complete ABOUT
+        # is UNDECIDABLE, never FINISHED. Covers the known-but-capability-less area too (an area only a
+        # candidate asserts): the same wrong answer, from a spelling that is not a typo.
+        if not scoped:
+            why = ("is not a known area on this vault -- check the spelling"
+                   if area_known is False else
+                   "carries no product capabilities, so there is nothing for it to be complete about")
+            return gap_lib.error_envelope(
+                f"--area {area!r} {why}. Refusing a completeness verdict rather than reporting an "
+                f"empty filter as a finished product.", "area-unresolvable")
+        env["capabilities"] = scoped
+    env["area_scope"] = area
+
+    ranked_rows = _project_ranked_rows(ranked, sources)
+    payload = gap_lib.classify(env, orphaned, ranked_rows)
+    if "verdict" not in payload:
+        return payload
+    rec = gap_lib.recommend(payload, ranked_rows, explicit_intent=explicit_intent)
+    payload["recommendation"] = rec
+    payload["suppress_governor"] = gap_lib.suppress_governor(rec["mode"])
+    if rec["pick_id"] is not None:
+        row = next((r for r in ranked_rows if r["id"] == rec["pick_id"]), None)
+        cand = next((c for c, _ in ranked if c.get("id") == rec["pick_id"]), None)
+        if row is not None and cand is not None:
+            payload["pick_row"] = {
+                "id": row["id"], "title": row["title"], "score": row["score"],
+                "effective_score": row["effective_score"], "effort": row["effort"],
+                "blast_radius": _blast(cand) or None, "deps_unmet": row["unmet_deps"],
+                "rank": row["rank"], "of": len(ranked_rows),
+            }
+    return payload
+
+
 # ── formatting ───────────────────────────────────────────────────────────────────
 
 def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
               blocked: list[dict], in_flight: list[dict], top: int,
-              all_live: list[dict], area_lens: dict | None = None) -> str:
+              all_live: list[dict], area_lens: dict | None = None,
+              completion_gap: dict | None = None) -> str:
     lines: list[str] = []
     lines.append(
         f"CANDIDATES (live backlog: {project}) — "
@@ -205,15 +456,32 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
     )
     if area_lens is not None:
         # slice-080/ADR-091 (slice-084 renamed component→area): the lens filters ONLY pickable (m2);
-        # blocked/in-flight stay global.
+        # blocked/in-flight stay global. slice-098/ADR-125: the population is now every candidate with an
+        # AREA SOURCE — its own asserted `area` or a product-scope parent — not product-sourced only.
         name = area_lens["area"]
         if area_lens["known"]:
-            lines.append(f"  [area lens: {name} — pickable filtered to this product area; "
-                         f"blocked/in-flight shown globally]")
+            lines.append(f"  [area lens: {name} — pickable filtered to this area (candidates that "
+                         f"assert it, plus product capabilities bound to it); blocked/in-flight "
+                         f"shown globally]")
         else:
             known = ", ".join(area_lens.get("areas") or []) or "none"
             lines.append(f"  [area lens: {name} — UNKNOWN area, 0 pickable. "
                          f"Known: {known}]")
+        near = area_lens.get("near_matches") or []
+        if near:
+            # critique m2: a case/spacing variant of a REAL area splits one area's picks across two
+            # buckets, both of which read as known. Surfaced at the pick surface, never silently filtered.
+            lines.append(f"       WARN: {name!r} case-matches known area(s) "
+                         f"{', '.join(repr(n) for n in near)} but is not byte-equal — the picks for "
+                         f"this area are SPLIT across both spellings. Re-annotate to one spelling.")
+
+    # slice-102 / SC-232: the completion-gap banner rides the TEXT header, not only --json. This
+    # module's own note above pins the premise: EVERY production invocation of this digest is text-mode
+    # (the /slice `!`-injection), so a verdict that existed only in --json would be a verdict the pick
+    # surface never shows -- and a gate whose reasoning is invisible trains the user to click through
+    # it (must-not-defer #5).
+    if completion_gap is not None:
+        lines.extend(_fmt_gap_banner(completion_gap))
 
     lines.append("")
     if ranked:
@@ -232,6 +500,15 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
                 meta += f"  blast: {_blast(cand)}"
             if unmet:
                 meta += f"  [deps-unmet: {', '.join(unmet)}]"
+            if area_lens is not None:
+                # M6 — render the resolved area SOURCE on the TEXT path. Every production invocation of
+                # this digest is text-mode (the /slice `!`-injection), so a provenance that exists only
+                # in --json is a provenance the pick surface never shows. `candidate` = the candidate
+                # asserted this area itself and it OVERRODE any derived value ([[ADR-124]] section 1);
+                # `product-scope` = derived through its single PS parent.
+                src = (area_lens.get("sources") or {}).get(str(cid))
+                if src:
+                    meta += f"  area: {area_lens['area']} (via {src})"
             lines.append(f"  {i}. {cid}  {title}")
             lines.append(f"       {meta}")
             if cand.get("description"):
@@ -248,6 +525,13 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
                 lines.append(f"       couples-with: {'; '.join(shown_coup)}")
     else:
         lines.append("No pickable candidates (none in {candidate, deferred}).")
+
+    # The hoisted completion pick, in its OWN labelled section carrying its REAL rank. It is NEVER
+    # renumbered into `Top picks`, whose documented meaning as a PREFIX of the ranking is preserved --
+    # and it must be hoisted at all because a score-5 / effort-L product mint measures ~11th of 117 on
+    # a real vault, outside any --top 5 window (INV-3: one filled page restores RESIDENCY, not RANK).
+    if completion_gap is not None and completion_gap.get("pick_row"):
+        lines.extend(_fmt_pick_row(completion_gap["pick_row"]))
 
     if blocked:
         lines.append("")
@@ -286,7 +570,8 @@ def _fmt_text(project: str, ranked: list[tuple[dict, list[str]]],
 
 def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
               blocked: list[dict], in_flight: list[dict], top: int,
-              all_live: list[dict], area_lens: dict | None = None) -> str:
+              all_live: list[dict], area_lens: dict | None = None,
+              completion_gap: dict | None = None) -> str:
     shown = ranked[:top] if top > 0 else ranked
     payload = {
         "action": "candidates-top",
@@ -326,6 +611,10 @@ def _fmt_json(project: str, ranked: list[tuple[dict, list[str]]],
         # slice-080/ADR-091 (slice-084 renamed component→area): added ONLY when the lens is active, so
         # the default-OFF payload is byte-identical to today (critique m5).
         payload["area_lens"] = area_lens
+    if completion_gap is not None:
+        # slice-102 / SC-232, the SAME additive discipline: present ONLY under --completion-gap, so
+        # `test_default_off_payload_is_unperturbed`'s contract (no new top-level key) still holds.
+        payload["completion_gap"] = completion_gap
     return json.dumps(payload, ensure_ascii=False) + "\n"
 
 
@@ -357,42 +646,88 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true",
                    help="emit JSON (default: human-readable text for prompt injection)")
     p.add_argument("--area", dest="area", default=None, metavar="NAME",
-                   help="OPTIONAL area lens (slice-080/ADR-091; slice-084 renamed from --component): "
-                        "filter the PICKABLE list to PRODUCT capabilities bound to this area (use "
-                        "'unassigned' for product capabilities with no area yet — NOT pipeline chores, "
-                        "which the lens excludes). Blocked/in-flight stay global context. Read-only — "
-                        "takes no lock, mints no id, writes no status; default-OFF is byte-identical.")
+                   help="OPTIONAL area lens (slice-080/ADR-091; slice-084 renamed from --component; "
+                        "slice-098/ADR-125 widened the population): filter the PICKABLE list to every "
+                        "candidate with an AREA SOURCE resolving to this area — one that ASSERTS the "
+                        "area itself (its own `area` field, which OVERRIDES any derived value) or a "
+                        "PRODUCT capability bound to it via owner_refs. Use 'unassigned' for product "
+                        "capabilities with no area yet; an annotated candidate can never land there "
+                        "(the write seams refuse the sentinel), and an UN-annotated chore has no area "
+                        "source and stays out entirely. Blocked/in-flight stay global context. "
+                        "Read-only — takes no lock, mints no id, writes no status; default-OFF is "
+                        "byte-identical.")
     p.add_argument("--component", dest="area", default=None, metavar="NAME",
                    help="deprecated alias of --area (slice-084)")
+    p.add_argument("--completion-gap", dest="completion_gap", action="store_true",
+                   help="OPT-IN completion gate (slice-102/SC-232): classify the pick surface for APP "
+                        "COMPLETION -- product-work-available | scope-exhausted | scope-absent -- and "
+                        "emit the verdict, the honest done/total headline, the unbuilt capability list "
+                        "and a routed recommendation, in BOTH the text header and --json. Hoists the "
+                        "recommended product pick into its own labelled section even when it falls "
+                        "outside --top N. Read-only: takes no lock, mints no id, writes nothing. "
+                        "Default-OFF is byte-identical.")
+    p.add_argument("--explicit-intent", dest="explicit_intent", action="store_true",
+                   help="the user already named the work (`/slice \"<description>\"`), so the gate "
+                        "renders its headline and raises NO question. The alert-fatigue carve-out; "
+                        "only meaningful with --completion-gap.")
     return p
 
 
-def _emit_no_backlog(path: Path, as_json: bool) -> int:
+def _emit_no_backlog(path: Path, as_json: bool, completion_gap: dict | None = None) -> int:
     if as_json:
-        print(json.dumps({
+        payload = {
             "action": "candidates-top", "project": None, "note": "no-backlog",
             "counts": {"pickable": 0, "blocked": 0, "in_flight": 0},
             "top": [], "blocked": [], "in_flight": [],
-        }, ensure_ascii=False))
+        }
+        if completion_gap is not None:
+            payload["completion_gap"] = completion_gap
+        print(json.dumps(payload, ensure_ascii=False))
     else:
         print(
             f"No candidates.json yet at {path} — run /discover (slice 1) or "
             f"/slice-candidates (brownfield) to populate the backlog."
         )
+        if completion_gap is not None:
+            print("\n".join(_fmt_gap_banner(completion_gap)))
     return 0
+
+
+def _backlog_absent_envelope(path: Path, why: str) -> dict:
+    """An absent or EMPTY candidates.json is an ERROR, never an empty pick surface (must-not-defer #7).
+
+    Keyed on the CONDITION at main()'s backlog-load branch -- absent OR zero-byte OR `candidates`
+    missing OR an empty list -- and NEVER on the `note: "no-backlog"` marker, which does not fire on
+    `{"candidates": []}` at all (executed: rc 0, no note key). This branch does NOT call classify: with
+    no backlog there is no pick surface to classify, and fabricating one would be the silent degrade
+    the gate exists to prevent (wiring matrix row 1 / [[ADR-148]] d10).
+    """
+    import completion_gap as gap_lib
+    return gap_lib.error_envelope(
+        f"{path} {why}. The completion verdict is UNDECIDABLE without a backlog to classify -- an "
+        f"empty pick surface is not 'nothing to do', it is a broken vault. Run /discover (slice 1) or "
+        f"/slice-candidates to populate it.", "candidates-absent")
 
 
 def main(argv: list[str] | None = None) -> int:
     """Exit 0 success (incl. empty/absent backlog), 1 runtime error, 2 usage error."""
     _stdout.reconfigure_stdout_utf8()
     args = _build_arg_parser().parse_args(argv)
-    path = _root(args.vault) / "candidates.json"
+    vault = _root(args.vault)
+    path = vault / "candidates.json"
+
+    # THE BACKLOG-LOAD BRANCH (slice-102). Under --completion-gap each of the four negative states below
+    # emits the verdict-LESS `candidates-absent` envelope alongside the digest's own shipped rendering.
+    # The exit code is UNTOUCHED (0/1/2): blanking the ranked digest -- the surface the user needs in
+    # order to pick at all -- would be strictly worse than the failure being reported.
+    def _absent(why: str) -> dict | None:
+        return _backlog_absent_envelope(path, why) if args.completion_gap else None
 
     if not path.exists():
-        return _emit_no_backlog(path, args.json)
+        return _emit_no_backlog(path, args.json, _absent("does not exist"))
     text = path.read_text(encoding="utf-8")
     if not text.strip():
-        return _emit_no_backlog(path, args.json)
+        return _emit_no_backlog(path, args.json, _absent("is zero-byte"))
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -403,11 +738,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     cands = data.get("candidates")
+    gap_absent = None
     if cands is None:
         cands = []
+        gap_absent = _absent("carries no `candidates` key")
     if not isinstance(cands, list):
         sys.stderr.write(f"candidates_top: {path} 'candidates' is not a JSON array\n")
         return 1
+    if not cands and gap_absent is None:
+        # `{"candidates": []}` does NOT reach _emit_no_backlog (executed: rc 0, no `note` key), which
+        # is precisely why the condition is tested HERE rather than on that marker.
+        gap_absent = _absent("carries an EMPTY `candidates` array")
 
     project = data.get("project") or "<unnamed>"
     live_ids = {c.get("id") for c in cands if isinstance(c, dict)}
@@ -440,16 +781,41 @@ def main(argv: list[str] | None = None) -> int:
     # exhaust chores too — every one of which maps to 'unassigned' because it carries no product-scope
     # source — conflating the declared product capabilities with ~88 chores. The lens now answers "which
     # product capability comes next in area X", never "everything the pipeline happens to have queued".
+    # slice-098 / SC-212 ([[ADR-125]] section 1): the admission predicate widens from `owner_refs`
+    # non-empty to `has_area_source` — an own valid `area` OR a product-scope parent. slice-084 A1's
+    # anti-conflation rationale SURVIVES: `owner_refs`-non-empty was only ever a PROXY for "has a real
+    # area source", and `_valid_area` REFUSES the reserved `unassigned` sentinel at every write seam, so
+    # an annotated candidate can never resolve into the residual bucket the ~88-chore leak flowed through.
+    # An un-annotated chore still has no source and still stays out. ALL area logic is delegated to
+    # area_resolve so no second precedence rule can appear here (spike-A1 constraint 4).
     area_lens = None
     if args.area is not None:
-        from scripts.lib import product_rollup, product_scope
+        from scripts.lib import area_resolve, product_rollup
         area_map = product_rollup.read_area_map(_root(args.vault))
-        known = set(area_map.values()) | {product_rollup.UNASSIGNED}
-        pickable = [c for c in pickable
-                    if product_scope.owner_refs(c)
-                    and product_rollup.candidate_area(c, area_map) == args.area]
+        # `known` unions the PS areas with the areas candidates ASSERT for themselves — without the
+        # widening a freshly-annotated area reads `known: false` and the surface says "UNKNOWN area"
+        # about an area that demonstrably exists.
+        known = (set(area_map.values()) | {product_rollup.UNASSIGNED}
+                 | area_resolve.asserted_areas(all_live))
+        resolved = {}
+        kept = []
+        for c in pickable:
+            if not area_resolve.has_area_source(c):
+                continue
+            area, source = area_resolve.resolve(c, area_map)
+            if area == args.area:
+                kept.append(c)
+                resolved[str(c.get("id"))] = source
+        pickable = kept
         area_lens = {"area": args.area, "known": args.area in known,
-                     "areas": sorted(known)}
+                     "areas": sorted(known),
+                     # critique m2 — the read-time half of the split-bucket signal: a known area that
+                     # casefold-matches the request without being byte-equal. Advisory, never a filter.
+                     "near_matches": area_resolve.near_matches(args.area, known),
+                     # M6 — per-pick provenance {id: candidate|product-scope}. The ONLY thing that
+                     # distinguishes a candidate whose asserted area SHADOWS its capability's, which is
+                     # ADR-124 section 1's accepted masking cost mitigated "by visibility, not refusal".
+                     "sources": resolved}
 
     # Rank pickable: highest EFFECTIVE score (severity + product-priority term, slice-077) first,
     # then smaller effort, then id (stable). A demote co-constraint violation raises here and is
@@ -460,8 +826,17 @@ def main(argv: list[str] | None = None) -> int:
         ranked = [(c, _unmet_deps(c, live_ids)) for c in pickable]
         blocked.sort(key=lambda c: str(c.get("id")))
         in_flight.sort(key=lambda c: str(c.get("id")))
+        # THE RENDER POINT (slice-102). classify() is called exactly ONCE, HERE, with `ranked_rows`
+        # projected from the very list the digest below is rendered from -- so the gate's verdict and
+        # the list the user reads can never come from two different populations.
+        gap = None
+        if args.completion_gap:
+            gap = gap_absent if gap_absent is not None else _derive_completion_gap(
+                vault, cands, ranked, args.area, args.explicit_intent,
+                (area_lens or {}).get("sources") or {},
+                area_known=(area_lens or {}).get("known"))
         fmt = _fmt_json if args.json else _fmt_text
-        out = fmt(project, ranked, blocked, in_flight, args.top, all_live, area_lens)
+        out = fmt(project, ranked, blocked, in_flight, args.top, all_live, area_lens, gap)
     except product_priority.DemoteCoConstraintError as exc:
         sys.stderr.write(
             f"candidates_top: candidate {exc.candidate_id!r} has a half-written demote ({exc}) — "

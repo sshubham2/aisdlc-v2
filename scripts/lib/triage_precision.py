@@ -33,8 +33,11 @@ never drift. THREE responsibilities:
 4. ``gate_summary(entries, slice_id=None, recent=30)`` — the whole-file aggregation /pulse
    consumes (2026-07 review sweep): per-gate table (verdict-row runs/raised + the
    precision/recall from #3, reality_contact, last verdict, quiet flag) ordered high→low
-   reality-contact, with ``design-tournament`` split out (informational — divergence
-   distribution, never in the quiet math), the cross-domain validity ratio, the active
+   reality-contact, with the INFORMATIONAL gates excluded (they raise no findings, so their
+   always-zero raised_rate is not a "quiet / lighten" signal) and the DIVERGENCE aggregate
+   keyed separately on ``_DIVERGENCE_GATES`` — ``approach_divergence`` is a design-tournament
+   field, so once a second informational gate exists (slice-102's ``completion-gap``) the two
+   sets are no longer the same set, the cross-domain validity ratio, the active
    slice's compact rows, and a capped newest-first ``recent[]``. The gate log grows without
    bound (multiple rows per slice, forever); /pulse reads ONLY this summary — never the
    full file — so its token budget survives slice-100+.
@@ -65,7 +68,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]  # <plugin>/scripts/lib/triag
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from scripts.lib import _stdout
+from scripts.lib import _shard_store, _stdout
 
 # The real/noise rule — the SINGLE source of truth, identical to the documented first-Critic
 # emission (/critique Step 4.5): a real issue counts even when deferred/blocking; a user
@@ -200,7 +203,13 @@ def gate_precision_recall(entries, gate: str) -> dict:
 # excluded from the per-gate quiet/precision table, reported separately (3.3). The pass-class
 # set for the cross-domain validity ratio is the REALITY-gate vocabulary only (go/conditional/
 # pass) — model-gate greens (clean/accept) never count as "reality confirmed the transfer".
-INFORMATIONAL_GATES = frozenset({"design-tournament"})
+INFORMATIONAL_GATES = frozenset({"design-tournament", "completion-gap"})
+#: slice-102 / SC-232 — the DIVERGENCE aggregate's own key, split out from INFORMATIONAL_GATES.
+#: `approach_divergence` is a design-tournament field; INFORMATIONAL_GATES was a set of ONE, so
+#: `gate_summary` could use it for both jobs. The moment a SECOND informational gate exists, keying the
+#: tournament aggregate on the exclusion set counts the other gate's rows as tournament runs and
+#: inflates the number /pulse --full reads. Two names for two jobs.
+_DIVERGENCE_GATES = frozenset({"design-tournament"})
 _REALITY_PASS_CLASS = frozenset({"go", "conditional", "pass"})
 _RC_RANK = {"high": 0, "medium": 1, "low": 2}
 _SLICE_ROW_FIELDS = ("gate", "kind", "verdict", "findings_count", "reality_contact",
@@ -238,7 +247,7 @@ def gate_summary(entries, slice_id: str | None = None, recent: int = 30) -> dict
         })
     gates_out.sort(key=lambda g: (_RC_RANK.get(g["reality_contact"], 3), g["gate"]))
 
-    dt_rows = [e for e in rows if e.get("gate") in INFORMATIONAL_GATES]
+    dt_rows = [e for e in rows if e.get("gate") in _DIVERGENCE_GATES]
     divergence: dict[str, int] = {}
     for e in dt_rows:
         v = str(e.get("approach_divergence", "")).strip()
@@ -308,12 +317,14 @@ def main(argv: list[str] | None = None) -> int:
         if not (args.gate and args.gate_log):
             sys.stderr.write("triage_precision: --gate-precision requires --gate and --gate-log\n")
             return 2
+        # slice-089/SC-194/AC3 (transitive, critic-calibrate:84): derive-on-missing so /pulse +
+        # /critic-calibrate precision compute over the real rows on a synced/cloned vault.
+        gate_log = Path(args.gate_log)
         try:
-            data = _read_json(Path(args.gate_log))
-        except (ValueError, OSError) as exc:
+            entries = _shard_store.read_entries(gate_log.parent, gate_log.name, "entries")
+        except (ValueError, OSError, RuntimeError) as exc:
             sys.stderr.write(f"triage_precision: cannot read --gate-log {args.gate_log}: {exc}\n")
             return 2
-        entries = data.get("entries", []) if isinstance(data, dict) else []
         print(json.dumps(gate_precision_recall(entries, args.gate), ensure_ascii=False))
         return 0
 
@@ -321,18 +332,17 @@ def main(argv: list[str] | None = None) -> int:
         if not args.gate_log:
             sys.stderr.write("triage_precision: --summary requires --gate-log\n")
             return 2
-        log_path = Path(args.gate_log)
-        if not log_path.is_file():
-            print(json.dumps({"absent": True}))  # clean sentinel: consumer omits its section
-            return 0
+        # slice-089/SC-194/AC4: derive-on-missing; the {absent} sentinel now keys on `not entries`
+        # (an absent cache with shards present derives non-zero rows instead of a false-absent /pulse
+        # section), and a genuinely-empty log (neither cache nor shards -> []) still prints {absent}.
+        gate_log = Path(args.gate_log)
         try:
-            data = _read_json(log_path)
-        except (ValueError, OSError) as exc:
+            entries = _shard_store.read_entries(gate_log.parent, gate_log.name, "entries")
+        except (ValueError, OSError, RuntimeError) as exc:
             sys.stderr.write(f"triage_precision: cannot read --gate-log {args.gate_log}: {exc}\n")
             return 2
-        entries = data.get("entries", []) if isinstance(data, dict) else []
         if not entries:
-            print(json.dumps({"absent": True}))
+            print(json.dumps({"absent": True}))  # clean sentinel: consumer omits its section
             return 0
         print(json.dumps(gate_summary(entries, slice_id=args.slice, recent=args.recent),
                          ensure_ascii=False))

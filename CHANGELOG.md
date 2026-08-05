@@ -8,7 +8,41 @@ All notable changes, newest first. Versions are reconstructed from git history; 
 
 _Nothing unreleased._
 
-## [2.40.0] — 2026-07-16
+## [2.41.0] — 2026-07-20
+
+### Added
+
+- **slice-story:** derive story.html's signoff panel from the deterministic trust ledger (gate_log reality_contact) instead of the narrator-authored signoff, so a model cannot render a model-only pass as reality-proven (slice-086-ground-slice-story-signoff-in-trust-ledger) [ADR-102]
+- **gate-log:** shard the gate-log behind a record-level storage seam (slice-088-shard-gate-log-behind-storage-seam) [ADR-105, ADR-106]
+- **gate-log:** migrate the five gate-log direct readers to derive-on-missing so a synced/cloned vault reads real rows instead of silently reading zero (slice-089-migrate-gate-log-readers-to-derive-on-missing) [ADR-107]
+- **claim:** make candidate claiming safe on a shared remote vault so two concurrent picks can never both build the same slice (slice-091-make-shared-vault-claim-safe) [ADR-110, ADR-111, ADR-112, ADR-113]
+- **vault-sync:** add a vault_admin sync push|pull verb for the git backend so a vault can be pushed to / pulled from a git remote and a fresh clone reconstructs it via derive-on-missing (slice-092-add-vault-git-sync-verb) [ADR-114]
+- **vault-sync:** Add an S3/MinIO storage backend to vault_admin sync push|pull so a vault can be synced across machines over an S3-compatible object store, not only a git remote. (slice-095-add-s3-minio-vault-sync-backend) [ADR-119]
+- **claim:** Add an in-lock, logged, append-only ownership TRANSFER verb to claim_candidate.py so a claimed slice can be reassigned to another developer without the standing AI_SDLC_ALLOW_FOREIGN_SLICE suppression ADR-068 warns against. (slice-096-add-claim-ownership-transfer-verb) [ADR-120, ADR-122]
+- **setup:** Wire the /setup UX for SC-197: a vault base-location step + a local|git|s3 backend picker that configures (never runs) vault_admin sync push|pull (slice-097-add-setup-vault-backend-picker) [ADR-121, ADR-123]
+- **candidates:** Give a slice candidate its own `area` field, written through a mediated seam, so a candidate that is NOT product-scope-sourced can carry a product-area and be filtered by the `/slice --area` lens. (slice-098-add-first-class-candidate-area-field) [ADR-124, ADR-125]
+- **claim:** add a git-backed claim backend for shared, git-synced vaults (slice-100-add-git-backed-claim-backend) [ADR-129, ADR-130, ADR-131, ADR-132, ADR-133]
+- **slice:** Make /slice pick for APP COMPLETION rather than for score rank. (slice-102-add-completion-gap-gate-to-slice) [ADR-140, ADR-141, ADR-142, ADR-143, ADR-144, ADR-145, ADR-146, ADR-147, ADR-148, ADR-149, ADR-150, ADR-151, ADR-152, ADR-153]
+
+### Changed
+
+- rename the Product-shape output template's "component" to "area"
+- refresh product docs for vault sync, claim coordination + the area/completion levers
+
+### Fixed
+
+- **gate-log:** close the shard create-then-write window that let a lock-free reader observe a partial 0-byte <seq>.json (false corruption) (slice-090-close-shard-write-reader-race-window) [ADR-109, ADR-108]
+- **product-scope:** Complete write-seam mediation of the product-scope item contract, closing two same-family bypasses (SC-185 area-parity + SC-170 assumptions-strip). (slice-093-harden-product-scope-write-mediation) [ADR-118]
+- **validate-slice:** run the forked /validate-slice shippability catalog synchronously so validation.json is never orphaned (slice-094-fix-validate-slice-fork-catalog-orphan) [ADR-116, ADR-117]
+- **reflect:** make the canonical calibration key true in prose and enforced by the lint (slice-101-fix-reflect-calibration-key-prose-drift) [ADR-134, ADR-135, ADR-136, ADR-137, ADR-138, ADR-139]
+
+## [2.40.0] — 2026-07-19
+
+### Changed
+
+- release 2.40.0: merge aisdlc-uat -> master + bump + changelog
+
+## [2.39.2] — 2026-07-15
 
 ### Added
 
@@ -25,6 +59,7 @@ _Nothing unreleased._
 
 ### Changed
 
+- release 2.39.2: merge aisdlc-uat -> master + bump + changelog
 - document custom vault location + resolution tiers
 - refresh product docs for capability/area tracking + recent gates
 - resolve the AC4 real-vault test dynamically via VAULT_ROOT
@@ -38,12 +73,6 @@ _Nothing unreleased._
 - **product-scope:** Extend product_scope.py's source taxonomy so `discover` and `slice-NNN-abandoned` source refs classify as EXHAUST, so the real-vault census reports UNCLASSIFIED == 0 instead of 3 rows outside the taxonomy. (slice-079-close-candidate-source-taxonomy-gap) [ADR-090]
 - **product-scope:** harden two product-scope input seams against malformed/reserved input (SC-182 write seam + SC-181 read seam, folded) (slice-083-harden-product-scope-seam-guards) [ADR-095, ADR-096]
 - restore product_shape in the story-sections example schema (areas) to unblock build-consistency
-
-## [2.39.2] — 2026-07-15
-
-### Changed
-
-- release 2.39.2: merge aisdlc-uat -> master + bump + changelog
 
 ## [2.39.1] — 2026-07-15
 

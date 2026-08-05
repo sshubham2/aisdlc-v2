@@ -161,3 +161,31 @@ def test_git_init_root_mismatch_fail_closed(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(va, "_git_common_dir_at", lambda r: str(elsewhere / ".git"))
     assert va.cmd_git_init(argparse.Namespace(root=str(root))) == 3
     assert "does not match" in capsys.readouterr().err.lower()
+
+
+# ── slice-089 / SC-194 (AC3 / m1): read-entries CLI derive-on-missing + exit-3 taxonomy ──
+
+def test_read_entries_derives_on_missing_cache(run_script, vault, tmp_path):
+    """AC3: the read-entries CLI (the SKILL.md shell entry point) derives on a cache-absent sharded
+    vault, byte-identical to the cache-present run. m1: a torn log with no shards -> exit 3 (genuine
+    failure), NOT the usage exit 2."""
+    import json as _json
+    from scripts.lib import _shard_store as S
+    (vault / "gate-log.json").write_text(_json.dumps({"entries": [
+        {"gate": "critique", "n": 0}, {"gate": "code-review", "n": 1}]}), encoding="utf-8")
+    r0 = run_script("scripts/lib/vault_admin.py", ["read-entries", "--vault", vault])
+    assert r0.returncode == 0, r0.stderr
+    base = _json.loads(r0.stdout)
+    assert base == [{"gate": "critique", "n": 0}, {"gate": "code-review", "n": 1}]
+
+    S.migrate(vault, "gate-log.json", "entries")
+    (vault / "gate-log.json").unlink()  # synced/cloned vault: cache gone, shards present
+    r1 = run_script("scripts/lib/vault_admin.py", ["read-entries", "--vault", vault])
+    assert r1.returncode == 0, r1.stderr
+    assert _json.loads(r1.stdout) == base, "read-entries must derive the same rows from shards"
+
+    # torn cache + no shards -> genuine failure exit 3 (m1: not the usage exit 2).
+    bad = tmp_path / "bad"; bad.mkdir()
+    (bad / "gate-log.json").write_text('{"entries": [trunc', encoding="utf-8")
+    r2 = run_script("scripts/lib/vault_admin.py", ["read-entries", "--vault", bad])
+    assert r2.returncode == 3, f"expected exit 3 (genuine failure), got {r2.returncode}: {r2.stderr}"

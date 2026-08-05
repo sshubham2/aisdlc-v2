@@ -78,9 +78,14 @@ def test_allow_jargon_downgrades_to_warning(tmp_path):
     assert (tmp_path / "story.html").is_file()
 
 
-def test_signoff_prose_is_scanned(tmp_path):
+def test_narrator_signoff_key_is_not_rendered(tmp_path):
+    # slice-086 (M4/ADR-102): the narrator's `signoff` key is NO LONGER read — the panel comes from the
+    # deterministic, main-thread-injected `trust_signoff` block. A stray narrator signoff (even one carrying
+    # a banned token) is neither scanned nor rendered: it simply has no path to the page. (The premise of the
+    # old test_signoff_prose_is_scanned — the narrator authoring the panel — is gone.)
     d = _story("Plain body.")
     d["signoff"] = {"model_approved": [{"what": "C2 was accepted-pending.", "by": "review"}]}
     cp = _run(tmp_path, d)
-    assert cp.returncode == 3
-    assert "signoff.model_approved[0].what" in cp.stderr
+    assert cp.returncode == 0, cp.stderr                       # signoff no longer scanned -> renders clean
+    assert (tmp_path / "story.html").is_file()
+    assert "C2 was accepted-pending" not in (tmp_path / "story.html").read_text(encoding="utf-8")

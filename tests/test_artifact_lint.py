@@ -208,6 +208,17 @@ def test_legacy_spike_file_without_constraints_clean():
     assert lint_artifact(sp, "spike", examples["spike"], "test") == []
 
 
+def test_story_sections_without_product_shape_framing_clean(plugin_root):
+    # OPTIONAL_KEYS (slice-086): product_shape_framing is a bare-string optional (the narrator omits it when
+    # it has no useful framing) — a framing-less story-sections.json must NOT be flagged as missing it.
+    example = json.loads((plugin_root / "skills" / "slice-story" / "examples" / "story-sections.json")
+                         .read_text(encoding="utf-8"))
+    assert "product_shape_framing" in example                        # the canonical example carries it
+    data = {k: v for k, v in example.items() if k != "product_shape_framing"}
+    v = lint_artifact(data, "story-sections", example, "test")
+    assert not any("product_shape_framing" in x for x in v), v
+
+
 # ── slice-013 (ADR-009): documented-enum coverage enforcement ─────────────────────
 
 

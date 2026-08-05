@@ -34,6 +34,15 @@
       "verdict": "VALIDATED"
     }
   ],
+  "missed_by_critic": [
+    {
+      "id": "MISSED-1",
+      "gate": "critique",
+      "severity": "major",
+      "caught_by": "build",
+      "note": "Safari retry header — absent from the Critic findings entirely, surfaced at build."
+    }
+  ],
   "lessons": [
     "Prove transport limits with a spike before designing realtime features."
   ],
