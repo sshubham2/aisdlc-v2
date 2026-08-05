@@ -49,6 +49,16 @@ On a git repo, `/setup` also offers — with your consent — to commit `.aisdlc
 `.gitignore` line it added, so the declared gates travel to teammates and CI and the main tree stays clean
 for `/build-slice`. Decline and it just tells you how to commit them yourself later.
 
+Finally, still on a git repo, `/setup` offers two more one-time, consented steps that never touch the deps
+install above:
+
+- **Pin the vault** to this repo (so a later rename can't orphan it) — see [§8 Vault admin](#8-vault-admin).
+- **Pick a sync backend** — `local` (default, no remote sync), `git`, or `s3`/MinIO — so the vault can later be
+  kept synced across machines or teammates. See [§8 — Sync the vault across machines](#sync-the-vault-across-machines-optional)
+  for what each backend does and how to drive it directly.
+
+Both are skippable; say no and `/setup` leaves everything as-is.
+
 Optional flags:
 - `--no-mcp` — skip MCP server registration
 - `--no-graph` — skip the initial graph build
@@ -200,18 +210,31 @@ $PY scripts/lib/product_scope.py set-area --item PS-NNN --area "<NAME>" --json
 ```
 
 `set-area` annotates one already-materialized capability in place (an atomic write; it mints nothing and
-re-materializes nothing). `set-component --component NAME` remains as a back-compat alias for the
-pre-slice-084 term. Every capability starts in the reserved `unassigned` bucket — that is legal and the
-default; annotating is opt-in. Once ≥1 capability carries an area:
+re-materializes nothing). `set-component --component NAME` remains as a **deprecated alias** for the
+pre-slice-084 term — prefer `set-area`/`--area`. Every capability starts in the reserved `unassigned` bucket
+— that is legal and the default; annotating is opt-in. Once ≥1 capability carries an area:
 
 - `/pulse` renders a per-area **capability-progress rollup** ("Product shape", §5) ranked least-complete-first,
   plus a completeness-governor WARN if the scope is decomposed but nothing is built yet.
 - `/slice --area <NAME>` (§4a) scopes the ranked recommendation to that one area.
 
-This **product area** grouping (over capabilities) is a separate concept from Heavy's **code-component**
-inventory (`components/*.json`, AST-derived by `/sync`, over actual source). An optional per-capability
-`code_components[]` link between the two is reconciled by `/drift-check`'s ACL-1 sweep (§6), which flags a
-link gone stale — the named code component was renamed or removed — as a `STALE CLAIM`.
+**A candidate can also carry its own `area` directly** (slice-098) — not just inherit one from its parent
+capability. Its own value, if set, always **overrides** whatever would otherwise be derived:
+
+```bash
+$PY scripts/lib/vault_edit.py update --file candidates.json --array candidates --id SC-NNN --set area="<NAME>"
+```
+
+Pass `--set area=null` to un-annotate a candidate back to a derived (or absent) area. This widens `/slice
+--area` and `candidates_top.py --area`'s population beyond product-sourced rows to any candidate you've
+explicitly grouped — useful for hand-typed or `/bug-hunt`/`/diagnose`-sourced candidates that belong to a
+real product area but have no product-scope parent. A candidate's own `area` is refused if it names the
+reserved `unassigned` sentinel or is empty/whitespace, the same validation `set-area` applies.
+
+This **product area** grouping (over capabilities *and* candidates) is a separate concept from Heavy's
+**code-component** inventory (`components/*.json`, AST-derived by `/sync`, over actual source). An optional
+per-capability `code_components[]` link between the two is reconciled by `/drift-check`'s ACL-1 sweep (§6),
+which flags a link gone stale — the named code component was renamed or removed — as a `STALE CLAIM`.
 
 ---
 
@@ -232,7 +255,9 @@ git branch; if a different git identity holds that slice's claim, or resolution 
 into the wrong slice's files. This is a **collision guard for honest mistakes**, not a security boundary
 (git identity is self-assignable) — it exists because a forked step run against the wrong slice folder can
 otherwise write findings/build-log/gate-log rows into a sibling slice unnoticed. If you ARE the owner but
-see a refusal, check that your `git config user.email` matches what `/slice` recorded at claim time.
+see a refusal, check that your `git config user.email` matches what `/slice` recorded at claim time. On a
+shared, git-synced vault (§8), the same collision guard is now backed by a genuine **claim register** —
+see [Claim coordination on a shared vault](#claim-coordination-on-a-shared-vault-optional) in §8.
 
 ### 4a. Pick a candidate — `/slice`
 
@@ -248,13 +273,27 @@ if you say "you pick"). It then defines the slice (name, risk tier, acceptance c
 plan, must-not-defer items, out-of-scope), writes `mission-brief.json` + `milestone.json`, claims the
 candidate with a worktree + branch, and auto-advances to `/risk-spike`.
 
-**`--area <NAME>`** (alias `--component`, slices 080/084) scopes the ranked recommendation to ONE product
-area — use `unassigned` for product capabilities not yet grouped into an area. It is a read-only **LENS**
-on the same pick surface, never a lock: it takes no lock, mints no id, writes no status, and blocked/
-in-flight candidates still show globally for context. `/slice` also surfaces the per-area rollup and, when
-the product's scope is decomposed but nothing is built yet, biases its recommendation toward a real
-product capability over more pipeline instrumentation. Pair `--area` with `/pulse`'s "Product shape" line
-(§5) to see which area is least complete before picking.
+**`--area <NAME>`** (deprecated alias `--component`, slices 080/084, population widened slice-098) scopes
+the ranked recommendation to ONE product area — use `unassigned` for product capabilities not yet grouped
+into an area. It is a read-only **LENS** on the same pick surface, never a lock: it takes no lock, mints no
+id, writes no status, and blocked/in-flight candidates still show globally for context. `/slice` also
+surfaces the per-area rollup and, when the product's scope is decomposed but nothing is built yet, biases
+its recommendation toward a real product capability over more pipeline instrumentation. Pair `--area` with
+`/pulse`'s "Product shape" line (§5) to see which area is least complete before picking.
+
+**App-completion gate (slice-102).** `/slice`'s pick surface also runs an **opt-in completion gate** that
+classifies the whole backlog for whole-app completion — `product-work-available` / `scope-exhausted` /
+`scope-absent` — and renders a headline naming the whole-app (or area-scoped) done/total capability count and listing each unbuilt capability by id and title. Because `/slice-candidates --product` decomposes the product's scope
+**exactly once** by design, an exhausted scope is the normal steady state for any project past its initial
+capability list — and in that state, without this gate, the backlog is pure pipeline exhaust (risks,
+findings, reflections) and nothing tells you. When there is still real unbuilt product work, the gate
+recommends the highest-ranked pickable one **by identity**, never by re-ranking (a freshly-minted product
+candidate can rank far below `--top 5` on score alone). When the scope is fully built, or has capabilities
+with no pickable children, or is entirely in flight, or carries torn provenance, it **HALTs** with the
+specific next step (`/slice-candidates --add-item`, `/discover`, `product_scope materialize`, coordinate
+with the in-flight owner, or repair the provenance) — always with a decline back to the ordinary ranked
+pick, so it is never a lock on your own backlog. If you already named the work (`/slice "<description>"`),
+the gate renders its headline only and asks no question.
 
 **Risk tier (the per-slice cost lever):**
 - `low` — pure CSS/copy/docs/test-only or a genuinely small bug-fix / small feature
@@ -354,7 +393,10 @@ Auto-invoked after `/critique` when the review surfaced ≥ 1 finding to narrate
 time. A forked `slice-story` narrator subagent translates every pipeline artifact into plain English for a
 mixed technical / non-technical audience (no pipeline jargon on the page), then `render_story.py` assembles
 a standalone `story.html`. The file is **delivered straight to you via `SendUserFile`** — it reaches your
-phone over Remote Control. You then approve to proceed to `/build-slice`.
+phone over Remote Control. Its "Who has signed off" panel is derived **mechanically** from the slice's trust
+ledger (`story_signoff.py`, reading `scripts/lib/trust_ledger.py`) — never authored by the narrator — so a
+model-only review can never render in the "proven against reality" column. You then approve to proceed to
+`/build-slice`.
 
 ### 4g. Build — `/build-slice`
 
@@ -389,8 +431,10 @@ Blocker findings must be dispositioned before `/validate-slice` proceeds.
 
 Runs forked. Executes per-criterion PASS/FAIL/PARTIAL checks on the **real environment** (real device, real
 user, real data — not just tests passing). Runs VAL-1/WS-1/ETC-1 layered audits, the shippability catalog
-regression check, and any project-declared reality gates (`.aisdlc/reality-gates.json`, fail-closed — an
-absent/empty manifest is a no-op). Auto-advances to `/reflect` only on aggregate Result: PASS.
+regression check — run **synchronously** inside the forked context so its verdict is written before the
+context returns and can never be silently orphaned (slice-094) — and any project-declared reality gates
+(`.aisdlc/reality-gates.json`, fail-closed — an absent/empty manifest is a no-op). Auto-advances to
+`/reflect` only on aggregate Result: PASS.
 
 ### 4j. Reflect — `/reflect`
 
@@ -651,8 +695,14 @@ to point at a new location.
 export AI_SDLC_VAULT_ROOT="/absolute/path/to/my-vault"   # before launching Claude Code
 ```
 
-**Change the base directory for _every_ project on this machine:** put a base path in
-`~/.claude/ai-sdlc-vault-base`; each project's vault then lands at `<that-base>/<slug>-<hash>`.
+**Change the base directory for _every_ project on this machine:**
+
+```bash
+$PY scripts/lib/vault_admin.py set-base "/absolute/path/to/base-dir"
+```
+
+This is read-back-verified (like `write-pin`); each project's vault then lands at `<that-base>/<slug>-<hash>`.
+Equivalent to hand-writing `~/.claude/ai-sdlc-vault-base` (tier 3, §above).
 
 > **Note:** Changing the resolved path does **not** move existing content. If a vault already exists at the
 > old location its files stay there — copy them across first (or use `export` / `import` below), or the
@@ -679,10 +729,76 @@ $PY scripts/lib/vault_admin.py write-pin
 
 # Delete an orphaned vault
 $PY scripts/lib/vault_admin.py uninstall <name> --yes
+
+# Convert the gate-log to (or back from) the append-only shard store
+$PY scripts/lib/vault_admin.py migrate
+$PY scripts/lib/vault_admin.py migrate --reverse
+
+# Print an aggregate's entries as JSON (derives from shards if the local cache is missing, e.g. after a sync pull)
+$PY scripts/lib/vault_admin.py read-entries
 ```
 
 The `export` / `import` / `write-pin` flow is the recommended way to hand off the design record to a
-new teammate or restore it on a new machine.
+new teammate or restore it on a new machine as a one-off. For a vault you want to keep **continuously**
+synced, see the next section.
+
+### Sync the vault across machines (optional)
+
+Beyond `export`/`import` (a point-in-time snapshot), the vault's sync-set — the append-only shard log,
+`_meta.json`, and whole-file artifacts (never the git-ignored derived caches, `claims/`, or lock/scratch
+files) — can be kept **continuously synced** across machines or teammates over a **git remote** or an
+**S3/MinIO bucket**. `/ai-sdlc:setup` offers a one-time picker (§1b); to change it later or drive it by
+hand:
+
+```bash
+# pick a backend (persisted to <git-common-dir>/aisdlc/sync-backend.json, read-back-verified)
+$PY scripts/lib/vault_admin.py set-backend --backend local                       # default: no remote sync
+$PY scripts/lib/vault_admin.py set-backend --backend git --remote origin
+$PY scripts/lib/vault_admin.py set-backend --backend s3 --s3-bucket <bucket> \
+    --s3-project <stable-machine-invariant-id>
+
+# then, from any clone, whenever you want to publish or fetch vault changes
+$PY scripts/lib/vault_admin.py sync push
+$PY scripts/lib/vault_admin.py sync pull
+```
+
+No credential is ever prompted for or persisted by `set-backend` — S3 auth goes through boto3's default
+provider chain (`AWS_ACCESS_KEY_ID` / `~/.aws` / an IAM role); `pip install boto3` if you pick `s3` (it is
+optional and not installed by `/ai-sdlc:setup`).
+
+`sync pull` is fast-forward-only by default on the `git` backend — it **refuses** a dirty local tree or a
+history that has diverged, rather than silently discarding your work. `--force` mirror-resets (still
+refusing to drop unpushed local commits unless you also pass `--force-drop-local`, which names them before
+dropping). The `s3` backend's `--force` overwrites a conflicting local artifact instead.
+
+> **Security.** `sync push` transmits the **whole vault, unredacted**. Use a **private** git remote, or an
+> S3 bucket with Block Public Access enabled — a secret committed once to a synced remote persists in its
+> history forever.
+
+### Claim coordination on a shared vault (optional)
+
+By default, candidate claiming (`/slice`'s Step 5) is coordinated only by a **local** file lock — safe on
+one machine, but on a vault shared across machines two developers picking at the same moment can both mint
+the same slice. Choosing the `git` sync backend above also **arms** an opt-in claim register: one git ref
+per candidate, `refs/aisdlc-claims/<SC-NNN>`, on the vault's own remote. The second of two concurrent claims
+on the same candidate is then **refused outright**, never silently duplicated. `set-backend` checks that the
+vault itself is a servable git work tree with a remote before arming it, and tells you exactly what to run
+if it isn't yet (typically `git -C <vault> init && git -C <vault> remote add origin <url>`, then `sync
+push`). Switching the sync backend to `local` or `s3` disarms the register again.
+
+**Transferring ownership.** If a claimed-but-unfinished candidate needs a new owner (a teammate leaves, or
+you're picking up someone else's abandoned pick), re-assign it directly rather than releasing and
+re-claiming from scratch:
+
+```bash
+$PY skills/slice/scripts/claim_candidate.py transfer --slice slice-NNN --to "New Owner <email>"
+$PY skills/slice/scripts/claim_candidate.py transfer --candidate SC-NNN --to "New Owner <email>"
+```
+
+This re-mints `claimed_by` in one locked read-modify-write — logged, append-only, and mints nothing new. Any
+identified caller may run it; transferring to someone other than yourself proceeds with a loud
+owner-naming warning rather than a refusal, so hand-offs stay possible without a separate authorization
+layer.
 
 ---
 

@@ -32,6 +32,7 @@ pollutes your source tree, and every project gets its own isolated, worktree-sha
 | **git** | recommended | gives each repo a stable, worktree-shared vault key (works without it, but the vault then keys on the current directory) |
 | **code-review-graph** *(recommended)* | code-graph queries (blast-radius, reachability) in ~15 skills + the CRG MCP server | installed & registered by `/ai-sdlc:setup`; absent → graceful degrade |
 | **bandit + pip-audit** *(optional, Python projects)* | the deterministic security reality gates `/build-slice` and `/validate-slice` run | **not** installed by `/ai-sdlc:setup` — `pip install bandit pip-audit`, or the gate fails **visibly** (`TOOL-MISSING`), never silently |
+| **boto3** *(optional)* | the S3/MinIO backend for `vault_admin.py sync` | **not** installed by `/ai-sdlc:setup` — `pip install boto3`; its absence never blocks *picking* the `s3` backend (`set-backend` still persists the choice and warns), only running a real `sync` against it |
 
 > **Supply-chain / trust boundary.** `code-review-graph` is a **third-party** package
 > ([github.com/tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph), not this
@@ -80,6 +81,11 @@ that new `.aisdlc/` config so it reaches your teammates and CI. Two of the next 
 
 1. **Restart Claude Code** — MCP servers load at startup, so the CRG graph tools only appear on the next launch.
 2. **Approve the one-time trust prompt** for `code-review-graph`; then `/mcp` should show it connected.
+
+Finally, on a git repo, `/ai-sdlc:setup` offers two more **consented, one-time** steps: pinning this repo's
+vault (so a later rename can't orphan it) and picking a **vault sync backend** (`local` default / `git` /
+`s3`) — see [Vault sync across machines](#vault-sync-across-machines-optional--git-or-s3minio) below. Both are
+skippable and never touch the dependency install above.
 
 `/ai-sdlc:setup` accepts optional flags: `--no-mcp` (skip MCP registration) and `--no-graph` (skip the initial
 graph build), plus an optional `[repo-path]` argument to target a specific directory.
@@ -167,7 +173,8 @@ printf '/collab/.aisdlc\n' > ~/.claude/ai-sdlc-vault-base   # tier 3: base for A
 mkdir -p /collab/.aisdlc                                     # ensure it exists / is writable
 ```
 
-Every project then resolves to `/collab/.aisdlc/<slug>-<hash>`.
+Every project then resolves to `/collab/.aisdlc/<slug>-<hash>`. The same tier-3 base can also be set via
+`vault_admin.py set-base <dir>` (read-back-verified) — see [Vault lifecycle commands](#vault-lifecycle-commands--vault_adminpy) below.
 
 **Lifecycle, backup & GC.** The vault is plain JSON outside your repo, so it is **not** covered by your repo's
 git history. To version or back it up, `git init` inside the vault dir (`cd "$(… _vault_paths.py --path)" && git init`)
@@ -190,6 +197,44 @@ $PY scripts/lib/vault_admin.py write-pin                    # then pin the impor
 
 `import` refuses a non-empty target without `--force`. Put `export` in a cron/backup job if the project is
 long-lived — a machine wipe should never be able to erase the project's risk ledger and decision history.
+
+### Vault sync across machines (optional — git or S3/MinIO)
+
+Beyond `export`/`import` (point-in-time backup), the vault's *sync-set* — the append-only shard log, `_meta.json`,
+and whole-file artifacts (never the git-ignored derived caches, `claims/`, or `*.lock`/`*.tmp` scratch) — can be
+kept **continuously synced** across machines or teammates over a **git remote** or an **S3/MinIO bucket**.
+`/ai-sdlc:setup` offers a one-time picker for the backend (`local` — the default, no remote sync — `git`, or
+`s3`); re-run it any time to change your choice, or drive it directly:
+
+```bash
+$PY scripts/lib/vault_admin.py set-backend --backend local                          # default: no remote sync
+$PY scripts/lib/vault_admin.py set-backend --backend git --remote origin            # a git remote
+$PY scripts/lib/vault_admin.py set-backend --backend s3 --s3-bucket <bucket> \
+    --s3-project <stable-machine-invariant-id>                                      # S3 / MinIO
+```
+
+The choice — plus non-secret config (remote name / bucket / endpoint / region / project id) — is persisted to
+the untracked `<git-common-dir>/aisdlc/sync-backend.json`, so a later `sync` needs no manual env export. **No
+credential is ever prompted for or persisted** — S3 auth goes through boto3's default provider chain
+(`AWS_ACCESS_KEY_ID` / `~/.aws` / an IAM role).
+
+Then, from any clone:
+
+```bash
+$PY scripts/lib/vault_admin.py sync push     # publish local vault changes
+$PY scripts/lib/vault_admin.py sync pull     # fetch + fast-forward (git) / download (s3) the latest
+```
+
+> **Security.** `sync push` transmits the **whole vault, unredacted** — use a **private** git remote, or an S3
+> bucket with Block Public Access enabled. A secret committed once to a git-backed sync remote persists in its
+> history forever.
+
+**Concurrent claiming across machines.** Choosing the `git` backend also arms an **opt-in git-backed claim
+register** (`refs/aisdlc-claims/<SC-NNN>` on the vault's own remote, slice-100) — the second of two concurrent
+`/slice` picks on the same candidate is now **refused**, never silently duplicated. It requires the vault itself
+to be a servable git work tree with a remote; `set-backend` validates that before arming it and tells you how to
+fix it if not (e.g. `git -C <vault> init && git -C <vault> remote add origin <url>`, then `sync push`).
+Switching back to `local` or `s3` disarms it.
 
 ### CI merge gate (optional — make the pipeline enforced, not just followed)
 
@@ -235,7 +280,9 @@ python3 /path/to/aisdlc-v2/scripts/lib/_vault_paths.py
 
 `/slice-story` renders a plain-language report of a slice (`story.html`) and **delivers it straight to you** — it's
 pushed into the conversation, so it reaches you wherever you are, **including your phone over Remote Control**. The
-file is also saved in the slice folder. No external service, no upload step, no extra permission.
+file is also saved in the slice folder. No external service, no upload step, no extra permission. Its "Who has
+signed off" panel is derived **mechanically** from the per-slice trust ledger (`scripts/lib/trust_ledger.py`), never
+authored by the narrating agent — so a model-only pass can never render as reality-proven.
 
 ---
 
@@ -261,7 +308,10 @@ triage / adopt  →  discover  →  (user-test)
 
 - **Measurement spine:** every gate logs one row to `<vault>/gate-log.json` ranked by **reality-contact**
   (real env/device/data > code-graph > model-on-model), so per-gate **precision + recall** is measurable and a
-  reality-approval is never rendered the same green as a model-approval. `/pulse` surfaces it.
+  reality-approval is never rendered the same green as a model-approval. `/pulse` surfaces it. The log itself is
+  an append-only shard store behind a storage seam (`scripts/lib/_shard_store.py`) with a derived, git-ignored
+  cache — invisible in day-to-day use, but `vault_admin.py migrate`/`read-entries` (see the [API reference](docs/api-reference.md))
+  let you convert or inspect it directly.
 - **Brownfield entry:** `diagnose` (forensic, owner-facing HTML report) → `slice-candidates` (annotated report →
   backlog); `bug-hunt` (whole-codebase correctness + security defect sweep).
 - **Orientation:** `pulse`, `query-design`.
@@ -276,15 +326,28 @@ entirely with pipeline *exhaust* (risks, findings, reflections) and the product 
 
 **Capability-level tracking (slices 080–084).** Once a capability is materialized, it can be grouped into a
 named **product area** — `product_scope.py set-area --item PS-NNN --area NAME` (the day-0 product-structure
-step for Minimal/Standard; no full `/heavy-architect` needed — `set-component`/`--component` remain back-compat
-aliases from the pre-slice-084 term). `/pulse` surfaces a read-only, per-area **"Product shape"** rollup
-(ranked least-complete-first) and warns with a **completeness governor** whenever the product's scope is
+step for Minimal/Standard; no full `/heavy-architect` needed — `set-component --component NAME` remains a
+**deprecated alias** from the pre-slice-084 term). `/pulse` surfaces a read-only, per-area **"Product shape"**
+rollup (ranked least-complete-first) and warns with a **completeness governor** whenever the product's scope is
 decomposed but zero capabilities are built, biasing the next pick toward real product work rather than more
 pipeline instrumentation. `/slice --area <NAME>` scopes the candidate pick to one area (`unassigned` for
 un-grouped capabilities) — a read-only lens, never a lock. This **product area** (the grouping axis over
 capabilities) is a distinct concept from Heavy's **code-component** inventory (`components/*.json`,
 AST-derived by `/sync`); an optional `code_components[]` link between the two is reconciled by
 `/drift-check`'s ACL-1 sweep.
+
+**Widened area population + app-completion gate (slices 098/102).** A candidate can also carry its **own**
+`area` field directly — `scripts/lib/vault_edit.py update --file candidates.json --array candidates --id
+SC-NNN --set area=<NAME>` (`area=null` un-annotates; a `component` key is refused on a candidate — that key
+belongs only to product-scope items) — which **overrides** any area derived from its parent capability;
+`/slice --area` (and `candidates_top.py --area`) widen to this whole population, not just product-sourced rows.
+Separately, `/slice`'s pick surface runs an **opt-in completion gate** that classifies the backlog for
+whole-app completion (`product-work-available` / `scope-exhausted` / `scope-absent`) and, once the product's
+initial capability list is exhausted — the steady state of most projects past day 0 — routes the
+recommendation toward finishing a real unbuilt capability (or the correct next step: `/discover`,
+`/slice-candidates --add-item`, coordinating with an in-flight owner, repairing torn provenance) instead of
+silently falling through to score-ranked pipeline exhaust. It always offers a decline back to the ordinary
+ranked pick.
 
 Invoke any skill with its slash command — the plugin namespaces them, so `/diagnose` is `/ai-sdlc:diagnose`, etc.
 
@@ -306,12 +369,16 @@ stay genuinely thin.
 
 ### What this is NOT for
 
-- **Teams > ~3 without the CI merge gate installed** — the vault has no locking. Slice resolution does enforce
-  an ownership **collision guard** (a step run against slice-X refuses to silently read/write into slice-Y's
-  files when a different git identity holds that candidate's claim) — but this is explicitly **not an
+- **Teams > ~3 without the CI merge gate installed** — the vault has no locking by default. Slice resolution
+  does enforce an ownership **collision guard** (a step run against slice-X refuses to silently read/write into
+  slice-Y's files when a different git identity holds that candidate's claim) — but this is explicitly **not an
   authorization boundary** (git identity is self-assignable with two `git config` commands); it only catches
-  the *honest* cross-slice mistake between cooperating humans and their forked agents. Coordination beyond that
-  is social, surfaced via claim/heartbeat in `/pulse`.
+  the *honest* cross-slice mistake between cooperating humans and their forked agents. An **opt-in git-backed
+  claim register** (`vault_admin.py set-backend --backend git`, see [Vault sync across machines](#vault-sync-across-machines-optional--git-or-s3minio))
+  now makes the *claim itself* genuinely safe across machines on a shared, synced vault — a losing concurrent
+  claim is refused, not silently duplicated — but it doesn't cover file-level merge conflicts, and each peer
+  must actually sync; it narrows the caveat above, it doesn't replace the CI merge gate. Coordination beyond
+  that is social, surfaced via claim/heartbeat in `/pulse`.
 - **Audit-grade compliance processes** — Heavy mode adds rigor (forced Critic, human sign-off, threat model),
   but there is no compliance sign-off workflow or audit-trail enforcement. Regulated projects need their own
   compliance review on top; `/triage` will tell you so.
@@ -370,7 +437,7 @@ Licensed under the **MIT License** — see [LICENSE](LICENSE).
 
 ## Author
 
-Shubhendu Shubham · plugin `ai-sdlc` v2.39.2
+Shubhendu Shubham · plugin `ai-sdlc` v2.40.0
 
 ---
 
